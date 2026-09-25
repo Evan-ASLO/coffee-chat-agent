@@ -1,0 +1,10 @@
+{
+  "name": "coffee-chat-agent",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Approval-first Google Apps Script agent for coffee chat outreach.",
+  "scripts": {
+    "test": "node tests/static-check.js",
+    "preview:build": "node tests/build-preview.js"
+  }
+}

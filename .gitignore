@@ -1,0 +1,7 @@
+.clasp.json
+.env
+.env.*
+node_modules/
+tests/preview.generated.html
+*.log
+*.zip

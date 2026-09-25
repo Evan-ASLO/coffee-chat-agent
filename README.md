@@ -1,0 +1,284 @@
+# Coffee Chat Agent
+
+A private, approval-first Google Apps Script application for finding relevant
+professionals, preparing personalized outreach, sending through Gmail, and
+tracking replies in Google Sheets.
+
+The application belongs to the personal Google account that deploys it. It does
+not depend on a Microsoft tenant or this Copilot session after installation.
+
+## What it does
+
+1. Searches publicly indexed professional profile pages or calls your own
+   discovery webhook.
+2. Adds candidates to a Google Sheet and dashboard for approval.
+3. After approval, optionally enriches a work email and creates a personalized
+   draft using only personal facts you supplied.
+4. Requires a second explicit approval before sending the exact email through
+   Gmail.
+5. Records the sent message and Gmail thread in the spreadsheet.
+6. Checks sent threads on a scheduled trigger and updates the spreadsheet when
+   a reply arrives.
+
+## Approval and privacy guarantees
+
+- The first approval gate controls which people may be enriched and drafted.
+- The second approval gate controls the exact recipient, subject, and body that
+  Gmail sends.
+- There is no bulk-send action.
+- The application does not scrape LinkedIn, log in to LinkedIn, or automate
+  LinkedIn messages. Google discovery uses only publicly indexed search results.
+- API keys and webhook tokens are stored in Apps Script Properties, not in the
+  spreadsheet or browser.
+- The web app should be deployed with access set to **Only myself**.
+- Apps Script's native `GmailApp` service requires the full Gmail OAuth scope.
+  This application uses it only to send an explicitly approved message, find
+  the resulting thread, and inspect that tracked thread for replies.
+
+## Project files
+
+| File | Purpose |
+|---|---|
+| `Code.gs` | Web app entry point and client-facing API |
+| `Constants.gs` | Data model, settings, status transitions, validation |
+| `Setup.gs` | Spreadsheet creation, defaults, credentials, scheduled trigger |
+| `Repository.gs` | Sheet reads, writes, deduplication, audit activity |
+| `Discovery.gs` | Google Programmable Search and custom discovery adapter |
+| `Enrichment.gs` | Approval workflow, Hunter, and custom enrichment adapter |
+| `Drafting.gs` | Gemini, built-in template, and custom drafting adapter |
+| `GmailSync.gs` | Draft edits, approved sends, reply synchronization |
+| `Http.gs` | Explicit JSON HTTP helpers |
+| `Index.html` | Responsive approval dashboard |
+| `appsscript.json` | Apps Script manifest and OAuth scopes |
+
+## Install in a personal Google account
+
+### Option A: `clasp`
+
+1. Install or invoke the Google Apps Script CLI:
+
+   ```powershell
+   npm install --global @google/clasp
+   clasp login
+   ```
+
+2. From this directory, create a standalone Apps Script project:
+
+   ```powershell
+   clasp create --type standalone --title "Coffee Chat Agent"
+   clasp push
+   clasp open
+   ```
+
+3. In the Apps Script editor, run `setupCoffeeChatAgent` once and approve the
+   requested Google permissions.
+
+4. Select **Deploy > New deployment > Web app**:
+
+   - Execute as: **Me**
+   - Who has access: **Only myself**
+
+5. Open the web app URL and complete **Profile & connections**.
+
+### Option B: copy files manually
+
+1. Open [script.new](https://script.new/) while signed in to the personal Google
+   account that should own the agent.
+2. Create one Apps Script file for every `.gs` file in this folder and one HTML
+   file named `Index`.
+3. Enable the manifest in **Project Settings**, then replace it with
+   `appsscript.json`.
+4. Run `setupCoffeeChatAgent`, approve permissions, and deploy the web app using
+   the settings above.
+
+The first setup run creates a spreadsheet named **Coffee Chat Agent CRM** and a
+time-based trigger for `syncRepliesTrigger`.
+
+## Configure your workflow
+
+Open **Profile & connections** in the web app.
+
+### Personal context
+
+Enter factual details the drafting provider may use:
+
+- background summary;
+- current learning or career goal;
+- specific projects, jobs, courses, or experiences;
+- genuine interests;
+- preferred tone;
+- one sample email that sounds like you.
+
+Drafting is blocked until at least one factual context field is present. The
+prompt prohibits invented experiences, shared connections, achievements, and
+claims about content that was not supplied.
+
+### Discovery providers
+
+#### Google Programmable Search
+
+1. Create a [Programmable Search Engine](https://programmablesearchengine.google.com/)
+   configured to search the web.
+2. Enable the Custom Search JSON API in a Google Cloud project.
+3. Add `GOOGLE_CSE_API_KEY` and `GOOGLE_CSE_ID` in the dashboard.
+
+Results are restricted to public URLs matching `linkedin.com/in/`; the
+application reads the search result title, URL, and snippet only.
+
+#### Custom webhook
+
+Set `DISCOVERY_PROVIDER` to `CUSTOM_WEBHOOK` and configure its URL and optional
+bearer token.
+
+Request:
+
+```json
+{
+  "action": "discover",
+  "criteria": {
+    "roles": ["Product Manager"],
+    "industries": ["Fintech"],
+    "companies": [],
+    "locations": ["Toronto"],
+    "keywords": ["marketplace"],
+    "seniority": ["Director"],
+    "objective": "Learn how leaders moved from finance into product.",
+    "count": 10
+  },
+  "requestedCount": 10
+}
+```
+
+Return either an array or `{ "people": [...] }`. Supported person fields:
+
+```json
+{
+  "firstName": "Alex",
+  "lastName": "Chen",
+  "fullName": "Alex Chen",
+  "title": "Director, Product",
+  "company": "Example Co",
+  "companyDomain": "example.com",
+  "location": "Toronto",
+  "linkedinUrl": "https://www.linkedin.com/in/example",
+  "email": "",
+  "emailConfidence": 0,
+  "sourceUrl": "https://www.linkedin.com/in/example",
+  "sourceSnippet": "Public search snippet",
+  "whyRelevant": "Relevant product and fintech background",
+  "relevanceScore": 90
+}
+```
+
+### Email enrichment providers
+
+- `NONE`: enter an email manually during draft review.
+- `HUNTER`: add a Hunter API key. The adapter calls Hunter Email Finder using
+  the approved name and company domain or name.
+- `CUSTOM_WEBHOOK`: configure a URL and optional bearer token.
+
+Custom enrichment request:
+
+```json
+{
+  "action": "enrich",
+  "person": {
+    "id": "uuid",
+    "firstName": "Alex",
+    "lastName": "Chen",
+    "company": "Example Co",
+    "companyDomain": "example.com",
+    "linkedinUrl": "https://www.linkedin.com/in/example"
+  }
+}
+```
+
+Return the enriched object directly or under a `person` property:
+
+```json
+{
+  "email": "alex@example.com",
+  "emailConfidence": 95,
+  "companyDomain": "example.com",
+  "linkedinUrl": "https://www.linkedin.com/in/example"
+}
+```
+
+### Draft providers
+
+- `GEMINI`: add a Gemini API key and select a compatible model.
+- `TEMPLATE`: uses a deterministic personal template and requires no external
+  AI provider.
+- `CUSTOM_WEBHOOK`: configure a URL and optional bearer token.
+
+Custom draft request:
+
+```json
+{
+  "action": "draft",
+  "person": {
+    "fullName": "Alex Chen",
+    "title": "Director, Product",
+    "company": "Example Co",
+    "sourceSnippet": "Public search snippet",
+    "whyRelevant": "Relevant product and fintech background"
+  },
+  "senderContext": [
+    {
+      "category": "Experience to reference",
+      "content": "I worked on a student fintech product..."
+    }
+  ],
+  "settings": {
+    "senderName": "Evan",
+    "outreachGoal": "Learn about product leadership",
+    "emailWordLimit": "140"
+  }
+}
+```
+
+Return the draft directly or under a `draft` property:
+
+```json
+{
+  "subject": "Learning about your product path",
+  "body": "Hi Alex, ...",
+  "personalizationNotes": "Used the supplied fintech project and Alex's role."
+}
+```
+
+## Spreadsheet data
+
+- **Prospects** is the CRM and includes approval timestamps, source evidence,
+  draft content, sent timestamps, Gmail IDs, and the latest reply.
+- **Personal Context** stores the factual inputs used for personalization.
+- **Settings** stores non-secret configuration.
+- **Activity** is an append-only audit trail of important workflow actions.
+
+Reply synchronization checks only messages sent by this application within the
+configured lookback window. It updates `status`, `lastReplyAt`, `replyFrom`, and
+`replySnippet`; it does not automatically respond.
+
+## Validation
+
+Run the dependency-free checks locally:
+
+```powershell
+npm test
+```
+
+They parse every Apps Script file and the dashboard JavaScript, then exercise
+criteria normalization, public-result parsing, relevance scoring, email
+validation, reply extraction, and draft validation.
+
+## Operational limits
+
+- Public search snippets can be incomplete or stale; review the linked profile
+  before approval.
+- Automatic email discovery requires Hunter or a custom enrichment provider.
+- Gmail and Apps Script quotas apply.
+- Gemini drafting sends the selected public profile evidence and your supplied
+  personal context to the Gemini API. Use the built-in template if you do not
+  want those fields sent to an AI provider.
+- You are responsible for complying with applicable anti-spam, privacy, and
+  professional-conduct requirements.
