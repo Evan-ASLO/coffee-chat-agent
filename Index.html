@@ -855,13 +855,13 @@
               <div class="brand-mark" aria-hidden="true">CC</div>
               <h1>Coffee Chat Agent</h1>
               <p>
-                Create a private Google Sheet CRM, install reply synchronization, and keep both
-                approval gates under your control. The app never sends a message until you approve
-                the exact draft.
+                Create a private Google Sheet CRM in the signed-in account, install that user's
+                reply synchronization, and keep both approval gates under their control. The app
+                never sends a message until that user approves the exact draft.
               </p>
               <div class="notice notice-info" style="margin-top: 24px;">
-                This deployment runs under <strong>${escapeHtml(ui.state.accountEmail || 'your Google account')}</strong>
-                and is independent of your Microsoft account.
+                This workspace, Gmail access, personal context, and API keys belong only to
+                <strong>${escapeHtml(ui.state.accountEmail || 'the signed-in Google account')}</strong>.
               </div>
               <div class="button-row" style="justify-content: center;">
                 <button class="btn btn-primary" onclick="initializeAgent()">Initialize private workspace</button>
@@ -1025,8 +1025,9 @@
             </div>
             ${readiness.drafting ? '' : `
               <div class="notice notice-warning">
-                Drafting is not ready. Add a Gemini key, select the built-in template, or configure
-                a draft webhook under Profile & connections.
+                Drafting is not ready. Select the built-in template or add the key required by
+                your selected Gemini, OpenAI, Anthropic, or custom provider under Profile &
+                connections.
               </div>
             `}
             ${readiness.enrichment ? '' : `
@@ -1116,8 +1117,10 @@
                     </div>
                     <p class="excerpt"><strong>${escapeHtml(person.subject)}</strong></p>
                     <p class="excerpt">${escapeHtml(truncate(person.draftBody, 210))}</p>
+                    ${person.error ? `<div class="notice notice-danger">${escapeHtml(person.error)}</div>` : ''}
                     <div class="button-row start">
                       <button class="btn btn-primary" onclick="openDraftDialog('${escapeJs(person.id)}')">Review draft</button>
+                      <button class="btn" onclick="regenerateDraft('${escapeJs(person.id)}')">Regenerate draft</button>
                       ${safeUrl(person.linkedinUrl, true) ? `<a class="btn" href="${escapeAttr(safeUrl(person.linkedinUrl, true))}" target="_blank" rel="noopener">Profile</a>` : ''}
                     </div>
                   </article>
@@ -1189,6 +1192,11 @@
                 </p>
               </div>
             </div>
+            <div class="notice notice-info">
+              This profile and its credentials are isolated to
+              <strong>${escapeHtml(ui.state.accountEmail)}</strong>. Other Google users receive
+              separate Sheets, keys, settings, Gmail authorization, and reply triggers.
+            </div>
             <div id="context-rows">
               ${ui.state.personalContext.map(renderContextRow).join('')}
             </div>
@@ -1216,11 +1224,15 @@
                 ['CUSTOM_WEBHOOK', 'Custom webhook']
               ])}
               ${selectField('setting-draft', 'Draft provider', settings.DRAFT_PROVIDER, [
-                ['GEMINI', 'Gemini'],
                 ['TEMPLATE', 'Built-in personal template'],
+                ['GEMINI', 'Google Gemini'],
+                ['OPENAI', 'OpenAI'],
+                ['ANTHROPIC', 'Anthropic Claude'],
                 ['CUSTOM_WEBHOOK', 'Custom webhook']
               ])}
-              ${inputField('setting-model', 'Gemini model', settings.GEMINI_MODEL || 'gemini-2.5-flash', 'text', false)}
+              ${inputField('setting-gemini-model', 'Gemini model', settings.GEMINI_MODEL || 'gemini-3.8-flash', 'text', false)}
+              ${inputField('setting-openai-model', 'OpenAI model', settings.OPENAI_MODEL || 'gpt-5-mini', 'text', false)}
+              ${inputField('setting-anthropic-model', 'Anthropic model', settings.ANTHROPIC_MODEL || 'claude-haiku-4-5', 'text', false)}
               ${inputField('setting-word-limit', 'Email word limit', settings.EMAIL_WORD_LIMIT || 140, 'number', true, '60', '250')}
               ${inputField('setting-result-limit', 'Discovery result limit', settings.MAX_DISCOVERY_RESULTS || 15, 'number', true, '1', '20')}
               ${selectField('setting-sync-interval', 'Reply sync interval', settings.SYNC_INTERVAL_MINUTES || '15', [
@@ -1243,14 +1255,17 @@
               <div>
                 <h2>Private connection credentials</h2>
                 <p>
-                  Values are stored in Apps Script Properties, not in the spreadsheet or browser.
-                  Leave a field blank to keep its current value.
+                  Values are stored in Google Apps Script User Properties for the signed-in account,
+                  not in the spreadsheet, browser, or another user's workspace. Leave a field blank
+                  to keep its current value.
                 </p>
               </div>
             </div>
             <div id="secret-rows">
               ${secretField('TAVILY_API_KEY', 'Tavily API key')}
               ${secretField('GEMINI_API_KEY', 'Gemini API key')}
+              ${secretField('OPENAI_API_KEY', 'OpenAI API key')}
+              ${secretField('ANTHROPIC_API_KEY', 'Anthropic API key')}
               ${secretField('HUNTER_API_KEY', 'Hunter API key')}
               ${secretField('DISCOVERY_WEBHOOK_URL', 'Discovery webhook URL', 'url')}
               ${secretField('DISCOVERY_WEBHOOK_TOKEN', 'Discovery webhook token')}
@@ -1261,7 +1276,8 @@
             </div>
             <div class="notice notice-info">
               Recommended free starting setup: Tavily for public profile discovery, Hunter's free
-              tier for work-email discovery, and the built-in template for drafts.
+              tier for work-email discovery, and the built-in template for drafts. Gemini, OpenAI,
+              and Anthropic use the signed-in user's own API key and provider billing.
             </div>
             <div class="button-row">
               <button class="btn btn-primary" onclick="saveSettings()">Save profile and connections</button>
@@ -1527,6 +1543,26 @@
         }
       }
 
+      async function regenerateDraft(id) {
+        const provider = ui.state.settings.DRAFT_PROVIDER || 'selected provider';
+        if (!window.confirm(`Replace this draft using ${provider}? No email will be sent.`)) {
+          return;
+        }
+        try {
+          setLoading(true, 'Regenerating the recipient-focused draft...');
+          await server('regenerateProspectDraft', id);
+          await refreshState();
+          render();
+          showToast('Draft regenerated for review.');
+        } catch (error) {
+          await refreshState();
+          render();
+          showToast(error.message, true);
+        } finally {
+          setLoading(false);
+        }
+      }
+
       async function sendDraft() {
         const payload = draftPayload();
         if (!payload.email || !payload.subject || !payload.draftBody) {
@@ -1600,7 +1636,9 @@
             DISCOVERY_PROVIDER: value('setting-discovery'),
             ENRICHMENT_PROVIDER: value('setting-enrichment'),
             DRAFT_PROVIDER: value('setting-draft'),
-            GEMINI_MODEL: value('setting-model'),
+            GEMINI_MODEL: value('setting-gemini-model'),
+            OPENAI_MODEL: value('setting-openai-model'),
+            ANTHROPIC_MODEL: value('setting-anthropic-model'),
             EMAIL_WORD_LIMIT: value('setting-word-limit'),
             MAX_DISCOVERY_RESULTS: value('setting-result-limit'),
             SYNC_INTERVAL_MINUTES: value('setting-sync-interval'),
@@ -1657,6 +1695,8 @@
         const drafting =
           settings.DRAFT_PROVIDER === 'TEMPLATE' ||
           (settings.DRAFT_PROVIDER === 'GEMINI' && secrets.GEMINI_API_KEY) ||
+          (settings.DRAFT_PROVIDER === 'OPENAI' && secrets.OPENAI_API_KEY) ||
+          (settings.DRAFT_PROVIDER === 'ANTHROPIC' && secrets.ANTHROPIC_API_KEY) ||
           (settings.DRAFT_PROVIDER === 'CUSTOM_WEBHOOK' && secrets.DRAFT_WEBHOOK_URL);
         return { discovery, enrichment, drafting };
       }

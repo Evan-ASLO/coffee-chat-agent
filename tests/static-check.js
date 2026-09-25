@@ -19,6 +19,12 @@ const scriptBlocks = Array.from(html.matchAll(/<script>([\s\S]*?)<\/script>/gi))
 assert.equal(scriptBlocks.length, 1, 'Index.html should contain one executable script block.');
 new vm.Script(scriptBlocks[0][1], { filename: 'Index.inline.js' });
 
+const manifest = JSON.parse(
+  fs.readFileSync(path.join(root, 'appsscript.json'), 'utf8')
+);
+assert.equal(manifest.webapp.access, 'ANYONE');
+assert.equal(manifest.webapp.executeAs, 'USER_ACCESSING');
+
 const context = vm.createContext({
   console,
   Date,
@@ -35,6 +41,7 @@ const context = vm.createContext({
 
 for (const file of [
   'Constants.gs',
+  'Http.gs',
   'Repository.gs',
   'Discovery.gs',
   'Enrichment.gs',
@@ -81,6 +88,8 @@ assert.equal(context.normalizeHttpUrl_('https://example.com/profile'), 'https://
 assert.equal(context.sheetSafeValue_('=IMPORTXML("https://example.com")'), '\'=IMPORTXML("https://example.com")');
 assert.equal(context.sheetSafeValue_('Normal text'), 'Normal text');
 assert.equal(context.normalizeSettingValue_('DRAFT_PROVIDER', 'template'), 'TEMPLATE');
+assert.equal(context.normalizeSettingValue_('DRAFT_PROVIDER', 'openai'), 'OPENAI');
+assert.equal(context.normalizeSettingValue_('DRAFT_PROVIDER', 'anthropic'), 'ANTHROPIC');
 assert.equal(context.normalizeSettingValue_('DISCOVERY_PROVIDER', 'tavily'), 'TAVILY');
 assert.throws(() => context.normalizeSettingValue_('EMAIL_WORD_LIMIT', '999'));
 
@@ -150,6 +159,67 @@ const templateDraft = context.draftWithTemplate_(
   }
 );
 assert.ok(templateDraft.body.split(/\s+/).filter(Boolean).length <= 140);
+assert.ok(
+  templateDraft.body.indexOf('Your work as Investor at Example Ventures') !== -1
+);
+assert.ok(
+  templateDraft.body.indexOf('My current goal') === -1,
+  'Template should frame the learning goal as a recipient-focused question.'
+);
+
+const openAiText = context.extractOpenAIText_({
+  output: [{
+    content: [{
+      type: 'output_text',
+      text: '{"subject":"Hello","body":"Body","personalizationNotes":"Notes"}'
+    }]
+  }]
+});
+assert.equal(JSON.parse(openAiText).subject, 'Hello');
+
+const geminiText = context.extractGeminiInteractionText_({
+  steps: [{
+    type: 'model_output',
+    content: [{
+      type: 'text',
+      text: '{"subject":"Gemini","body":"Body","personalizationNotes":"Notes"}'
+    }]
+  }]
+});
+assert.equal(JSON.parse(geminiText).subject, 'Gemini');
+
+const parsedModelDraft = context.parseDraftJsonText_(
+  '```json\n{"subject":"Hi","body":"Body","personalizationNotes":"Notes"}\n```',
+  'Test draft'
+);
+assert.equal(parsedModelDraft.subject, 'Hi');
+assert.equal(
+  context.isRetryableHttpError_(new Error('Gemini returned HTTP 503: busy')),
+  true
+);
+assert.equal(
+  context.isRetryableHttpError_(new Error('Gemini returned HTTP 400: bad request')),
+  false
+);
+
+const recipientPrompt = context.buildDraftPrompt_(
+  {
+    firstName: 'Alex',
+    fullName: 'Alex Chen',
+    title: 'Investor',
+    company: 'Example Ventures',
+    sourceSnippet: 'Focuses on early-stage fintech investments.',
+    whyRelevant: 'Matched venture capital.'
+  },
+  [{ category: 'Background summary', content: 'I study finance.' }],
+  {
+    SENDER_NAME: 'Evan',
+    OUTREACH_GOAL: 'Learn about early-stage investing.',
+    EMAIL_WORD_LIMIT: '140'
+  }
+);
+assert.ok(recipientPrompt.includes('majority of the email must focus on the recipient'));
+assert.ok(recipientPrompt.includes('at most one short sentence about the sender'));
 
 const snippet = context.makeReplySnippet_(
   'Happy to chat next week.\n\nOn Friday, Person wrote:\n> Original message'
@@ -170,6 +240,10 @@ assert.ok(draft.wordCount > 0);
 assert.ok(
   Array.from(context.APP.PROSPECT_HEADERS).includes('outreachObjective'),
   'Prospects must preserve the search-specific outreach objective.'
+);
+assert.ok(
+  Array.from(context.STATUS_TRANSITIONS.DRAFT_READY).includes('PREPARING'),
+  'Draft-ready prospects must support safe regeneration.'
 );
 
 console.log(

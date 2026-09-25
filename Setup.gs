@@ -1,6 +1,6 @@
 function setupCoffeeChatAgent() {
   return withScriptLock_(function () {
-    var properties = PropertiesService.getScriptProperties();
+    var properties = getUserProperties_();
     var spreadsheet = getOrCreateSpreadsheet_(properties);
 
     ensureSheet_(spreadsheet, APP.SHEETS.PROSPECTS, APP.PROSPECT_HEADERS);
@@ -13,7 +13,8 @@ function setupCoffeeChatAgent() {
     installReplySyncTrigger_();
     logActivity_('SETUP_COMPLETED', '', {
       version: APP.VERSION,
-      spreadsheetId: spreadsheet.getId()
+      spreadsheetId: spreadsheet.getId(),
+      accountEmail: getActorEmail_()
     });
 
     return {
@@ -46,7 +47,7 @@ function getOrCreateSpreadsheet_(properties) {
 }
 
 function getSpreadsheet_() {
-  var id = PropertiesService.getScriptProperties().getProperty(APP.PROPERTY_SPREADSHEET_ID);
+  var id = getUserProperties_().getProperty(APP.PROPERTY_SPREADSHEET_ID);
   assert_(id, 'Run setupCoffeeChatAgent() before using the app.');
   try {
     return SpreadsheetApp.openById(id);
@@ -109,6 +110,9 @@ function seedSettings_() {
   if (existing.DISCOVERY_PROVIDER === 'GOOGLE_CSE') {
     updateSettings_({ DISCOVERY_PROVIDER: 'TAVILY' });
   }
+  if (existing.GEMINI_MODEL === 'gemini-2.5-flash') {
+    updateSettings_({ GEMINI_MODEL: 'gemini-3.8-flash' });
+  }
 }
 
 function seedPersonalContext_() {
@@ -164,7 +168,7 @@ function installReplySyncTrigger_(force) {
 
 function getSecret_(key, required) {
   assert_(SECRET_KEYS.indexOf(key) !== -1, 'Unknown secret key: ' + key);
-  var value = PropertiesService.getScriptProperties().getProperty(key) || '';
+  var value = getUserProperties_().getProperty(key) || '';
   if (required) {
     assert_(value, key + ' is not configured.');
   }
@@ -173,7 +177,7 @@ function getSecret_(key, required) {
 
 function saveSecrets_(updates) {
   assert_(updates && typeof updates === 'object', 'Secret updates must be an object.');
-  var properties = PropertiesService.getScriptProperties();
+  var properties = getUserProperties_();
   Object.keys(updates).forEach(function (key) {
     assert_(SECRET_KEYS.indexOf(key) !== -1, 'Unknown secret key: ' + key);
     var value = asText_(updates[key], 10000);
@@ -192,14 +196,68 @@ function saveSecrets_(updates) {
 
 function clearSecret_(key) {
   assert_(SECRET_KEYS.indexOf(key) !== -1, 'Unknown secret key: ' + key);
-  PropertiesService.getScriptProperties().deleteProperty(key);
+  getUserProperties_().deleteProperty(key);
   return getSecretConfiguration_();
 }
 
 function getSecretConfiguration_() {
-  var properties = PropertiesService.getScriptProperties();
+  var properties = getUserProperties_();
   return SECRET_KEYS.reduce(function (result, key) {
     result[key] = Boolean(properties.getProperty(key));
     return result;
   }, {});
+}
+
+function migrateLegacyOwnerToUserProperties() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var legacy = PropertiesService.getScriptProperties();
+    var user = getUserProperties_();
+    var keys = [
+      APP.PROPERTY_SPREADSHEET_ID,
+      APP.PROPERTY_LAST_CRITERIA
+    ].concat(SECRET_KEYS);
+    var copied = [];
+
+    keys.forEach(function (key) {
+      var legacyValue = legacy.getProperty(key);
+      if (legacyValue && !user.getProperty(key)) {
+        user.setProperty(key, legacyValue);
+        copied.push(key);
+      }
+    });
+
+    return {
+      accountEmail: getActorEmail_(),
+      copiedKeys: copied,
+      spreadsheetId: user.getProperty(APP.PROPERTY_SPREADSHEET_ID) || ''
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function clearLegacyScriptStorage() {
+  var lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    var legacy = PropertiesService.getScriptProperties();
+    var keys = [
+      APP.PROPERTY_SPREADSHEET_ID,
+      APP.PROPERTY_LAST_CRITERIA
+    ].concat(SECRET_KEYS);
+    var removed = keys.filter(function (key) {
+      return Boolean(legacy.getProperty(key));
+    });
+    removed.forEach(function (key) {
+      legacy.deleteProperty(key);
+    });
+    return {
+      removedKeys: removed,
+      accountEmail: getActorEmail_()
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }

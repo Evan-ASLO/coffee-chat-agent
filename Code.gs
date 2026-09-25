@@ -50,7 +50,7 @@ function clearConfiguredSecret(key) {
 }
 
 function getAppState_() {
-  var spreadsheetId = PropertiesService.getScriptProperties()
+  var spreadsheetId = getUserProperties_()
     .getProperty(APP.PROPERTY_SPREADSHEET_ID);
   if (!spreadsheetId) {
     return {
@@ -58,6 +58,7 @@ function getAppState_() {
       version: APP.VERSION,
       setupRequired: true,
       accountEmail: getActorEmail_(),
+      storageScope: 'GOOGLE_USER',
       settings: defaultSettingsForClient_(),
       personalContext: [],
       prospects: [],
@@ -74,6 +75,7 @@ function getAppState_() {
     version: APP.VERSION,
     setupRequired: false,
     accountEmail: getActorEmail_(),
+    storageScope: 'GOOGLE_USER',
     spreadsheetId: spreadsheet.getId(),
     spreadsheetUrl: spreadsheet.getUrl(),
     settings: Object.assign(defaultSettingsForClient_(), getSettings_()),

@@ -1,6 +1,6 @@
 var APP = Object.freeze({
   NAME: 'Coffee Chat Agent',
-  VERSION: '1.0.0',
+  VERSION: '2.0.0',
   PROPERTY_SPREADSHEET_ID: 'COFFEE_CHAT_SPREADSHEET_ID',
   PROPERTY_LAST_CRITERIA: 'COFFEE_CHAT_LAST_CRITERIA',
   SHEETS: Object.freeze({
@@ -72,7 +72,7 @@ var STATUS_TRANSITIONS = Object.freeze({
   DISCOVERED: Object.freeze(['CONTACT_APPROVED', 'REJECTED']),
   CONTACT_APPROVED: Object.freeze(['PREPARING', 'REJECTED', 'ERROR']),
   PREPARING: Object.freeze(['DRAFT_READY', 'ERROR']),
-  DRAFT_READY: Object.freeze(['SENDING', 'REJECTED', 'ERROR']),
+  DRAFT_READY: Object.freeze(['PREPARING', 'SENDING', 'REJECTED', 'ERROR']),
   SENDING: Object.freeze(['SENT', 'ERROR']),
   SENT: Object.freeze(['REPLIED', 'ERROR']),
   REPLIED: Object.freeze(['REPLIED']),
@@ -90,12 +90,20 @@ var DEFAULT_SETTINGS = Object.freeze({
     description: 'NONE, CUSTOM_WEBHOOK, or HUNTER.'
   }),
   DRAFT_PROVIDER: Object.freeze({
-    value: 'GEMINI',
-    description: 'GEMINI, TEMPLATE, or CUSTOM_WEBHOOK.'
+    value: 'TEMPLATE',
+    description: 'TEMPLATE, GEMINI, OPENAI, ANTHROPIC, or CUSTOM_WEBHOOK.'
   }),
   GEMINI_MODEL: Object.freeze({
-    value: 'gemini-2.5-flash',
+    value: 'gemini-3.8-flash',
     description: 'Gemini model used to draft personalized outreach.'
+  }),
+  OPENAI_MODEL: Object.freeze({
+    value: 'gpt-5-mini',
+    description: 'OpenAI model used to draft personalized outreach.'
+  }),
+  ANTHROPIC_MODEL: Object.freeze({
+    value: 'claude-haiku-4-5',
+    description: 'Anthropic model used to draft personalized outreach.'
   }),
   MAX_DISCOVERY_RESULTS: Object.freeze({
     value: '15',
@@ -128,6 +136,8 @@ var SECRET_KEYS = Object.freeze([
   'GOOGLE_CSE_API_KEY',
   'GOOGLE_CSE_ID',
   'GEMINI_API_KEY',
+  'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
   'DISCOVERY_WEBHOOK_URL',
   'DISCOVERY_WEBHOOK_TOKEN',
   'ENRICHMENT_WEBHOOK_URL',
@@ -217,11 +227,15 @@ function normalizeDomain_(value) {
 }
 
 function getActorEmail_() {
-  return Session.getEffectiveUser().getEmail() || Session.getActiveUser().getEmail() || 'unknown';
+  return Session.getActiveUser().getEmail() || Session.getEffectiveUser().getEmail() || 'unknown';
+}
+
+function getUserProperties_() {
+  return PropertiesService.getUserProperties();
 }
 
 function withScriptLock_(callback) {
-  var lock = LockService.getScriptLock();
+  var lock = LockService.getUserLock();
   lock.waitLock(30000);
   try {
     return callback();

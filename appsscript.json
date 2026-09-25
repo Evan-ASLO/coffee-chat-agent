@@ -11,7 +11,7 @@
     "https://www.googleapis.com/auth/userinfo.email"
   ],
   "webapp": {
-    "access": "MYSELF",
-    "executeAs": "USER_DEPLOYING"
+    "access": "ANYONE",
+    "executeAs": "USER_ACCESSING"
   }
 }

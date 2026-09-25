@@ -43,6 +43,28 @@ function postJson_(url, payload, token, label) {
   );
 }
 
+function fetchJsonWithRetry_(url, options, label, maxAttempts) {
+  var attempts = clamp_(asNumber_(maxAttempts, 3), 1, 5);
+  var lastError;
+  for (var attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return fetchJson_(url, options, label);
+    } catch (error) {
+      lastError = error;
+      if (!isRetryableHttpError_(error) || attempt === attempts) {
+        throw error;
+      }
+      Utilities.sleep(700 * Math.pow(2, attempt - 1));
+    }
+  }
+  throw lastError;
+}
+
+function isRetryableHttpError_(error) {
+  var message = error && error.message ? error.message : String(error || '');
+  return /returned HTTP (?:429|500|502|503|504)\b/.test(message);
+}
+
 function buildQueryString_(params) {
   return Object.keys(params)
     .filter(function (key) {

@@ -35,7 +35,7 @@ function appendSheetObjects_(name, headers, items) {
 
 function getSettings_() {
   var settings = {};
-  var spreadsheetId = PropertiesService.getScriptProperties().getProperty(APP.PROPERTY_SPREADSHEET_ID);
+  var spreadsheetId = getUserProperties_().getProperty(APP.PROPERTY_SPREADSHEET_ID);
   if (!spreadsheetId) {
     return settings;
   }
@@ -97,15 +97,15 @@ function normalizeSettingValue_(key, value) {
   var enums = {
     DISCOVERY_PROVIDER: ['TAVILY', 'GOOGLE_CSE', 'CUSTOM_WEBHOOK'],
     ENRICHMENT_PROVIDER: ['NONE', 'HUNTER', 'CUSTOM_WEBHOOK'],
-    DRAFT_PROVIDER: ['GEMINI', 'TEMPLATE', 'CUSTOM_WEBHOOK']
+    DRAFT_PROVIDER: ['TEMPLATE', 'GEMINI', 'OPENAI', 'ANTHROPIC', 'CUSTOM_WEBHOOK']
   };
   if (enums[key]) {
     text = text.toUpperCase();
     assert_(enums[key].indexOf(text) !== -1, 'Invalid value for ' + key + '.');
     return text;
   }
-  if (key === 'GEMINI_MODEL') {
-    assert_(/^[a-z0-9._-]+$/i.test(text), 'GEMINI_MODEL contains unsupported characters.');
+  if (['GEMINI_MODEL', 'OPENAI_MODEL', 'ANTHROPIC_MODEL'].indexOf(key) !== -1) {
+    assert_(/^[a-z0-9._:-]+$/i.test(text), key + ' contains unsupported characters.');
     return text;
   }
   var numericRanges = {
@@ -307,14 +307,14 @@ function patchProspect_(id, patch, options) {
 }
 
 function saveLastCriteria_(criteria) {
-  PropertiesService.getScriptProperties().setProperty(
+  getUserProperties_().setProperty(
     APP.PROPERTY_LAST_CRITERIA,
     JSON.stringify(criteria)
   );
 }
 
 function getLastCriteria_() {
-  var value = PropertiesService.getScriptProperties().getProperty(APP.PROPERTY_LAST_CRITERIA);
+  var value = getUserProperties_().getProperty(APP.PROPERTY_LAST_CRITERIA);
   return value ? parseJson_(value, 'Saved search criteria') : {};
 }
 

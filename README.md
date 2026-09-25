@@ -4,8 +4,10 @@ A private, approval-first Google Apps Script application for finding relevant
 professionals, preparing personalized outreach, sending through Gmail, and
 tracking replies in Google Sheets.
 
-The application belongs to the personal Google account that deploys it. It does
-not depend on a Microsoft tenant or this Copilot session after installation.
+The deployment hosts shared code, but every signed-in Google user receives an
+isolated workspace owned by that user's Google account: a private Sheet, Gmail
+authorization, scheduled reply trigger, personal context, settings, and API
+keys. It does not depend on a Microsoft tenant or this Copilot session.
 
 ## What it does
 
@@ -28,9 +30,12 @@ not depend on a Microsoft tenant or this Copilot session after installation.
 - There is no bulk-send action.
 - The application does not scrape LinkedIn, log in to LinkedIn, or automate
   LinkedIn messages. Tavily discovery uses only publicly indexed search results.
-- API keys and webhook tokens are stored in Apps Script Properties, not in the
-  spreadsheet or browser.
-- The web app should be deployed with access set to **Only myself**.
+- API keys and webhook tokens are stored in Apps Script **User Properties** for
+  the signed-in Google account, not in the spreadsheet, browser, or another
+  user's property store.
+- The web app runs as **User accessing the web app** and allows **Anyone with a
+  Google account**. Each user must authorize their own Drive, Sheets, Gmail, and
+  trigger access.
 - Apps Script's native `GmailApp` service requires the full Gmail OAuth scope.
   This application uses it only to send an explicitly approved message, find
   the resulting thread, and inspect that tracked thread for replies.
@@ -45,13 +50,13 @@ not depend on a Microsoft tenant or this Copilot session after installation.
 | `Repository.gs` | Sheet reads, writes, deduplication, audit activity |
 | `Discovery.gs` | Tavily search, legacy Google search, and custom discovery adapters |
 | `Enrichment.gs` | Approval workflow, Hunter, and custom enrichment adapter |
-| `Drafting.gs` | Gemini, built-in template, and custom drafting adapter |
+| `Drafting.gs` | Gemini, OpenAI, Anthropic, template, and custom drafting adapters |
 | `GmailSync.gs` | Draft edits, approved sends, reply synchronization |
 | `Http.gs` | Explicit JSON HTTP helpers |
 | `Index.html` | Responsive approval dashboard |
 | `appsscript.json` | Apps Script manifest and OAuth scopes |
 
-## Install in a personal Google account
+## Deploy for isolated Google users
 
 ### Fastest setup
 
@@ -89,16 +94,17 @@ not depend on a Microsoft tenant or this Copilot session after installation.
    clasp open
    ```
 
-6. Run `setupCoffeeChatAgent` once in the Apps Script editor and approve the
-   Google permissions.
+6. Select **Deploy > New deployment > Web app**:
 
-7. Select **Deploy > New deployment > Web app**:
+   - Execute as: **User accessing the web app**
+   - Who has access: **Anyone with a Google account**
 
-   - Execute as: **Me**
-   - Who has access: **Only myself**
+7. Each user opens the deployment URL, authorizes the app, and selects
+   **Initialize private workspace**. Initialization creates a Sheet and reply
+   trigger in that user's account.
 
-8. Open the deployment URL. Under **Profile & connections**, enter your name,
-   personal context, Tavily API key, and Hunter API key.
+8. Under **Profile & connections**, that user enters their own name, personal
+   context, provider choices, and API keys.
 
 ### Option A: `clasp`
 
@@ -117,15 +123,10 @@ not depend on a Microsoft tenant or this Copilot session after installation.
    clasp open
    ```
 
-3. In the Apps Script editor, run `setupCoffeeChatAgent` once and approve the
-   requested Google permissions.
+3. Deploy the web app as **User accessing the web app** with access for
+   **Anyone with a Google account**.
 
-4. Select **Deploy > New deployment > Web app**:
-
-   - Execute as: **Me**
-   - Who has access: **Only myself**
-
-5. Open the web app URL and complete **Profile & connections**.
+4. Open the web app URL and initialize/configure each account separately.
 
 ### Option B: copy files manually
 
@@ -135,11 +136,25 @@ not depend on a Microsoft tenant or this Copilot session after installation.
    file named `Index`.
 3. Enable the manifest in **Project Settings**, then replace it with
    `appsscript.json`.
-4. Run `setupCoffeeChatAgent`, approve permissions, and deploy the web app using
-   the settings above.
+4. Deploy the web app using the settings above.
 
-The first setup run creates a spreadsheet named **Coffee Chat Agent CRM** and a
-time-based trigger for `syncRepliesTrigger`.
+The first initialization by each user creates a spreadsheet named **Coffee Chat
+Agent CRM** and that user's time-based `syncRepliesTrigger`.
+
+### Upgrade an existing single-user deployment
+
+Before changing an existing deployment from **Execute as me** to **User
+accessing the web app**:
+
+1. Upload the new code.
+2. In the Apps Script editor, run `migrateLegacyOwnerToUserProperties` while
+   signed in as the original owner.
+3. Run `setupCoffeeChatAgent` once to seed any new settings.
+4. Update the web-app deployment to **User accessing the web app** and
+   **Anyone with a Google account**.
+5. Run `clearLegacyScriptStorage` in the editor. This removes the old global
+   Sheet ID and API keys after the owner copy is safely stored in User
+   Properties.
 
 ## Configure your workflow
 
@@ -263,10 +278,20 @@ Return the enriched object directly or under a `person` property:
 
 ### Draft providers
 
-- `GEMINI`: add a Gemini API key and select a compatible model.
 - `TEMPLATE`: uses a deterministic personal template and requires no external
-  AI provider.
+  AI provider. It keeps sender context to one short sentence and centers the
+  recipient's public role/profile evidence.
+- `GEMINI`: add the signed-in user's Gemini API key and model.
+- `OPENAI`: add the signed-in user's OpenAI API key and model. The adapter uses
+  the Responses API.
+- `ANTHROPIC`: add the signed-in user's Anthropic API key and model. The adapter
+  uses the Messages API.
 - `CUSTOM_WEBHOOK`: configure a URL and optional bearer token.
+
+All AI providers receive only the selected prospect's public evidence, the
+signed-in user's supplied personal context, and drafting settings. The shared
+prompt requires the opening and majority of the email to focus on the recipient
+and limits sender background to one relevant sentence.
 
 Custom draft request:
 
@@ -316,6 +341,33 @@ Reply synchronization checks only messages sent by this application within the
 configured lookback window. It updates `status`, `lastReplyAt`, `replyFrom`, and
 `replySnippet`; it does not automatically respond.
 
+## Architecture and request flow
+
+1. `doGet()` serves `Index.html`, a client-side dashboard that calls server
+   functions through `google.script.run`.
+2. `getAppState()` resolves the current Google user's User Properties. If no
+   Sheet ID exists, the dashboard asks that user to initialize.
+3. `setupCoffeeChatAgent()` creates that user's Sheet tabs, default settings,
+   personal-context rows, and scheduled reply trigger.
+4. `Discovery.gs` sends criteria to Tavily or a custom provider, normalizes
+   public LinkedIn results, scores them, deduplicates them, and writes
+   `DISCOVERED` rows.
+5. The first approval changes a prospect to `CONTACT_APPROVED`, then
+   `Enrichment.gs` asks Hunter or a custom provider for an email. A Hunter miss
+   is recorded but does not block drafting.
+6. `Drafting.gs` selects the user's configured adapter—template, Gemini,
+   OpenAI, Anthropic, or webhook—and applies the same recipient-focused prompt
+   and output validation.
+7. The resulting `DRAFT_READY` row is editable. `GmailSync.gs` sends only after
+   the second explicit confirmation, records Gmail message/thread IDs, and
+   moves the row to `SENT`.
+8. Each user's installable trigger scans only their sent Gmail threads and
+   updates their own Sheet to `REPLIED` when a new incoming message appears.
+
+Prospect statuses and `STATUS_TRANSITIONS` enforce the workflow server-side;
+the UI is not trusted to skip approval states. User locks serialize mutations
+within one Google account without blocking unrelated users.
+
 ## Validation
 
 Run the dependency-free checks locally:
@@ -334,8 +386,11 @@ validation, reply extraction, and draft validation.
   before approval.
 - Automatic email discovery requires Hunter or a custom enrichment provider.
 - Gmail and Apps Script quotas apply.
-- Gemini drafting sends the selected public profile evidence and your supplied
-  personal context to the Gemini API. Use the built-in template if you do not
-  want those fields sent to an AI provider.
+- AI drafting sends selected public profile evidence and the user's supplied
+  personal context to the provider that user selected. Use the built-in
+  template if those fields should not leave Google Apps Script.
+- A multi-user Apps Script deployment can show Google's unverified-app warning
+  until the deployment's OAuth consent screen is verified. Only trusted users
+  should proceed while the app remains unverified.
 - You are responsible for complying with applicable anti-spam, privacy, and
   professional-conduct requirements.
