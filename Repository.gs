@@ -95,7 +95,7 @@ function updateSettings_(updates) {
 function normalizeSettingValue_(key, value) {
   var text = asText_(value, 10000);
   var enums = {
-    DISCOVERY_PROVIDER: ['GOOGLE_CSE', 'CUSTOM_WEBHOOK'],
+    DISCOVERY_PROVIDER: ['TAVILY', 'GOOGLE_CSE', 'CUSTOM_WEBHOOK'],
     ENRICHMENT_PROVIDER: ['NONE', 'HUNTER', 'CUSTOM_WEBHOOK'],
     DRAFT_PROVIDER: ['GEMINI', 'TEMPLATE', 'CUSTOM_WEBHOOK']
   };

@@ -3,5 +3,6 @@
 .env.*
 node_modules/
 tests/preview.generated.html
+tests/bundle.generated.gs
 *.log
 *.zip

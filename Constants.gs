@@ -82,8 +82,8 @@ var STATUS_TRANSITIONS = Object.freeze({
 
 var DEFAULT_SETTINGS = Object.freeze({
   DISCOVERY_PROVIDER: Object.freeze({
-    value: 'GOOGLE_CSE',
-    description: 'GOOGLE_CSE or CUSTOM_WEBHOOK.'
+    value: 'TAVILY',
+    description: 'TAVILY or CUSTOM_WEBHOOK.'
   }),
   ENRICHMENT_PROVIDER: Object.freeze({
     value: 'HUNTER',
@@ -124,6 +124,7 @@ var DEFAULT_SETTINGS = Object.freeze({
 });
 
 var SECRET_KEYS = Object.freeze([
+  'TAVILY_API_KEY',
   'GOOGLE_CSE_API_KEY',
   'GOOGLE_CSE_ID',
   'GEMINI_API_KEY',

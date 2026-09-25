@@ -27,7 +27,7 @@ not depend on a Microsoft tenant or this Copilot session after installation.
   Gmail sends.
 - There is no bulk-send action.
 - The application does not scrape LinkedIn, log in to LinkedIn, or automate
-  LinkedIn messages. Google discovery uses only publicly indexed search results.
+  LinkedIn messages. Tavily discovery uses only publicly indexed search results.
 - API keys and webhook tokens are stored in Apps Script Properties, not in the
   spreadsheet or browser.
 - The web app should be deployed with access set to **Only myself**.
@@ -43,7 +43,7 @@ not depend on a Microsoft tenant or this Copilot session after installation.
 | `Constants.gs` | Data model, settings, status transitions, validation |
 | `Setup.gs` | Spreadsheet creation, defaults, credentials, scheduled trigger |
 | `Repository.gs` | Sheet reads, writes, deduplication, audit activity |
-| `Discovery.gs` | Google Programmable Search and custom discovery adapter |
+| `Discovery.gs` | Tavily search, legacy Google search, and custom discovery adapters |
 | `Enrichment.gs` | Approval workflow, Hunter, and custom enrichment adapter |
 | `Drafting.gs` | Gemini, built-in template, and custom drafting adapter |
 | `GmailSync.gs` | Draft edits, approved sends, reply synchronization |
@@ -98,7 +98,7 @@ not depend on a Microsoft tenant or this Copilot session after installation.
    - Who has access: **Only myself**
 
 8. Open the deployment URL. Under **Profile & connections**, enter your name,
-   personal context, Google Search credentials, and Hunter API key.
+   personal context, Tavily API key, and Hunter API key.
 
 ### Option A: `clasp`
 
@@ -162,15 +162,17 @@ claims about content that was not supplied.
 
 ### Discovery providers
 
-#### Google Programmable Search
+#### Tavily
 
-1. Create a [Programmable Search Engine](https://programmablesearchengine.google.com/)
-   configured to search the web.
-2. Enable the Custom Search JSON API in a Google Cloud project.
-3. Add `GOOGLE_CSE_API_KEY` and `GOOGLE_CSE_ID` in the dashboard.
+Tavily is the default because Google no longer accepts new Custom Search JSON
+API customers. Create a free account at [Tavily](https://app.tavily.com), then
+paste its API key into **Profile & connections**. Tavily currently includes
+1,000 free API credits each month without requiring a credit card.
 
-Results are restricted to public URLs matching `linkedin.com/in/`; the
-application reads the search result title, URL, and snippet only.
+Searches use the basic one-credit mode and add a LinkedIn profile restriction
+to the query. The application then rejects every result that is not a valid
+public `linkedin.com/in/` URL and reads only the returned title, URL, and public
+content snippet.
 
 #### Custom webhook
 
@@ -224,8 +226,12 @@ Return either an array or `{ "people": [...] }`. Supported person fields:
   [free Hunter account](https://hunter.io/users/sign_up), copy the key from
   [Hunter API Keys](https://hunter.io/api-keys), and paste it into **Profile &
   connections**. The adapter calls Hunter Email Finder using the approved name
-  and company domain or name. Free-plan quotas are controlled by Hunter and may
-  change.
+  and company domain/name when available, otherwise it uses the approved public
+  LinkedIn profile handle with the person's first and last name. Free-plan
+  quotas are controlled by Hunter and may change.
+- When Hunter has no matching profile, preparation continues without an email;
+  the draft review screen displays **Email needed** so you can add a verified
+  address manually. The agent never guesses an email address.
 - `CUSTOM_WEBHOOK`: configure a URL and optional bearer token.
 
 Custom enrichment request:

@@ -94,19 +94,21 @@ function seedSettings_() {
   var missing = Object.keys(DEFAULT_SETTINGS).filter(function (key) {
     return existing[key] === undefined;
   });
-  if (!missing.length) {
-    return;
+  if (missing.length) {
+    var sheet = getSheet_(APP.SHEETS.SETTINGS);
+    var rows = missing.map(function (key) {
+      return [
+        key,
+        DEFAULT_SETTINGS[key].value,
+        DEFAULT_SETTINGS[key].description
+      ];
+    });
+    sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, APP.SETTINGS_HEADERS.length).setValues(rows);
   }
 
-  var sheet = getSheet_(APP.SHEETS.SETTINGS);
-  var rows = missing.map(function (key) {
-    return [
-      key,
-      DEFAULT_SETTINGS[key].value,
-      DEFAULT_SETTINGS[key].description
-    ];
-  });
-  sheet.getRange(sheet.getLastRow() + 1, 1, rows.length, APP.SETTINGS_HEADERS.length).setValues(rows);
+  if (existing.DISCOVERY_PROVIDER === 'GOOGLE_CSE') {
+    updateSettings_({ DISCOVERY_PROVIDER: 'TAVILY' });
+  }
 }
 
 function seedPersonalContext_() {

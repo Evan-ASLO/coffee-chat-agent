@@ -8,7 +8,9 @@ function discoverProspects(criteria) {
   var provider = asText_(settings.DISCOVERY_PROVIDER, 100).toUpperCase();
   var prospects;
 
-  if (provider === 'GOOGLE_CSE') {
+  if (provider === 'TAVILY') {
+    prospects = discoverWithTavily_(normalizedCriteria);
+  } else if (provider === 'GOOGLE_CSE') {
     prospects = discoverWithGoogleCse_(normalizedCriteria, settings);
   } else if (provider === 'CUSTOM_WEBHOOK') {
     prospects = discoverWithWebhook_(normalizedCriteria);
@@ -135,7 +137,59 @@ function discoverWithGoogleCse_(criteria, settings) {
       if (candidates.length >= criteria.count) {
         return;
       }
-      var candidate = candidateFromSearchResult_(item, criteria);
+      var candidate = candidateFromSearchResult_(item, criteria, 'GOOGLE_CSE');
+      if (candidate) {
+        var keys = candidateDedupeKeys_(candidate);
+        if (keys.some(function (key) { return seen[key]; })) {
+          return;
+        }
+        keys.forEach(function (key) { seen[key] = true; });
+        candidates.push(candidate);
+      }
+    });
+    return candidates.length >= criteria.count;
+  });
+
+  return dedupeCandidates_(candidates).slice(0, criteria.count);
+}
+
+function discoverWithTavily_(criteria) {
+  var queries = buildDiscoveryQueries_(criteria);
+  var candidates = [];
+  var seen = {};
+
+  queries.some(function (query) {
+    var remaining = criteria.count - candidates.length;
+    if (remaining <= 0) {
+      return true;
+    }
+    var result = postJson_(
+      'https://api.tavily.com/search',
+      {
+        query: query,
+        search_depth: 'basic',
+        max_results: Math.min(APP.MAX_BATCH_SIZE, remaining),
+        topic: 'general',
+        include_answer: false,
+        include_raw_content: false,
+        safe_search: true
+      },
+      getSecret_('TAVILY_API_KEY', true),
+      'Tavily Search'
+    );
+    (result.results || []).forEach(function (item) {
+      if (candidates.length >= criteria.count) {
+        return;
+      }
+      var candidate = candidateFromSearchResult_(
+        {
+          link: item.url,
+          title: item.title,
+          snippet: item.content
+        },
+        criteria,
+        'TAVILY'
+      );
       if (candidate) {
         var keys = candidateDedupeKeys_(candidate);
         if (keys.some(function (key) { return seen[key]; })) {
@@ -191,7 +245,7 @@ function quoteSearchTerm_(term) {
   return '"' + asText_(term, 150).replace(/"/g, '') + '"';
 }
 
-function candidateFromSearchResult_(item, criteria) {
+function candidateFromSearchResult_(item, criteria, provider) {
   var link = normalizeLinkedInUrl_(item.link);
   if (!/linkedin\.com\/in\//i.test(link)) {
     return null;
@@ -210,7 +264,7 @@ function candidateFromSearchResult_(item, criteria) {
     company: parsed.company,
     location: '',
     linkedinUrl: link,
-    discoveryProvider: 'GOOGLE_CSE',
+    discoveryProvider: provider || 'WEB_SEARCH',
     sourceUrl: link,
     sourceSnippet: asText_(item.snippet, 3000),
     whyRelevant: score.reasons.join('; ') || 'Matched the public profile search criteria.',

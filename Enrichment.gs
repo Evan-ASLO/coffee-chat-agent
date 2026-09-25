@@ -134,23 +134,28 @@ function enrichProspect_(prospect, settings) {
 }
 
 function enrichWithHunter_(prospect) {
-  assert_(prospect.firstName && prospect.lastName, 'Hunter requires a first and last name.');
-  assert_(
-    prospect.companyDomain || prospect.company,
-    'Hunter requires a company domain or company name.'
+  var params = buildHunterEmailFinderParams_(
+    prospect,
+    getSecret_('HUNTER_API_KEY', true)
   );
-  var response = fetchJson_(
-    'https://api.hunter.io/v2/email-finder?' +
-      buildQueryString_({
-        domain: prospect.companyDomain,
-        company: prospect.companyDomain ? '' : prospect.company,
-        first_name: prospect.firstName,
-        last_name: prospect.lastName,
-        api_key: getSecret_('HUNTER_API_KEY', true)
-      }),
-    null,
-    'Hunter Email Finder'
-  );
+  var response;
+  try {
+    response = fetchJson_(
+      'https://api.hunter.io/v2/email-finder?' +
+        buildQueryString_(params),
+      null,
+      'Hunter Email Finder'
+    );
+  } catch (error) {
+    if (isHunterNotFoundError_(error)) {
+      logActivity_('EMAIL_NOT_FOUND', prospect.id, {
+        provider: 'HUNTER',
+        linkedinUrl: prospect.linkedinUrl
+      });
+      return {};
+    }
+    throw error;
+  }
   var data = response.data || {};
   return normalizeEnrichmentResult_({
     email: data.email,
@@ -161,6 +166,46 @@ function enrichWithHunter_(prospect) {
     companyDomain: data.domain,
     company: data.company
   });
+}
+
+function buildHunterEmailFinderParams_(prospect, apiKey) {
+  var params = { api_key: apiKey };
+  if (
+    prospect.firstName &&
+    prospect.lastName &&
+    (prospect.companyDomain || prospect.company)
+  ) {
+    params.domain = prospect.companyDomain;
+    params.company = prospect.companyDomain ? '' : prospect.company;
+    params.first_name = prospect.firstName;
+    params.last_name = prospect.lastName;
+    return params;
+  }
+  var linkedinHandle = extractLinkedInHandle_(prospect.linkedinUrl);
+  if (prospect.firstName && prospect.lastName && linkedinHandle) {
+    params.first_name = prospect.firstName;
+    params.last_name = prospect.lastName;
+    params.linkedin_handle = linkedinHandle;
+    return params;
+  }
+  throw new Error(
+    'Hunter requires a first and last name plus either a company or LinkedIn profile.'
+  );
+}
+
+function extractLinkedInHandle_(linkedinUrl) {
+  var match = normalizeLinkedInUrl_(linkedinUrl).match(
+    /linkedin\.com\/in\/([^/?#]+)/i
+  );
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
+function isHunterNotFoundError_(error) {
+  var message = error && error.message ? error.message : String(error || '');
+  return (
+    message.indexOf('Hunter Email Finder returned HTTP 404') !== -1 &&
+    message.indexOf('"not_found"') !== -1
+  );
 }
 
 function enrichWithWebhook_(prospect) {

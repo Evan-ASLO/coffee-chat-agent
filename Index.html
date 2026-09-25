@@ -952,8 +952,8 @@
             </div>
             ${readiness.discovery ? '' : `
               <div class="notice notice-warning">
-                Add Google Programmable Search credentials or a custom discovery webhook under
-                Profile & connections before running a search.
+                Add a Tavily API key or a custom discovery webhook under Profile & connections
+                before running a search.
               </div>
             `}
             <form id="discovery-form" onsubmit="runDiscovery(event)">
@@ -1207,7 +1207,7 @@
             <div class="grid grid-3">
               ${inputField('setting-sender-name', 'Your name', settings.SENDER_NAME || '', 'text', true)}
               ${selectField('setting-discovery', 'Discovery provider', settings.DISCOVERY_PROVIDER, [
-                ['GOOGLE_CSE', 'Google Programmable Search'],
+                ['TAVILY', 'Tavily free search'],
                 ['CUSTOM_WEBHOOK', 'Custom webhook']
               ])}
               ${selectField('setting-enrichment', 'Email enrichment', settings.ENRICHMENT_PROVIDER, [
@@ -1249,8 +1249,7 @@
               </div>
             </div>
             <div id="secret-rows">
-              ${secretField('GOOGLE_CSE_API_KEY', 'Google Search API key')}
-              ${secretField('GOOGLE_CSE_ID', 'Google Search engine ID')}
+              ${secretField('TAVILY_API_KEY', 'Tavily API key')}
               ${secretField('GEMINI_API_KEY', 'Gemini API key')}
               ${secretField('HUNTER_API_KEY', 'Hunter API key')}
               ${secretField('DISCOVERY_WEBHOOK_URL', 'Discovery webhook URL', 'url')}
@@ -1261,9 +1260,8 @@
               ${secretField('DRAFT_WEBHOOK_TOKEN', 'Draft webhook token')}
             </div>
             <div class="notice notice-info">
-              Recommended free starting setup: Google Programmable Search for public profiles,
-              Hunter's free tier for work-email discovery, and Gemini or the built-in template
-              for drafts.
+              Recommended free starting setup: Tavily for public profile discovery, Hunter's free
+              tier for work-email discovery, and the built-in template for drafts.
             </div>
             <div class="button-row">
               <button class="btn btn-primary" onclick="saveSettings()">Save profile and connections</button>
@@ -1646,9 +1644,12 @@
         const settings = ui.state.settings;
         const secrets = ui.state.secretConfiguration;
         const discovery =
-          settings.DISCOVERY_PROVIDER === 'GOOGLE_CSE'
-            ? secrets.GOOGLE_CSE_API_KEY && secrets.GOOGLE_CSE_ID
-            : settings.DISCOVERY_PROVIDER === 'CUSTOM_WEBHOOK' && secrets.DISCOVERY_WEBHOOK_URL;
+          (settings.DISCOVERY_PROVIDER === 'TAVILY' && secrets.TAVILY_API_KEY) ||
+          (settings.DISCOVERY_PROVIDER === 'GOOGLE_CSE' &&
+            secrets.GOOGLE_CSE_API_KEY &&
+            secrets.GOOGLE_CSE_ID) ||
+          (settings.DISCOVERY_PROVIDER === 'CUSTOM_WEBHOOK' &&
+            secrets.DISCOVERY_WEBHOOK_URL);
         const enrichment =
           settings.ENRICHMENT_PROVIDER === 'NONE' ||
           (settings.ENRICHMENT_PROVIDER === 'HUNTER' && secrets.HUNTER_API_KEY) ||

@@ -122,16 +122,18 @@ function draftWithTemplate_(prospect, context, settings) {
   var goal = contextMap['current goal'] || asText_(settings.OUTREACH_GOAL, 1000);
   var experience = contextMap['experience to reference'] || '';
   var interests = contextMap.interests || '';
-  var personalSentence = experience || background || interests;
+  var personalSource = experience || background || interests;
+  var personalSentence = ensureSentence_(truncateWords_(personalSource, 32));
+  var goalSentence = truncateWords_(goal, 18);
   var lines = [
     'Hi ' + firstName + ',',
     '',
     roleDescription
       ? 'I came across your background as ' + roleDescription + ' and would value learning from your experience.'
       : 'I came across your professional background and would value learning from your experience.',
-    personalSentence ? personalSentence : '',
-    goal ? 'My current goal is: ' + stripTerminalPunctuation_(goal) + '.' : '',
-    'Would you be open to a 15-20 minute coffee chat in the next few weeks? I would be grateful for the chance to hear about your path and perspective.',
+    personalSentence,
+    goalSentence ? 'My current goal: ' + stripTerminalPunctuation_(goalSentence) + '.' : '',
+    'Would you be open to a 15-minute coffee chat in the next few weeks? I would be grateful to hear about your path and perspective.',
     '',
     'Best,',
     asText_(settings.SENDER_NAME, 150)
@@ -201,4 +203,20 @@ function validateDraft_(draft, settings) {
 
 function stripTerminalPunctuation_(value) {
   return asText_(value, 2000).replace(/[.!?]+$/, '');
+}
+
+function truncateWords_(value, maximumWords) {
+  var words = asText_(value, APP.MAX_CELL_TEXT).split(/\s+/).filter(Boolean);
+  if (words.length <= maximumWords) {
+    return words.join(' ');
+  }
+  return words.slice(0, maximumWords).join(' ') + '...';
+}
+
+function ensureSentence_(value) {
+  var text = asText_(value, 3000);
+  if (!text || /\.\.\.$/.test(text) || /[.!?]$/.test(text)) {
+    return text;
+  }
+  return text + '.';
 }

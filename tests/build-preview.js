@@ -16,7 +16,7 @@ const state = {
   accountEmail: 'you@gmail.com',
   spreadsheetUrl: 'https://docs.google.com/spreadsheets/',
   settings: {
-    DISCOVERY_PROVIDER: 'GOOGLE_CSE',
+    DISCOVERY_PROVIDER: 'TAVILY',
     ENRICHMENT_PROVIDER: 'HUNTER',
     DRAFT_PROVIDER: 'GEMINI',
     GEMINI_MODEL: 'gemini-2.5-flash',
@@ -52,8 +52,9 @@ const state = {
     count: 10
   },
   secretConfiguration: {
-    GOOGLE_CSE_API_KEY: true,
-    GOOGLE_CSE_ID: true,
+    TAVILY_API_KEY: true,
+    GOOGLE_CSE_API_KEY: false,
+    GOOGLE_CSE_ID: false,
     GEMINI_API_KEY: true,
     DISCOVERY_WEBHOOK_URL: false,
     DISCOVERY_WEBHOOK_TOKEN: false,

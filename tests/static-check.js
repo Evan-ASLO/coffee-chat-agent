@@ -37,6 +37,7 @@ for (const file of [
   'Constants.gs',
   'Repository.gs',
   'Discovery.gs',
+  'Enrichment.gs',
   'Drafting.gs',
   'GmailSync.gs'
 ]) {
@@ -80,7 +81,75 @@ assert.equal(context.normalizeHttpUrl_('https://example.com/profile'), 'https://
 assert.equal(context.sheetSafeValue_('=IMPORTXML("https://example.com")'), '\'=IMPORTXML("https://example.com")');
 assert.equal(context.sheetSafeValue_('Normal text'), 'Normal text');
 assert.equal(context.normalizeSettingValue_('DRAFT_PROVIDER', 'template'), 'TEMPLATE');
+assert.equal(context.normalizeSettingValue_('DISCOVERY_PROVIDER', 'tavily'), 'TAVILY');
 assert.throws(() => context.normalizeSettingValue_('EMAIL_WORD_LIMIT', '999'));
+
+const hunterByCompany = context.buildHunterEmailFinderParams_(
+  {
+    firstName: 'Alex',
+    lastName: 'Chen',
+    company: 'Example Co',
+    companyDomain: ''
+  },
+  'test-key'
+);
+assert.equal(hunterByCompany.company, 'Example Co');
+assert.equal(hunterByCompany.first_name, 'Alex');
+
+const hunterByLinkedIn = context.buildHunterEmailFinderParams_(
+  {
+    firstName: 'Alex',
+    lastName: 'Chen',
+    linkedinUrl: 'https://www.linkedin.com/in/alex-chen'
+  },
+  'test-key'
+);
+assert.equal(
+  hunterByLinkedIn.linkedin_handle,
+  'alex-chen'
+);
+assert.equal(hunterByLinkedIn.first_name, 'Alex');
+assert.equal(hunterByLinkedIn.last_name, 'Chen');
+assert.equal(
+  context.extractLinkedInHandle_(
+    'https://ca.linkedin.com/in/alex-chen?trk=profile'
+  ),
+  'alex-chen'
+);
+assert.equal(
+  context.isHunterNotFoundError_(
+    new Error(
+      'Hunter Email Finder returned HTTP 404: {"errors":[{"id":"not_found"}]}'
+    )
+  ),
+  true
+);
+
+const longContext = [
+  {
+    category: 'Experience to reference',
+    content: Array.from({ length: 120 }, (_, index) => `experience${index}`).join(' ')
+  },
+  {
+    category: 'Current goal',
+    content: Array.from({ length: 80 }, (_, index) => `goal${index}`).join(' ')
+  }
+];
+const templateDraft = context.draftWithTemplate_(
+  {
+    firstName: 'Alex',
+    fullName: 'Alex Chen',
+    title: 'Investor',
+    company: 'Example Ventures'
+  },
+  longContext,
+  {
+    SENDER_NAME: 'Evan',
+    OUTREACH_GOAL: 'Learn about venture capital.',
+    EMAIL_WORD_LIMIT: '140'
+  }
+);
+assert.ok(templateDraft.body.split(/\s+/).filter(Boolean).length <= 140);
 
 const snippet = context.makeReplySnippet_(
   'Happy to chat next week.\n\nOn Friday, Person wrote:\n> Original message'
