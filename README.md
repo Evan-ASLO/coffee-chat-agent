@@ -53,6 +53,53 @@ not depend on a Microsoft tenant or this Copilot session after installation.
 
 ## Install in a personal Google account
 
+### Fastest setup
+
+1. Clone the private repository:
+
+   ```powershell
+   git clone https://github.com/Evan-ASLO/coffee-chat-agent.git
+   Set-Location coffee-chat-agent
+   ```
+
+2. Install and authorize the Google Apps Script CLI:
+
+   ```powershell
+   npm install --global @google/clasp
+   clasp login
+   ```
+
+3. Create a blank standalone project at
+   [script.google.com](https://script.google.com/), open **Project Settings**,
+   and copy its Script ID.
+
+4. Create a local `.clasp.json` file:
+
+   ```json
+   {
+     "scriptId": "PASTE_YOUR_SCRIPT_ID",
+     "rootDir": "."
+   }
+   ```
+
+5. Upload and open the application:
+
+   ```powershell
+   clasp push
+   clasp open
+   ```
+
+6. Run `setupCoffeeChatAgent` once in the Apps Script editor and approve the
+   Google permissions.
+
+7. Select **Deploy > New deployment > Web app**:
+
+   - Execute as: **Me**
+   - Who has access: **Only myself**
+
+8. Open the deployment URL. Under **Profile & connections**, enter your name,
+   personal context, Google Search credentials, and Hunter API key.
+
 ### Option A: `clasp`
 
 1. Install or invoke the Google Apps Script CLI:
@@ -173,8 +220,12 @@ Return either an array or `{ "people": [...] }`. Supported person fields:
 ### Email enrichment providers
 
 - `NONE`: enter an email manually during draft review.
-- `HUNTER`: add a Hunter API key. The adapter calls Hunter Email Finder using
-  the approved name and company domain or name.
+- `HUNTER`: the default. Create a
+  [free Hunter account](https://hunter.io/users/sign_up), copy the key from
+  [Hunter API Keys](https://hunter.io/api-keys), and paste it into **Profile &
+  connections**. The adapter calls Hunter Email Finder using the approved name
+  and company domain or name. Free-plan quotas are controlled by Hunter and may
+  change.
 - `CUSTOM_WEBHOOK`: configure a URL and optional bearer token.
 
 Custom enrichment request:

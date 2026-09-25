@@ -17,7 +17,7 @@ const state = {
   spreadsheetUrl: 'https://docs.google.com/spreadsheets/',
   settings: {
     DISCOVERY_PROVIDER: 'GOOGLE_CSE',
-    ENRICHMENT_PROVIDER: 'NONE',
+    ENRICHMENT_PROVIDER: 'HUNTER',
     DRAFT_PROVIDER: 'GEMINI',
     GEMINI_MODEL: 'gemini-2.5-flash',
     MAX_DISCOVERY_RESULTS: '15',
@@ -61,7 +61,7 @@ const state = {
     ENRICHMENT_WEBHOOK_TOKEN: false,
     DRAFT_WEBHOOK_URL: false,
     DRAFT_WEBHOOK_TOKEN: false,
-    HUNTER_API_KEY: false
+    HUNTER_API_KEY: true
   },
   prospects: [
     {

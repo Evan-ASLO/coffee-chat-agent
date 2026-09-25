@@ -1212,7 +1212,7 @@
               ])}
               ${selectField('setting-enrichment', 'Email enrichment', settings.ENRICHMENT_PROVIDER, [
                 ['NONE', 'None / manual entry'],
-                ['HUNTER', 'Hunter'],
+                ['HUNTER', 'Hunter free tier'],
                 ['CUSTOM_WEBHOOK', 'Custom webhook']
               ])}
               ${selectField('setting-draft', 'Draft provider', settings.DRAFT_PROVIDER, [
@@ -1261,9 +1261,9 @@
               ${secretField('DRAFT_WEBHOOK_TOKEN', 'Draft webhook token')}
             </div>
             <div class="notice notice-info">
-              Recommended starting setup: Google Programmable Search for public profiles, Gemini
-              or the built-in template for drafts, and manual email entry until you choose an
-              enrichment provider.
+              Recommended free starting setup: Google Programmable Search for public profiles,
+              Hunter's free tier for work-email discovery, and Gemini or the built-in template
+              for drafts.
             </div>
             <div class="button-row">
               <button class="btn btn-primary" onclick="saveSettings()">Save profile and connections</button>

@@ -86,7 +86,7 @@ var DEFAULT_SETTINGS = Object.freeze({
     description: 'GOOGLE_CSE or CUSTOM_WEBHOOK.'
   }),
   ENRICHMENT_PROVIDER: Object.freeze({
-    value: 'NONE',
+    value: 'HUNTER',
     description: 'NONE, CUSTOM_WEBHOOK, or HUNTER.'
   }),
   DRAFT_PROVIDER: Object.freeze({
