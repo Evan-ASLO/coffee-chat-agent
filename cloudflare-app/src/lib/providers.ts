@@ -118,6 +118,8 @@ export async function discoverWithTavily(
 			headers: { Authorization: `Bearer ${apiKey}` },
 			body: {
 				query: buildProfessionalBioQuery(criteria),
+				include_domains: professionalBioDomains(criteria),
+				include_domains_mode: "restrict",
 				search_depth: "basic",
 				max_results: Math.min((criteria.count - people.length) * 4, 20),
 				topic: "general",
@@ -601,16 +603,26 @@ export function buildProfessionalBioQuery(
 			...professionalRoleTopics(criteria.roles),
 		]),
 	);
-	const domains = Array.from(
-		new Set([...employerProfileDomains(criteria.companies), "theorg.com"]),
-	);
 	return buildBoundedQuery("", [
-		domainGroup(domains, 8),
 		queryGroup(roleTopics, 10),
 		queryGroup(employerSearchAliases(criteria.companies), 8),
 		queryGroup(criteria.locations, 6),
 		queryGroup(["team", "bio", "profile", "leadership"], 4),
 	]);
+}
+
+export function professionalBioDomains(
+	criteria: DiscoveryCriteria,
+): string[] {
+	return Array.from(
+		new Set([
+			...employerProfileDomains(criteria.companies),
+			"theorg.com",
+		]),
+	)
+		.map((domain) => domain.trim().toLowerCase())
+		.filter((domain) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain))
+		.slice(0, 20);
 }
 
 function buildBoundedQuery(prefix: string, groups: string[]): string {
@@ -638,19 +650,6 @@ function queryGroup(values: string[], limit: number): string {
 	if (!tokens.length) return "";
 	if (tokens.length === 1) return quote(tokens[0]!);
 	return `(${tokens.map(quote).join(" OR ")})`;
-}
-
-function domainGroup(domains: string[], limit: number): string {
-	const values = Array.from(
-		new Set(
-			domains
-				.map((domain) => domain.trim().toLowerCase())
-				.filter((domain) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)),
-		),
-	).slice(0, limit);
-	if (!values.length) return "";
-	if (values.length === 1) return `site:${values[0]}`;
-	return `(${values.map((domain) => `site:${domain}`).join(" OR ")})`;
 }
 
 function professionalRoleTopics(roles: string[]): string[] {
@@ -734,7 +733,7 @@ function professionalBioPerson(
 	const officialDomains = employerProfileDomains(criteria.companies);
 	const official = officialDomains.some(
 		(domain) =>
-			url.hostname === domain || url.hostname.endsWith(`.${domain}`),
+			url.hostname === domain || url.hostname === `www.${domain}`,
 	);
 	const vetted =
 		url.hostname === "theorg.com" || url.hostname.endsWith(".theorg.com");

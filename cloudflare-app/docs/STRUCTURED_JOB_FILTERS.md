@@ -84,11 +84,11 @@ Search query construction is OR within each category and AND between categories.
 
 Prospects deduplicate by LinkedIn URL when present and otherwise by canonical source URL. The UI identifies those links as **LinkedIn profile** or **Public profile**.
 
-Known employers may have a narrow discovery-hint record containing canonical search aliases, approved people/bio domains, and broad professional topics. For BMO, fallback queries directly OR:
+Known employers may have a narrow discovery-hint record containing canonical search aliases, approved people/bio domains, and broad professional topics. For BMO, the Tavily fallback sends this native `include_domains` allowlist in `restrict` mode:
 
 - `privatewealth.bmo.com`
 - `privatewealth-insights.bmo.com`
 - `bmo.com`
 - vetted `theorg.com`
 
-with BMO/Bank of Montreal aliases, Toronto/location terms, and investment/portfolio/wealth/talent topics. This improves recall without opening acceptance to arbitrary domains. Discovery summaries expose only aggregate primary/fallback candidate and accepted counts plus inserted/duplicate/rejected counts; they never expose provider queries, URLs, credentials, or raw provider responses.
+The semantic query contains BMO/Bank of Montreal aliases, Toronto/location terms, investment/portfolio/wealth/talent topics, and team/bio/profile/leadership alternatives; it contains no brittle `site:` operators. Exact subdomains remain explicit. Although the root `bmo.com` allowlist entry may let the provider return subdomains, post-response validation accepts only the exact reviewed hosts (plus `www.` for a reviewed root), so unreviewed sibling subdomains remain rejected. Discovery summaries expose only aggregate primary/fallback candidate and accepted counts plus inserted/duplicate/rejected counts; they never expose provider queries, URLs, credentials, or raw provider responses.

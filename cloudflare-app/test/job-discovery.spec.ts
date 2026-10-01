@@ -8,6 +8,7 @@ import {
 	buildProfessionalBioQuery,
 	discoverWithTavily,
 	parseProfessionalBioTitle,
+	professionalBioDomains,
 	type DiscoveryCriteria,
 } from "../src/lib/providers";
 
@@ -95,9 +96,7 @@ describe("discovery query semantics", () => {
 	it("builds a broader professional bio query without a LinkedIn site lock", () => {
 		const query = buildProfessionalBioQuery(criteria);
 		expect(query).not.toContain("site:linkedin.com/in");
-		expect(query).toContain(
-			"(site:privatewealth.bmo.com OR site:privatewealth-insights.bmo.com OR site:bmo.com OR site:theorg.com)",
-		);
+		expect(query).not.toContain("site:");
 		expect(query).toContain('"investment" OR "portfolio" OR "wealth"');
 		expect(query).toContain(
 			'("BMO" OR "BMO Financial Group" OR "Bank of Montreal")',
@@ -106,6 +105,12 @@ describe("discovery query semantics", () => {
 			'("team" OR "bio" OR "profile" OR "leadership")',
 		);
 		expect(query.length).toBeLessThanOrEqual(1800);
+		expect(professionalBioDomains(criteria)).toEqual([
+			"privatewealth.bmo.com",
+			"privatewealth-insights.bmo.com",
+			"bmo.com",
+			"theorg.com",
+		]);
 	});
 
 	it("sanitizes and caps large alternative groups", () => {
@@ -262,8 +267,14 @@ describe("professional bio fallback", () => {
 			'("Investment Team" OR "Investment Analyst"',
 		);
 		expect(fallbackBody.query).not.toContain("site:linkedin.com/in");
-		expect(fallbackBody.query).toContain("site:privatewealth.bmo.com");
-		expect(fallbackBody.query).toContain("site:theorg.com");
+		expect(fallbackBody.query).not.toContain("site:");
+		expect(fallbackBody.include_domains).toEqual([
+			"privatewealth.bmo.com",
+			"privatewealth-insights.bmo.com",
+			"bmo.com",
+			"theorg.com",
+		]);
+		expect(fallbackBody.include_domains_mode).toBe("restrict");
 	});
 
 	it("preserves accepted LinkedIn results without invoking fallback", async () => {
