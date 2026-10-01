@@ -32,6 +32,7 @@ export interface AppBindings {
 	MAX_DRAFTS_PER_HOUR: string;
 	MAX_SENDS_PER_DAY: string;
 	SESSION_DAYS: string;
+	JOBS_INGEST_SECRET: string;
 	GOOGLE_CLIENT_ID: string;
 	GOOGLE_CLIENT_SECRET: string;
 	MASTER_ENCRYPTION_KEY_V1: string;

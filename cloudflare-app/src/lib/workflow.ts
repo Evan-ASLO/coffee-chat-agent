@@ -24,6 +24,7 @@ import {
 	insertProspects,
 	listReplyCandidates,
 	patchDraft,
+	prospectIdsForLinkedinUrls,
 	setSheetRow,
 	setSpreadsheetId,
 	startIdempotentOperation,
@@ -31,6 +32,7 @@ import {
 	type Prospect,
 	type UserSettings,
 } from "./store";
+import { linkProspectsToJob } from "./jobs";
 import { sha256 } from "./encoding";
 import type { QueueMessage } from "../types";
 
@@ -60,6 +62,7 @@ export async function discoverProspects(
 	userId: string,
 	criteria: DiscoveryCriteria,
 	requestId: string,
+	jobId?: string,
 ): Promise<Prospect[]> {
 	await enforceRateLimit(env, {
 		userId,
@@ -76,6 +79,17 @@ export async function discoverProspects(
 		),
 	});
 	const inserted = await insertProspects(env, userId, discovered);
+	if (jobId) {
+		const linkedProspectIds = new Set([
+			...inserted.map((prospect) => prospect.id),
+			...(await prospectIdsForLinkedinUrls(
+				env,
+				userId,
+				discovered.map((prospect) => prospect.linkedinUrl),
+			)),
+		]);
+		await linkProspectsToJob(env, userId, jobId, [...linkedProspectIds]);
+	}
 	await audit(env, {
 		userId,
 		action: "DISCOVERY_COMPLETED",

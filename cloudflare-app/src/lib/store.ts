@@ -5,6 +5,7 @@ import type {
 	ProspectStatus,
 } from "../types";
 import { safeMetadata } from "./log";
+import { prospectJobLinks } from "./jobs";
 
 export interface PersonalContextItem {
 	category: string;
@@ -67,6 +68,7 @@ export interface Prospect {
 	errorMessage: string;
 	createdAt: string;
 	updatedAt: string;
+	linkedJobs: Array<{ id: string; title: string; company: string }>;
 }
 
 interface ProspectRow {
@@ -203,12 +205,19 @@ export async function listProspects(
 	env: AppBindings,
 	userId: string,
 ): Promise<Prospect[]> {
-	const result = await env.DB.prepare(
-		"SELECT * FROM prospects WHERE user_id = ? ORDER BY updated_at DESC LIMIT 500",
-	)
-		.bind(userId)
-		.all<ProspectRow>();
-	return result.results.map(mapProspect);
+	const [result, links] = await Promise.all([
+		env.DB.prepare(
+			"SELECT * FROM prospects WHERE user_id = ? ORDER BY updated_at DESC LIMIT 500",
+		)
+			.bind(userId)
+			.all<ProspectRow>(),
+		prospectJobLinks(env, userId),
+	]);
+	return result.results.map((row) => {
+		const prospect = mapProspect(row);
+		prospect.linkedJobs = links.get(prospect.id) ?? [];
+		return prospect;
+	});
 }
 
 export async function getProspect(
@@ -222,6 +231,24 @@ export async function getProspect(
 		.bind(prospectId, userId)
 		.first<ProspectRow>();
 	return row ? mapProspect(row) : null;
+}
+
+export async function prospectIdsForLinkedinUrls(
+	env: AppBindings,
+	userId: string,
+	linkedinUrls: string[],
+): Promise<string[]> {
+	const values = Array.from(
+		new Set(linkedinUrls.map((value) => value.trim()).filter(Boolean)),
+	).slice(0, 20);
+	if (!values.length) return [];
+	const result = await env.DB.prepare(
+		`SELECT id FROM prospects
+		  WHERE user_id = ? AND linkedin_url IN (${values.map(() => "?").join(", ")})`,
+	)
+		.bind(userId, ...values)
+		.all<{ id: string }>();
+	return result.results.map((row) => row.id);
 }
 
 export async function insertProspects(
@@ -676,5 +703,6 @@ function mapProspect(row: ProspectRow): Prospect {
 		errorMessage: row.error_message,
 		createdAt: row.created_at,
 		updatedAt: row.updated_at,
+		linkedJobs: [],
 	};
 }

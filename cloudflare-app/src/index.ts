@@ -48,6 +48,22 @@ import {
 	MAX_RESUME_BYTES,
 } from "./lib/resume";
 import { ClientInputError } from "./lib/errors";
+import {
+	JOB_STATES,
+	deleteJobState,
+	getJob,
+	importLegacyJobState,
+	ingestJobSnapshot,
+	jobListQuerySchema,
+	jobStateInputSchema,
+	legacyJobImportSchema,
+	linkProspectToJob,
+	listJobs,
+	listUserJobStates,
+	putJobState,
+	unlinkProspectFromJob,
+	verifyJobSnapshotRequest,
+} from "./lib/jobs";
 
 const app = new Hono<AppEnvironment>();
 
@@ -74,13 +90,43 @@ app.onError((error, c) => {
 			message: publicResult.message,
 			requestId: c.get("requestId"),
 		},
-		publicResult.status as 400 | 401 | 403 | 429 | 500,
+		publicResult.status as 400 | 401 | 403 | 409 | 413 | 429 | 500,
 	);
 });
 
 app.get("/api/health", (c) =>
-	c.json({ ok: true, service: "coffee-chat-agent", version: "0.1.0" }),
+	c.json({ ok: true, service: "coffee-chat-platform", version: "0.2.0" }),
 );
+
+app.post("/api/internal/jobs/snapshot", async (c) => {
+	const verified = await verifyJobSnapshotRequest(c.env, c.req.raw);
+	const result = await ingestJobSnapshot(c.env, verified);
+	logEvent("info", "job_snapshot_ingested", {
+		requestId: c.get("requestId"),
+		importRunId: result.importRunId,
+		snapshotHash: result.snapshotHash,
+		idempotent: result.idempotent,
+		activeCount: result.activeCount,
+		upsertedCount: result.upsertedCount,
+		deactivatedCount: result.deactivatedCount,
+	});
+	return c.json(result);
+});
+
+app.get("/api/jobs", async (c) => {
+	const user = await authenticatedUser(c);
+	if (user) c.set("user", user);
+	const query = jobListQuerySchema.parse(c.req.query());
+	return c.json(await listJobs(c.env, query, user?.id));
+});
+
+app.get("/api/jobs/:id", async (c) => {
+	const user = await authenticatedUser(c);
+	if (user) c.set("user", user);
+	const job = await getJob(c.env, jobId.parse(c.req.param("id")), user?.id);
+	if (!job) throw new ClientInputError("Job was not found.");
+	return c.json({ job });
+});
 
 app.get("/auth/google/login", (c) => beginGoogleOAuth(c, "login"));
 
@@ -238,11 +284,31 @@ app.delete("/api/credentials/:provider", requireUser, async (c) => {
 app.post("/api/discovery", requireUser, async (c) => {
 	await protectMutation(c);
 	const input = discoverySchema.parse(await readJson(c));
+	const { jobId: linkedJobId, ...submittedCriteria } = input;
+	let criteria = submittedCriteria;
+	if (linkedJobId) {
+		const job = await getJob(c.env, linkedJobId, c.get("user")!.id);
+		if (!job) throw new ClientInputError("Job was not found.");
+		criteria = {
+			...submittedCriteria,
+			companies: uniqueValues([job.company, ...submittedCriteria.companies]),
+			locations: uniqueValues(
+				[job.location, job.region, ...submittedCriteria.locations].filter(
+					Boolean,
+				),
+			),
+			keywords: uniqueValues([job.title, ...submittedCriteria.keywords]),
+			objective:
+				submittedCriteria.objective ||
+				`Learn about ${job.title} opportunities and the team at ${job.company}.`,
+		};
+	}
 	const prospects = await discoverProspects(
 		c.env,
 		c.get("user")!.id,
-		input,
+		criteria,
 		c.get("requestId"),
+		linkedJobId,
 	);
 	return c.json({ prospects });
 });
@@ -314,6 +380,99 @@ app.post("/api/prospects/:id/reject", requireUser, async (c) => {
 	return c.json({ ok: true });
 });
 
+app.get("/api/job-states", requireUser, async (c) => {
+	const query = jobStateListQuerySchema.parse(c.req.query());
+	return c.json(
+		await listUserJobStates(c.env, c.get("user")!.id, {
+			statuses: query.status
+				? query.status.split(",").map((status) => jobState.parse(status))
+				: undefined,
+			page: query.page,
+			pageSize: query.pageSize,
+		}),
+	);
+});
+
+app.put("/api/jobs/:id/state", requireUser, async (c) => {
+	await protectMutation(c);
+	const id = jobId.parse(c.req.param("id"));
+	const input = jobStateInputSchema.parse(await readJson(c, 8 * 1024));
+	const job = await putJobState(c.env, c.get("user")!.id, id, input);
+	await audit(c.env, {
+		userId: c.get("user")!.id,
+		action: "JOB_STATE_UPDATED",
+		entityType: "job",
+		entityId: id,
+		requestId: c.get("requestId"),
+		metadata: { status: input.status },
+	});
+	return c.json({ job });
+});
+
+app.delete("/api/jobs/:id/state", requireUser, async (c) => {
+	await protectMutation(c);
+	const id = jobId.parse(c.req.param("id"));
+	await deleteJobState(c.env, c.get("user")!.id, id);
+	await audit(c.env, {
+		userId: c.get("user")!.id,
+		action: "JOB_STATE_DELETED",
+		entityType: "job",
+		entityId: id,
+		requestId: c.get("requestId"),
+	});
+	return c.json({ ok: true });
+});
+
+app.post("/api/job-states/import-legacy", requireUser, async (c) => {
+	await protectMutation(c);
+	const input = legacyJobImportSchema.parse(await readJson(c, 256 * 1024));
+	const result = await importLegacyJobState(
+		c.env,
+		c.get("user")!.id,
+		input,
+	);
+	await audit(c.env, {
+		userId: c.get("user")!.id,
+		action: "LEGACY_JOB_STATE_IMPORTED",
+		entityType: "job_state",
+		requestId: c.get("requestId"),
+		metadata: result,
+	});
+	return c.json(result);
+});
+
+app.post(
+	"/api/jobs/:jobId/prospects/:prospectId",
+	requireUser,
+	async (c) => {
+		await protectMutation(c);
+		const linkedJobId = jobId.parse(c.req.param("jobId"));
+		const prospectId = uuid.parse(c.req.param("prospectId"));
+		await linkProspectToJob(
+			c.env,
+			c.get("user")!.id,
+			linkedJobId,
+			prospectId,
+		);
+		return c.json({ ok: true });
+	},
+);
+
+app.delete(
+	"/api/jobs/:jobId/prospects/:prospectId",
+	requireUser,
+	async (c) => {
+		await protectMutation(c);
+		await unlinkProspectFromJob(
+			c.env,
+			c.get("user")!.id,
+			jobId.parse(c.req.param("jobId")),
+			uuid.parse(c.req.param("prospectId")),
+		);
+		return c.json({ ok: true });
+	},
+);
+
 async function protectMutation(
 	c: Parameters<typeof requireCsrf>[0],
 ): Promise<void> {
@@ -322,6 +481,8 @@ async function protectMutation(
 }
 
 const uuid = z.string().uuid();
+const jobId = z.string().regex(/^[a-f0-9]{64}$/);
+const jobState = z.enum(JOB_STATES);
 const shortText = z.string().trim().max(500);
 const personalContextItem = z.object({
 	category: z.string().trim().min(1).max(120),
@@ -361,6 +522,7 @@ const discoverySchema = z.object({
 	seniority: list,
 	objective: z.string().trim().max(1000),
 	count: z.number().int().min(1).max(20),
+	jobId: jobId.optional(),
 });
 const draftEditSchema = z.object({
 	email: z.string().trim().max(320),
@@ -394,6 +556,7 @@ export const worker = {
 					env.DB.prepare("DELETE FROM sessions WHERE expires_at < ? OR revoked_at IS NOT NULL").bind(now),
 					env.DB.prepare("DELETE FROM rate_limits WHERE expires_at < ?").bind(now),
 					env.DB.prepare("DELETE FROM idempotency_keys WHERE expires_at < ?").bind(now),
+					env.DB.prepare("DELETE FROM job_ingest_replays WHERE expires_at < ?").bind(now),
 				]);
 			})(),
 		);
@@ -428,3 +591,17 @@ export const worker = {
 } satisfies ExportedHandler<AppEnvironment["Bindings"], QueueMessage>;
 
 export default worker;
+
+const jobStateListQuerySchema = z
+	.object({
+		status: z.string().trim().max(200).default(""),
+		page: z.coerce.number().int().min(1).max(100).default(1),
+		pageSize: z.coerce.number().int().min(1).max(100).default(50),
+	})
+	.strict();
+
+function uniqueValues(values: string[]): string[] {
+	return Array.from(
+		new Set(values.map((value) => value.trim()).filter(Boolean)),
+	).slice(0, 20);
+}

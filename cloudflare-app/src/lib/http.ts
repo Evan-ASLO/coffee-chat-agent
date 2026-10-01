@@ -1,6 +1,6 @@
 import type { Context } from "hono";
 import type { AppEnvironment } from "../types";
-import { ClientInputError } from "./errors";
+import { PublicHttpError } from "./errors";
 
 const securityHeaders: Record<string, string> = {
 	"Content-Security-Policy": [
@@ -64,11 +64,11 @@ export function publicError(error: unknown): {
 	message: string;
 	status: number;
 } {
-	if (error instanceof ClientInputError) {
+	if (error instanceof PublicHttpError) {
 		return {
-			code: "INVALID_REQUEST",
-			message: error.message,
-			status: 400,
+			code: error.code,
+			message: error.publicMessage,
+			status: error.status,
 		};
 	}
 	const issues =

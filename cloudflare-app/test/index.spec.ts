@@ -33,7 +33,15 @@ import {
 	readResumeAttachment,
 } from "../src/lib/resume";
 import { saveCredential } from "../src/lib/credentials";
-import { upsertUser } from "../src/lib/db";
+import { createSession, upsertUser } from "../src/lib/db";
+import { insertProspects } from "../src/lib/store";
+import {
+	hmacSha256Hex,
+	sha256Hex,
+	snapshotHash,
+	type NormalizedJob,
+} from "../src/lib/jobs";
+import { sha256 } from "../src/lib/encoding";
 import { strToU8, zipSync } from "fflate";
 import { z } from "zod";
 
@@ -322,6 +330,376 @@ describe("worker export", () => {
 	});
 });
 
+describe.sequential("internship jobs platform", () => {
+	let generatedBase = Date.now() + 60_000;
+	let activeJobs: NormalizedJob[] = [];
+	let userA: Awaited<ReturnType<typeof authenticatedTestUser>>;
+	let userB: Awaited<ReturnType<typeof authenticatedTestUser>>;
+
+	it("matches the cross-language canonical snapshot hash contract", async () => {
+		const job: NormalizedJob = {
+			id: "5dd6b55988728fb5fdd68f3dda7e793db7ff849dd281416b71dae0ee3ce84149",
+			externalId: "JR-12345",
+			source: "workday",
+			company: "Example Company",
+			title: "Summer Finance Intern",
+			location: "Toronto, ON",
+			region: "Canada",
+			categories: ["Finance", "Internship"],
+			url: "https://jobs.example.com/JR-12345",
+			postedAt: "2026-09-30T12:00:00.000Z",
+			postedText: "Posted yesterday",
+			description: "Support the finance team with analysis and reporting.",
+		};
+		await expect(snapshotHash([job])).resolves.toBe(
+			"9d959e98a633ce986158a480be7e7b9d1dfa62c332d86e87f7d047dac4a66954",
+		);
+	});
+
+	it("rejects invalid ingestion authentication", async () => {
+		const job = await testJob("invalid-auth");
+		const body = await snapshotBody([job], generatedBase);
+		const response = await SELF.fetch(
+			new Request("http://example.com/api/internal/jobs/snapshot", {
+				method: "POST",
+				headers: {
+					"Content-Type": "application/json",
+					"X-Ingest-Timestamp": String(Math.floor(Date.now() / 1000)),
+					"X-Ingest-Signature": "0".repeat(64),
+				},
+				body,
+			}),
+		);
+		expect(response.status).toBe(401);
+	});
+
+	it("rejects strict schema violations with a valid signature", async () => {
+		const job = await testJob("invalid-schema");
+		const payload = {
+			schemaVersion: 1,
+			generatedAt: new Date(generatedBase).toISOString(),
+			snapshotHash: await snapshotHash([job]),
+			jobs: [{ ...job, unknownField: true }],
+		};
+		const response = await signedIngest(JSON.stringify(payload));
+		expect(response.status).toBe(400);
+		expect(await response.json()).toMatchObject({ error: "INVALID_REQUEST" });
+	});
+
+	it("enforces snapshot byte and job-count limits", async () => {
+		const oversizedBody = JSON.stringify({
+			padding: "x".repeat(2 * 1024 * 1024),
+		});
+		const oversized = await signedIngest(oversizedBody);
+		expect(oversized.status).toBe(413);
+
+		const base = await testJob("count-limit");
+		const tooManyJobs = Array.from({ length: 1001 }, (_, index) => ({
+			...base,
+			id: index.toString(16).padStart(64, "0"),
+			externalId: `count-${index}`,
+			url: `https://jobs.example.com/count-${index}`,
+		}));
+		const tooMany = await signedIngest(
+			JSON.stringify({
+				schemaVersion: 1,
+				generatedAt: new Date(generatedBase).toISOString(),
+				snapshotHash: "0".repeat(64),
+				jobs: tooManyJobs,
+			}),
+		);
+		expect(tooMany.status).toBe(400);
+	});
+
+	it("applies a snapshot, rejects exact replay, and accepts snapshot idempotency", async () => {
+		activeJobs = [await testJob("alpha"), await testJob("beta")];
+		const body = await snapshotBody(activeJobs, generatedBase);
+		const timestamp = Math.floor(Date.now() / 1000);
+		const first = await signedIngest(body, timestamp);
+		expect(first.status).toBe(200);
+		expect(await first.json()).toMatchObject({
+			idempotent: false,
+			activeCount: 2,
+			upsertedCount: 2,
+			deactivatedCount: 0,
+		});
+
+		const replay = await signedIngest(body, timestamp);
+		expect(replay.status).toBe(409);
+		expect(await replay.json()).toMatchObject({ error: "CONFLICT" });
+
+		const idempotent = await signedIngest(body, timestamp - 1);
+		expect(idempotent.status).toBe(200);
+		expect(await idempotent.json()).toMatchObject({
+			idempotent: true,
+			activeCount: 2,
+		});
+	});
+
+	it("stages replacement before deactivating missing jobs and rejects stale snapshots", async () => {
+		generatedBase += 60_000;
+		const beta = activeJobs[1]!;
+		const gamma = await testJob("gamma");
+		activeJobs = [beta, gamma];
+		const replacement = await signedIngest(
+			await snapshotBody(activeJobs, generatedBase),
+		);
+		expect(replacement.status).toBe(200);
+		expect(await replacement.json()).toMatchObject({
+			activeCount: 2,
+			deactivatedCount: 1,
+		});
+
+		const publicJobs = await SELF.fetch("http://example.com/api/jobs?pageSize=10");
+		expect(publicJobs.status).toBe(200);
+		const publicPayload = (await publicJobs.json()) as {
+			jobs: Array<{ id: string; userState: unknown; outreachSummary: unknown }>;
+		};
+		expect(publicPayload.jobs.map((job) => job.id).sort()).toEqual(
+			activeJobs.map((job) => job.id).sort(),
+		);
+		expect(publicPayload.jobs[0]).toMatchObject({
+			userState: null,
+			outreachSummary: null,
+		});
+		const filtered = (await (
+			await SELF.fetch("http://example.com/api/jobs?q=gamma&pageSize=10")
+		).json()) as { jobs: Array<{ id: string }> };
+		expect(filtered.jobs.map((job) => job.id)).toEqual([gamma.id]);
+		const unbounded = await SELF.fetch(
+			"http://example.com/api/jobs?pageSize=51",
+		);
+		expect(unbounded.status).toBe(400);
+
+		const staleJob = await testJob("stale");
+		const stale = await signedIngest(
+			await snapshotBody([staleJob], generatedBase - 30_000),
+		);
+		expect(stale.status).toBe(409);
+		const afterStale = (await (
+			await SELF.fetch("http://example.com/api/jobs?pageSize=10")
+		).json()) as { jobs: Array<{ id: string }> };
+		expect(afterStale.jobs.map((job) => job.id).sort()).toEqual(
+			activeJobs.map((job) => job.id).sort(),
+		);
+	});
+
+	it("keeps personalized job state private and supports status CRUD", async () => {
+		userA = await authenticatedTestUser("jobs-user-a");
+		userB = await authenticatedTestUser("jobs-user-b");
+		const targetJob = activeJobs[0]!;
+
+		const unauthenticated = await SELF.fetch(
+			new Request(`http://example.com/api/jobs/${targetJob.id}/state`, {
+				method: "PUT",
+				headers: {
+					"Content-Type": "application/json",
+					Origin: env.APP_ORIGIN,
+				},
+				body: JSON.stringify({ status: "SAVED", notes: "" }),
+			}),
+		);
+		expect(unauthenticated.status).toBe(401);
+
+		const saved = await authenticatedFetch(
+			userA,
+			`/api/jobs/${targetJob.id}/state`,
+			{
+				method: "PUT",
+				body: { status: "SAVED", notes: "Priority role" },
+			},
+		);
+		expect(saved.status).toBe(200);
+		expect(await saved.json()).toMatchObject({
+			job: {
+				id: targetJob.id,
+				userState: { status: "SAVED", notes: "Priority role" },
+			},
+		});
+
+		const userAJobs = (await (
+			await authenticatedFetch(userA, "/api/jobs?pageSize=10")
+		).json()) as {
+			jobs: Array<{ id: string; userState: { status: string } | null }>;
+		};
+		expect(
+			userAJobs.jobs.find((job) => job.id === targetJob.id)?.userState?.status,
+		).toBe("SAVED");
+
+		const userBJobs = (await (
+			await authenticatedFetch(userB, "/api/jobs?pageSize=10")
+		).json()) as {
+			jobs: Array<{ id: string; userState: { status: string } | null }>;
+		};
+		expect(
+			userBJobs.jobs.find((job) => job.id === targetJob.id)?.userState,
+		).toBeNull();
+
+		for (const status of [
+			"APPLIED",
+			"INTERVIEWING",
+			"REJECTED",
+			"OFFER",
+			"ARCHIVED",
+		]) {
+			const updated = await authenticatedFetch(
+				userA,
+				`/api/jobs/${targetJob.id}/state`,
+				{
+					method: "PUT",
+					body: { status, notes: `Status ${status}` },
+				},
+			);
+			expect(updated.status).toBe(200);
+			expect(await updated.json()).toMatchObject({
+				job: { userState: { status } },
+			});
+		}
+
+		const removed = await authenticatedFetch(
+			userA,
+			`/api/jobs/${targetJob.id}/state`,
+			{ method: "DELETE" },
+		);
+		expect(removed.status).toBe(200);
+		const states = (await (
+			await authenticatedFetch(userA, "/api/job-states?pageSize=100")
+		).json()) as { jobs: Array<{ id: string }> };
+		expect(states.jobs.some((job) => job.id === targetJob.id)).toBe(false);
+	});
+
+	it("imports the exact one-time legacy payload by URL and company/title fallback", async () => {
+		const legacyUser = await authenticatedTestUser("legacy-jobs-user");
+		const [urlMatched, identityMatched] = activeJobs;
+		const response = await authenticatedFetch(
+			legacyUser,
+			"/api/job-states/import-legacy",
+			{
+				method: "POST",
+				body: {
+					schemaVersion: 1,
+					exportedAt: new Date().toISOString(),
+					source: "internship-tracker-toronto",
+					savedJobs: [
+						{
+							url: `${urlMatched!.url}?utm_source=legacy`,
+							company: "Ignored URL company",
+							title: "Ignored URL title",
+						},
+					],
+					applications: [
+						{
+							url: null,
+							company: identityMatched!.company.toUpperCase(),
+							title: identityMatched!.title.toUpperCase(),
+							status: "interview",
+						},
+					],
+				},
+			},
+		);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			imported: 2,
+			matched: 2,
+			unmatched: 0,
+		});
+
+		const imported = (await (
+			await authenticatedFetch(legacyUser, "/api/job-states?pageSize=100")
+		).json()) as {
+			jobs: Array<{ id: string; userState: { status: string } }>;
+		};
+		expect(
+			imported.jobs.find((job) => job.id === urlMatched!.id)?.userState.status,
+		).toBe("SAVED");
+		expect(
+			imported.jobs.find((job) => job.id === identityMatched!.id)?.userState
+				.status,
+		).toBe("INTERVIEWING");
+
+		const repeated = await authenticatedFetch(
+			legacyUser,
+			"/api/job-states/import-legacy",
+			{
+				method: "POST",
+				body: {
+					schemaVersion: 1,
+					exportedAt: new Date().toISOString(),
+					source: "internship-tracker-toronto",
+					savedJobs: [],
+					applications: [],
+				},
+			},
+		);
+		expect(repeated.status).toBe(409);
+	});
+
+	it("links only owned prospects to jobs and exposes authenticated outreach summaries", async () => {
+		const [prospectA] = await insertProspects(env as unknown as AppBindings, userA.user.id, [
+			testProspect("Owned Prospect", activeJobs[0]!.company),
+		]);
+		const [prospectB] = await insertProspects(env as unknown as AppBindings, userB.user.id, [
+			testProspect("Other Prospect", activeJobs[0]!.company),
+		]);
+		expect(prospectA).toBeTruthy();
+		expect(prospectB).toBeTruthy();
+
+		const linked = await authenticatedFetch(
+			userA,
+			`/api/jobs/${activeJobs[0]!.id}/prospects/${prospectA!.id}`,
+			{ method: "POST" },
+		);
+		expect(linked.status).toBe(200);
+
+		const crossUser = await authenticatedFetch(
+			userA,
+			`/api/jobs/${activeJobs[0]!.id}/prospects/${prospectB!.id}`,
+			{ method: "POST" },
+		);
+		expect(crossUser.status).toBe(400);
+
+		const jobsA = (await (
+			await authenticatedFetch(userA, "/api/jobs?pageSize=10")
+		).json()) as {
+			jobs: Array<{
+				id: string;
+				outreachSummary: { total: number };
+			}>;
+		};
+		expect(
+			jobsA.jobs.find((job) => job.id === activeJobs[0]!.id)?.outreachSummary
+				.total,
+		).toBe(1);
+
+		const sessionA = (await (
+			await authenticatedFetch(userA, "/api/session")
+		).json()) as {
+			prospects: Array<{
+				id: string;
+				linkedJobs: Array<{ id: string }>;
+			}>;
+		};
+		expect(
+			sessionA.prospects.find((prospect) => prospect.id === prospectA!.id)
+				?.linkedJobs,
+		).toContainEqual(expect.objectContaining({ id: activeJobs[0]!.id }));
+
+		const jobsB = (await (
+			await authenticatedFetch(userB, "/api/jobs?pageSize=10")
+		).json()) as {
+			jobs: Array<{
+				id: string;
+				outreachSummary: { total: number };
+			}>;
+		};
+		expect(
+			jobsB.jobs.find((job) => job.id === activeJobs[0]!.id)?.outreachSummary
+				.total,
+		).toBe(0);
+	});
+});
+
 function encryptionEnv(): AppBindings {
 	const key = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
 	let binary = "";
@@ -336,4 +714,135 @@ function encryptionEnv(): AppBindings {
 		MASTER_ENCRYPTION_KEY_V1: encoded,
 		SESSION_SIGNING_KEY: encoded,
 	} as AppBindings;
+}
+
+async function testJob(seed: string): Promise<NormalizedJob> {
+	return {
+		id: await sha256Hex(`job:${seed}`),
+		externalId: `external-${seed}`,
+		source: "workday",
+		company: `${seed} Company`,
+		title: `${seed} Internship`,
+		location: "Toronto, ON",
+		region: "Canada",
+		categories: ["Finance", "Internship"],
+		url: `https://jobs.example.com/${seed}`,
+		postedAt: new Date("2026-09-30T12:00:00.000Z").toISOString(),
+		postedText: "Posted yesterday",
+		description: `Internship description for ${seed}.`,
+	};
+}
+
+async function snapshotBody(
+	jobs: NormalizedJob[],
+	generatedEpoch: number,
+): Promise<string> {
+	return JSON.stringify({
+		schemaVersion: 1,
+		generatedAt: new Date(generatedEpoch).toISOString(),
+		snapshotHash: await snapshotHash(jobs),
+		jobs,
+	});
+}
+
+async function signedIngest(
+	body: string,
+	timestamp = Math.floor(Date.now() / 1000),
+): Promise<Response> {
+	const signature = await hmacSha256Hex(
+		(env as unknown as AppBindings).JOBS_INGEST_SECRET,
+		`${timestamp}.${body}`,
+	);
+	return SELF.fetch(
+		new Request("http://example.com/api/internal/jobs/snapshot", {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				"X-Ingest-Timestamp": String(timestamp),
+				"X-Ingest-Signature": signature,
+			},
+			body,
+		}),
+	);
+}
+
+async function authenticatedTestUser(seed: string): Promise<{
+	user: Awaited<ReturnType<typeof upsertUser>>;
+	cookie: string;
+	csrf: string;
+}> {
+	const bindings = env as unknown as AppBindings;
+	const user = await upsertUser(bindings, {
+		googleSub: `${seed}-${crypto.randomUUID()}`,
+		email: `${seed}-${crypto.randomUUID()}@example.com`,
+		name: seed,
+		image: "",
+	});
+	const token = `session-${crypto.randomUUID()}`;
+	const csrf = `csrf-${crypto.randomUUID()}`;
+	await createSession(
+		bindings,
+		user.id,
+		await sha256(token),
+		await sha256(csrf),
+		new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+	);
+	const secure = new URL(bindings.APP_ORIGIN).protocol === "https:";
+	const sessionName = secure ? "__Host-cc_session" : "cc_session";
+	const csrfName = secure ? "__Host-cc_csrf" : "cc_csrf";
+	return {
+		user,
+		cookie: `${sessionName}=${token}; ${csrfName}=${csrf}`,
+		csrf,
+	};
+}
+
+async function authenticatedFetch(
+	auth: Awaited<ReturnType<typeof authenticatedTestUser>>,
+	path: string,
+	options: {
+		method?: string;
+		body?: unknown;
+	} = {},
+): Promise<Response> {
+	const method = options.method || "GET";
+	const headers: Record<string, string> = {
+		Accept: "application/json",
+		Cookie: auth.cookie,
+	};
+	if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+		headers.Origin = (env as unknown as AppBindings).APP_ORIGIN;
+		headers["X-CSRF-Token"] = auth.csrf;
+	}
+	if (options.body !== undefined) headers["Content-Type"] = "application/json";
+	return SELF.fetch(
+		new Request(`http://example.com${path}`, {
+			method,
+			headers,
+			body:
+				options.body === undefined ? undefined : JSON.stringify(options.body),
+		}),
+	);
+}
+
+function testProspect(fullName: string, company: string) {
+	const [firstName, ...lastNames] = fullName.split(" ");
+	return {
+		firstName,
+		lastName: lastNames.join(" "),
+		fullName,
+		title: "Recruiter",
+		company,
+		companyDomain: "example.com",
+		location: "Toronto",
+		linkedinUrl: `https://www.linkedin.com/in/${fullName
+			.toLowerCase()
+			.replace(/\s+/g, "-")}-${crypto.randomUUID()}`,
+		discoveryProvider: "TAVILY",
+		sourceUrl: "https://www.linkedin.com",
+		sourceSnippet: "Recruiter profile",
+		whyRelevant: "Works at the target company",
+		outreachObjective: "Learn about the internship team",
+		relevanceScore: 90,
+	};
 }
