@@ -84,6 +84,8 @@ test("auto-starts job discovery with explicit progress and recovery states", () 
 	assert.match(app, /retry-job-discovery/);
 	assert.match(app, /summary\.providerReturned === 0/);
 	assert.match(app, /summary\.duplicates > 0/);
+	assert.match(app, /summary\.insufficientMatchRejected > 0/);
+	assert.match(app, /did not match both the requested company/);
 	assert.match(app, /usable public professional profiles/);
 	assert.match(app, /fallbackProviderReturned/);
 	assert.match(app, /showToast\(\s*`Found \$\{summary\.inserted\}/);

@@ -42,6 +42,7 @@ export interface DiscoveryProviderResult {
 	primaryAccepted: number;
 	fallbackProviderReturned: number;
 	fallbackAccepted: number;
+	insufficientMatchRejected: number;
 	people: DiscoveredPerson[];
 }
 
@@ -74,6 +75,8 @@ export async function discoverWithTavily(
 		headers: { Authorization: `Bearer ${apiKey}` },
 		body: {
 			query: buildDiscoveryQuery(criteria),
+			include_domains: ["linkedin.com"],
+			include_domains_mode: "restrict",
 			search_depth: "basic",
 			max_results: Math.min(criteria.count * 3, 20),
 			topic: "general",
@@ -85,9 +88,12 @@ export async function discoverWithTavily(
 	});
 	const seen = new Set<string>();
 	const people: DiscoveredPerson[] = [];
+	let insufficientMatchRejected = 0;
 	const primaryResults = primary.results ?? [];
 	for (const result of primaryResults) {
-		const person = linkedInPerson(result, criteria);
+		const candidate = linkedInPerson(result, criteria);
+		if (candidate.insufficientMatch) insufficientMatchRejected += 1;
+		const person = candidate.person;
 		if (!person) continue;
 		const key = person.linkedinUrl || person.sourceUrl;
 		if (seen.has(key)) continue;
@@ -100,6 +106,7 @@ export async function discoverWithTavily(
 				primaryAccepted: people.length,
 				fallbackProviderReturned: 0,
 				fallbackAccepted: 0,
+				insufficientMatchRejected,
 				people,
 			};
 		}
@@ -131,8 +138,10 @@ export async function discoverWithTavily(
 		});
 		fallbackResults = fallback.results ?? [];
 		for (const result of fallbackResults) {
+			const linkedIn = linkedInPerson(result, criteria);
+			if (linkedIn.insufficientMatch) insufficientMatchRejected += 1;
 			const person =
-				linkedInPerson(result, criteria) ||
+				linkedIn.person ||
 				professionalBioPerson(result, criteria);
 			if (!person) continue;
 			const key = person.linkedinUrl || person.sourceUrl;
@@ -148,6 +157,7 @@ export async function discoverWithTavily(
 		primaryAccepted,
 		fallbackProviderReturned: fallbackResults.length,
 		fallbackAccepted: people.length - primaryAccepted,
+		insufficientMatchRejected,
 		people,
 	};
 }
@@ -582,15 +592,17 @@ function parseJsonObject(text: string): Record<string, unknown> {
 }
 
 export function buildDiscoveryQuery(criteria: DiscoveryCriteria): string {
+	const roleTopics = Array.from(
+		new Set([...criteria.roles, ...criteria.keywords]),
+	);
 	const groups = [
-		queryGroup(criteria.roles, 8),
-		queryGroup(criteria.companies, 6),
+		queryGroup(criteria.companies, 8),
+		queryGroup(roleTopics, 12),
 		queryGroup(criteria.locations, 6),
-		queryGroup(criteria.industries, 6),
-		queryGroup(criteria.keywords, 4),
+		criteria.companies.length ? "" : queryGroup(criteria.industries, 6),
 		queryGroup(criteria.seniority, 6),
-	].filter(Boolean);
-	return buildBoundedQuery("site:linkedin.com/in", groups);
+	];
+	return buildBoundedQuery("", groups);
 }
 
 export function buildProfessionalBioQuery(
@@ -689,26 +701,47 @@ function sanitizeQueryToken(value: string): string {
 function linkedInPerson(
 	result: { title?: string; url?: string; content?: string },
 	criteria: DiscoveryCriteria,
-): DiscoveredPerson | null {
+): { person: DiscoveredPerson | null; insufficientMatch: boolean } {
 	const linkedinUrl = normalizeLinkedIn(result.url || "");
-	if (!linkedinUrl) return null;
+	if (!linkedinUrl) return { person: null, insufficientMatch: false };
 	const parsed = parseSearchTitle(result.title || "");
-	if (!isPersonName(parsed.fullName)) return null;
+	if (!isPersonName(parsed.fullName)) {
+		return { person: null, insufficientMatch: false };
+	}
 	const evidence = `${result.title || ""} ${result.content || ""}`;
 	const score = scoreEvidence(evidence, criteria);
+	const company = matchedRequestedCompany(evidence, criteria.companies);
+	const roleMatch = matchesRoleEvidence(evidence, criteria);
+	if (criteria.companies.length) {
+		if (!company || !roleMatch || score.value < 55) {
+			return { person: null, insufficientMatch: true };
+		}
+	} else {
+		const independentMatch =
+			roleMatch ||
+			matchesAnyCriterion(evidence, criteria.industries) ||
+			matchesAnyCriterion(evidence, criteria.locations);
+		if (!independentMatch || score.value < 35) {
+			return { person: null, insufficientMatch: true };
+		}
+	}
 	return {
-		...parsed,
-		companyDomain: "",
-		location: matchedLocation(evidence, criteria.locations),
-		linkedinUrl,
-		discoveryProvider: "TAVILY",
-		sourceUrl: linkedinUrl,
-		sourceSnippet: cleanText(result.content || "", 2500),
-		whyRelevant:
-			score.reasons.join("; ") ||
-			"Matched the requested public profile criteria.",
-		outreachObjective: cleanText(criteria.objective, 1000),
-		relevanceScore: score.value,
+		person: {
+			...parsed,
+			company: company || parsed.company,
+			companyDomain: "",
+			location: matchedLocation(evidence, criteria.locations),
+			linkedinUrl,
+			discoveryProvider: "TAVILY",
+			sourceUrl: linkedinUrl,
+			sourceSnippet: cleanText(result.content || "", 2500),
+			whyRelevant:
+				score.reasons.join("; ") ||
+				"Matched the requested public profile criteria.",
+			outreachObjective: cleanText(criteria.objective, 1000),
+			relevanceScore: score.value,
+		},
+		insufficientMatch: false,
 	};
 }
 
@@ -990,9 +1023,9 @@ function matchesRoleEvidence(
 	evidence: string,
 	criteria: DiscoveryCriteria,
 ): boolean {
-	const values = criteria.keywords.length
-		? criteria.keywords
-		: criteria.roles;
+	const values = Array.from(
+		new Set([...criteria.roles, ...criteria.keywords]),
+	);
 	return values.some((value) =>
 		matchesCriterionEvidence(evidence, value, [
 			"team",

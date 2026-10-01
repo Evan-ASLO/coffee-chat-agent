@@ -80,7 +80,11 @@ Do not treat the migration alone as a backfill.
 
 Job cards expose server-derived networking criteria. Known employer display aliases (for example `bmo` → `BMO Financial Group`) and title topics produce a small OR group of team/professional roles, followed by Hiring Manager, Talent Acquisition, and Recruiter. The full noisy job title stays in the outreach objective for personalization and is not used as one hard search keyword.
 
-Search query construction is OR within each category and AND between categories. LinkedIn remains primary. If it produces too few accepted profiles, a second public-bio search accepts only person-specific pages on reviewed official company domains or `theorg.com`, with company/role/location evidence. Job, search, news, social-feed, and common data-broker pages are rejected.
+LinkedIn remains primary. The Tavily request uses native `include_domains: ["linkedin.com"]` in `restrict` mode; the query text contains no `site:` operator. For company-linked searches it ANDs one company-alias OR group, one combined professional-role/topic OR group, and optional location/seniority groups. It does not hard-AND the broad industry label or the full internship title.
+
+Primary LinkedIn acceptance is stricter than retrieval: when a company is requested, evidence must match both the requested company and at least one requested professional role/topic, with a relevance floor. This rejects company-only, role-only, and unrelated profiles such as an academic machine-learning profile returned for a Lyft role. Independent searches without a company retain a lower but explicit evidence floor.
+
+If LinkedIn produces too few accepted profiles, a second public-bio search accepts only person-specific pages on reviewed official company domains or `theorg.com`, with company/role/location evidence. Job, search, news, social-feed, and common data-broker pages are rejected.
 
 Prospects deduplicate by LinkedIn URL when present and otherwise by canonical source URL. The UI identifies those links as **LinkedIn profile** or **Public profile**.
 

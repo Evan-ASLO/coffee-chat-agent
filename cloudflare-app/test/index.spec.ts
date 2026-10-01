@@ -1874,11 +1874,17 @@ describe.sequential("internship jobs platform", () => {
 		expect(links?.count).toBe(1);
 		const primaryQuery = JSON.parse(
 			String((fetchSpy.mock.calls[0]?.[1] as RequestInit)?.body),
-		).query;
-		expect(primaryQuery).toContain(
+		);
+		expect(primaryQuery.include_domains).toEqual(["linkedin.com"]);
+		expect(primaryQuery.include_domains_mode).toBe("restrict");
+		expect(primaryQuery.query).not.toContain("site:");
+		expect(primaryQuery.query).not.toContain(
+			"Banking & Financial Services",
+		);
+		expect(primaryQuery.query).toContain(
 			'("Investment Team" OR "Investment Analyst"',
 		);
-		expect(primaryQuery).toContain(" AND ");
+		expect(primaryQuery.query).toContain(" AND ");
 		fetchSpy.mockRestore();
 	});
 });

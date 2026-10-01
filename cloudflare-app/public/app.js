@@ -842,6 +842,7 @@ async function executeDiscovery(criteria) {
 			primaryAccepted: 0,
 			fallbackProviderReturned: 0,
 			fallbackAccepted: 0,
+			insufficientMatchRejected: 0,
 			inserted: result.prospects?.length || 0,
 			duplicates: 0,
 			rejected: 0,
@@ -916,6 +917,9 @@ function discoverySuccessMessage(summary) {
 function discoveryEmptyMessage(summary) {
 	if (summary.providerReturned === 0) {
 		return "The search provider returned no profiles. Edit the roles, company, or location below and retry.";
+	}
+	if (summary.insufficientMatchRejected > 0) {
+		return `${summary.insufficientMatchRejected} ${summary.insufficientMatchRejected === 1 ? "candidate was" : "candidates were"} rejected because the profile did not match both the requested company and a professional role/topic. Edit the role terms or location and retry.`;
 	}
 	if (summary.accepted === 0 && summary.rejected > 0) {
 		const stages = [];

@@ -86,11 +86,15 @@ describe("discovery query semantics", () => {
 
 	it("uses OR within categories and AND between categories", () => {
 		const query = buildDiscoveryQuery(criteria);
-		expect(query).toContain('("Recruiter" OR "Hiring Manager")');
+		expect(query).toContain(
+			'("Recruiter" OR "Hiring Manager" OR "investment" OR "portfolio")',
+		);
 		expect(query).toContain('("bmo" OR "BMO Financial Group")');
 		expect(query).toContain('("Toronto" OR "Canada")');
 		expect(query).toContain(" AND ");
 		expect(query).not.toContain('"Recruiter" "Hiring Manager"');
+		expect(query).not.toContain("site:");
+		expect(query).not.toContain("Banking & Financial Services");
 	});
 
 	it("builds a broader professional bio query without a LinkedIn site lock", () => {
@@ -122,7 +126,7 @@ describe("discovery query semantics", () => {
 			),
 		});
 		expect(query).not.toContain("\\");
-		expect((query.match(/Role/g) || [])).toHaveLength(8);
+		expect((query.match(/Role/g) || [])).toHaveLength(12);
 		expect(query.length).toBeLessThanOrEqual(1800);
 	});
 });
@@ -232,6 +236,7 @@ describe("professional bio fallback", () => {
 			primaryAccepted: 0,
 			fallbackProviderReturned: 5,
 			fallbackAccepted: 3,
+			insufficientMatchRejected: 0,
 		});
 		expect(result.people).toHaveLength(3);
 		expect(result.people[0]).toMatchObject({
@@ -262,9 +267,14 @@ describe("professional bio fallback", () => {
 		const fallbackBody = JSON.parse(
 			String((fetchSpy.mock.calls[1]?.[1] as RequestInit)?.body),
 		);
-		expect(primaryBody.query).toContain("site:linkedin.com/in");
+		expect(primaryBody.query).not.toContain("site:");
+		expect(primaryBody.include_domains).toEqual(["linkedin.com"]);
+		expect(primaryBody.include_domains_mode).toBe("restrict");
 		expect(primaryBody.query).toContain(
-			'("Investment Team" OR "Investment Analyst"',
+			'("Investment Team" OR "Investment Analyst" OR "Portfolio Manager"',
+		);
+		expect(primaryBody.query).not.toContain(
+			"Banking & Financial Services",
 		);
 		expect(fallbackBody.query).not.toContain("site:linkedin.com/in");
 		expect(fallbackBody.query).not.toContain("site:");
@@ -307,10 +317,157 @@ describe("professional bio fallback", () => {
 			primaryAccepted: 1,
 			fallbackProviderReturned: 0,
 			fallbackAccepted: 0,
+			insufficientMatchRejected: 0,
 		});
 		expect(result.people[0]?.linkedinUrl).toBe(
 			"https://www.linkedin.com/in/alex-example",
 		);
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it("accepts BMO and TD LinkedIn profiles with company and role evidence", async () => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch");
+		fetchSpy
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						results: [
+							{
+								title:
+									"Alex Example - Investment Analyst - BMO | LinkedIn",
+								url: "https://www.linkedin.com/in/alex-bmo",
+								content:
+									"Investment Analyst at BMO Financial Group in Toronto.",
+							},
+						],
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				),
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						results: [
+							{
+								title:
+									"Taylor Example - Portfolio Manager - TD | LinkedIn",
+								url: "https://www.linkedin.com/in/taylor-td",
+								content:
+									"Portfolio Manager at TD Bank Group in Toronto.",
+							},
+						],
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				),
+			);
+		const bmo = await discoverWithTavily("test-key", {
+			...criteria,
+			count: 1,
+		});
+		const td = await discoverWithTavily("test-key", {
+			...criteria,
+			companies: ["TD Bank Group"],
+			count: 1,
+		});
+		expect(bmo.people[0]).toMatchObject({
+			fullName: "Alex Example",
+			company: "BMO Financial Group",
+		});
+		expect(td.people[0]).toMatchObject({
+			fullName: "Taylor Example",
+			company: "TD Bank Group",
+		});
+	});
+
+	it("rejects a Lyft query result without Lyft company evidence", async () => {
+		const fetchSpy = vi
+			.spyOn(globalThis, "fetch")
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						results: [
+							{
+								title:
+									"Gaurav Shinde - Graduate Researcher - UMBC | LinkedIn",
+								url: "https://www.linkedin.com/in/gaurav-shinde",
+								content:
+									"Machine learning researcher at University of Maryland Baltimore County.",
+							},
+						],
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				),
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ results: [] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			);
+		const result = await discoverWithTavily("test-key", {
+			roles: ["Engineering Team", "Software Engineer"],
+			industries: ["Technology"],
+			companies: ["Lyft"],
+			locations: ["Toronto"],
+			keywords: ["software engineering", "machine learning"],
+			seniority: [],
+			objective: "",
+			count: 1,
+		});
+		expect(result).toMatchObject({
+			primaryProviderReturned: 1,
+			primaryAccepted: 0,
+			fallbackProviderReturned: 0,
+			fallbackAccepted: 0,
+			insufficientMatchRejected: 1,
+			people: [],
+		});
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
+	});
+
+	it("preserves manual no-company venture capital discovery", async () => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			new Response(
+				JSON.stringify({
+					results: [
+						{
+							title:
+								"Jamie Example - Venture Capital Analyst - Golden Ventures | LinkedIn",
+							url: "https://www.linkedin.com/in/jamie-vc",
+							content:
+								"Venture Capital Analyst at Golden Ventures in Toronto.",
+						},
+					],
+				}),
+				{
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				},
+			),
+		);
+		const result = await discoverWithTavily("test-key", {
+			roles: ["Venture Capital Analyst"],
+			industries: ["Venture Capital"],
+			companies: [],
+			locations: ["Toronto"],
+			keywords: [],
+			seniority: [],
+			objective: "",
+			count: 1,
+		});
+		expect(result.people[0]).toMatchObject({
+			fullName: "Jamie Example",
+			company: "Golden Ventures",
+		});
 		expect(fetchSpy).toHaveBeenCalledTimes(1);
 	});
 });

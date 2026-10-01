@@ -43,6 +43,7 @@ export interface DiscoverySummary {
 	primaryAccepted: number;
 	fallbackProviderReturned: number;
 	fallbackAccepted: number;
+	insufficientMatchRejected: number;
 	inserted: number;
 	duplicates: number;
 	rejected: number;
@@ -115,6 +116,8 @@ export async function discoverProspects(
 		primaryAccepted: providerResult.primaryAccepted,
 		fallbackProviderReturned: providerResult.fallbackProviderReturned,
 		fallbackAccepted: providerResult.fallbackAccepted,
+		insufficientMatchRejected:
+			providerResult.insufficientMatchRejected,
 		inserted: inserted.length,
 		duplicates: discovered.length - inserted.length,
 		rejected: Math.max(
@@ -139,6 +142,8 @@ export async function discoverProspects(
 			primaryAccepted: providerResult.primaryAccepted,
 			fallbackProviderReturned: providerResult.fallbackProviderReturned,
 			fallbackAccepted: providerResult.fallbackAccepted,
+			insufficientMatchRejected:
+				providerResult.insufficientMatchRejected,
 			inserted: inserted.length,
 			duplicates: discovered.length - inserted.length,
 			rejected: Math.max(
