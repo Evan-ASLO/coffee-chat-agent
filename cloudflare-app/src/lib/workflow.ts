@@ -1,5 +1,8 @@
 import type { AppBindings, CredentialProvider } from "../types";
-import { readCredential } from "./credentials";
+import {
+	readCredential,
+	readOptionalCredential,
+} from "./credentials";
 import { ClientInputError } from "./errors";
 import {
 	createTrackingSheet,
@@ -35,17 +38,36 @@ import {
 import { linkProspectsToJob } from "./jobs";
 import { sha256 } from "./encoding";
 import type { QueueMessage } from "../types";
+import {
+	discoverWithPeopleSearchFallback,
+	UnsupportedPeopleSearchModelError,
+	type PeopleSearchFallbackProvider,
+} from "./people-search-fallback";
+
+type PeopleSearchFallbackStatus =
+	| "NOT_NEEDED"
+	| "DISABLED"
+	| "MISSING_KEY"
+	| "SUCCESS"
+	| "UNSUPPORTED_MODEL"
+	| "PROVIDER_ERROR";
 
 export interface DiscoverySummary {
 	providerReturned: number;
 	accepted: number;
 	primaryProviderReturned: number;
 	primaryAccepted: number;
-	fallbackProviderReturned: number;
-	fallbackAccepted: number;
+	professionalBioProviderReturned: number;
+	professionalBioAccepted: number;
 	insufficientMatchRejected: number;
 	strongAccepted: number;
 	broaderAccepted: number;
+	fallbackProvider: "NONE" | PeopleSearchFallbackProvider;
+	fallbackAttempted: boolean;
+	fallbackStatus: PeopleSearchFallbackStatus;
+	fallbackModel: string;
+	fallbackReturned: number;
+	fallbackAccepted: number;
 	inserted: number;
 	duplicates: number;
 	rejected: number;
@@ -86,14 +108,79 @@ export async function discoverProspects(
 		windowSeconds: 3600,
 	});
 	const tavilyKey = await readCredential(env, userId, "TAVILY");
+	const requestedCount = Math.min(
+		criteria.count,
+		Number(env.MAX_DISCOVERY_RESULTS || 20),
+	);
 	const providerResult = await discoverWithTavily(tavilyKey, {
 		...criteria,
-		count: Math.min(
-			criteria.count,
-			Number(env.MAX_DISCOVERY_RESULTS || 20),
-		),
+		count: requestedCount,
 	});
-	const discovered = providerResult.people;
+	const discoveredByUrl = new Map(
+		providerResult.people.map((person) => [
+			person.linkedinUrl || person.sourceUrl,
+			person,
+		]),
+	);
+	let fallbackProvider: "NONE" | PeopleSearchFallbackProvider = "NONE";
+	let fallbackAttempted = false;
+	let fallbackStatus: PeopleSearchFallbackStatus = "NOT_NEEDED";
+	let fallbackModel = "";
+	let fallbackReturned = 0;
+	let groundedAccepted = 0;
+	if (discoveredByUrl.size < requestedCount) {
+		const settings = await getSettings(env, userId);
+		fallbackProvider = settings.peopleSearchFallbackProvider;
+		if (fallbackProvider === "NONE") {
+			fallbackStatus = "DISABLED";
+		} else {
+			const providerKey = await readOptionalCredential(
+				env,
+				userId,
+				fallbackProvider,
+			);
+			if (!providerKey) {
+				fallbackStatus = "MISSING_KEY";
+			} else {
+				fallbackAttempted = true;
+				fallbackModel = peopleSearchModel(
+					settings,
+					fallbackProvider,
+				);
+				try {
+					const grounded = await discoverWithPeopleSearchFallback({
+						provider: fallbackProvider,
+						apiKey: providerKey,
+						model: fallbackModel,
+						criteria,
+						count: requestedCount - discoveredByUrl.size,
+					});
+					fallbackStatus = "SUCCESS";
+					fallbackModel = grounded.model;
+					fallbackReturned = grounded.returned;
+					for (const person of grounded.people) {
+						const key = person.linkedinUrl || person.sourceUrl;
+						if (!discoveredByUrl.has(key)) {
+							discoveredByUrl.set(key, person);
+							groundedAccepted += 1;
+						}
+					}
+				} catch (error) {
+					fallbackStatus =
+						error instanceof UnsupportedPeopleSearchModelError
+							? "UNSUPPORTED_MODEL"
+							: "PROVIDER_ERROR";
+				}
+			}
+		}
+	}
+	const discovered = [...discoveredByUrl.values()].slice(0, requestedCount);
+	const strongAccepted = discovered.filter(
+		(person) => person.matchQuality === "STRONG",
+	).length;
+	const broaderAccepted = discovered.filter(
+		(person) => person.matchQuality === "BROADER_COMPANY",
+	).length;
 	const inserted = await insertProspects(env, userId, discovered);
 	if (jobId) {
 		const linkedProspectIds = new Set([
@@ -112,22 +199,33 @@ export async function discoverProspects(
 		entityType: "prospect",
 		requestId,
 		metadata: {
-		providerReturned: providerResult.providerReturned,
-		accepted: discovered.length,
-		primaryProviderReturned: providerResult.primaryProviderReturned,
-		primaryAccepted: providerResult.primaryAccepted,
-		fallbackProviderReturned: providerResult.fallbackProviderReturned,
-		fallbackAccepted: providerResult.fallbackAccepted,
-		insufficientMatchRejected:
-			providerResult.insufficientMatchRejected,
-		strongAccepted: providerResult.strongAccepted,
-		broaderAccepted: providerResult.broaderAccepted,
-		inserted: inserted.length,
-		duplicates: discovered.length - inserted.length,
-		rejected: Math.max(
-			0,
-			providerResult.providerReturned - discovered.length,
-		),
+			providerReturned:
+				providerResult.providerReturned + fallbackReturned,
+			accepted: discovered.length,
+			primaryProviderReturned: providerResult.primaryProviderReturned,
+			primaryAccepted: providerResult.primaryAccepted,
+			professionalBioProviderReturned:
+				providerResult.fallbackProviderReturned,
+			professionalBioAccepted: providerResult.fallbackAccepted,
+			insufficientMatchRejected:
+				providerResult.insufficientMatchRejected,
+			strongAccepted,
+			broaderAccepted,
+			fallbackProvider,
+			fallbackAttempted,
+			fallbackStatus,
+			fallbackModel,
+			fallbackReturned,
+			fallbackAccepted: groundedAccepted,
+			inserted: inserted.length,
+			duplicates: discovered.length - inserted.length,
+			rejected: Math.max(
+				0,
+				providerResult.providerReturned -
+					providerResult.people.length +
+					fallbackReturned -
+					groundedAccepted,
+			),
 		},
 	});
 	for (const prospect of inserted) {
@@ -140,24 +238,49 @@ export async function discoverProspects(
 	return {
 		prospects: inserted,
 		summary: {
-			providerReturned: providerResult.providerReturned,
+			providerReturned:
+				providerResult.providerReturned + fallbackReturned,
 			accepted: discovered.length,
 			primaryProviderReturned: providerResult.primaryProviderReturned,
 			primaryAccepted: providerResult.primaryAccepted,
-			fallbackProviderReturned: providerResult.fallbackProviderReturned,
-			fallbackAccepted: providerResult.fallbackAccepted,
+			professionalBioProviderReturned:
+				providerResult.fallbackProviderReturned,
+			professionalBioAccepted: providerResult.fallbackAccepted,
 			insufficientMatchRejected:
 				providerResult.insufficientMatchRejected,
-			strongAccepted: providerResult.strongAccepted,
-			broaderAccepted: providerResult.broaderAccepted,
+			strongAccepted,
+			broaderAccepted,
+			fallbackProvider,
+			fallbackAttempted,
+			fallbackStatus,
+			fallbackModel,
+			fallbackReturned,
+			fallbackAccepted: groundedAccepted,
 			inserted: inserted.length,
 			duplicates: discovered.length - inserted.length,
 			rejected: Math.max(
 				0,
-				providerResult.providerReturned - discovered.length,
+				providerResult.providerReturned -
+					providerResult.people.length +
+					fallbackReturned -
+					groundedAccepted,
 			),
 		},
 	};
+}
+
+function peopleSearchModel(
+	settings: UserSettings,
+	provider: PeopleSearchFallbackProvider,
+): string {
+	switch (provider) {
+		case "GEMINI":
+			return settings.geminiModel;
+		case "OPENAI":
+			return settings.openAiModel;
+		case "ANTHROPIC":
+			return settings.anthropicModel;
+	}
 }
 
 export async function prepareProspect(

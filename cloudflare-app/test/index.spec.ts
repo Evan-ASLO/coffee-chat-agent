@@ -336,6 +336,72 @@ describe("worker export", () => {
 	});
 });
 
+describe("people-search fallback provider selection", () => {
+	it("defaults to NONE and persists independently per user", async () => {
+		const userA = await authenticatedTestUser("fallback-provider-a");
+		const userB = await authenticatedTestUser("fallback-provider-b");
+		const initial = (await (
+			await authenticatedFetch(userA, "/api/session")
+		).json()) as {
+			settings: { peopleSearchFallbackProvider: string };
+		};
+		expect(initial.settings.peopleSearchFallbackProvider).toBe("NONE");
+
+		const settingsInput = {
+			senderName: "Fallback Provider A",
+			discoveryProvider: "TAVILY",
+			enrichmentProvider: "NONE",
+			draftProvider: "TEMPLATE",
+			geminiModel: "gemini-3.8-flash",
+			openAiModel: "gpt-5-mini",
+			anthropicModel: "claude-haiku-4-5",
+			peopleSearchFallbackProvider: "OPENAI",
+			outreachGoal: "Learn about professional experience.",
+			emailWordLimit: 140,
+			personalContext: [
+				{
+					category: "Background summary",
+					content: "Test-only public context.",
+				},
+			],
+			replySyncEnabled: true,
+		};
+		const updated = await authenticatedFetch(userA, "/api/settings", {
+			method: "PUT",
+			body: settingsInput,
+		});
+		expect(updated.status).toBe(200);
+		const {
+			peopleSearchFallbackProvider: _omittedForLegacyClient,
+			...legacySettingsInput
+		} = settingsInput;
+		expect(_omittedForLegacyClient).toBe("OPENAI");
+		const legacyUpdate = await authenticatedFetch(
+			userA,
+			"/api/settings",
+			{
+				method: "PUT",
+				body: legacySettingsInput,
+			},
+		);
+		expect(legacyUpdate.status).toBe(200);
+		const [sessionA, sessionB] = await Promise.all([
+			authenticatedFetch(userA, "/api/session").then((response) =>
+				response.json(),
+			),
+			authenticatedFetch(userB, "/api/session").then((response) =>
+				response.json(),
+			),
+		]);
+		expect(sessionA).toMatchObject({
+			settings: { peopleSearchFallbackProvider: "OPENAI" },
+		});
+		expect(sessionB).toMatchObject({
+			settings: { peopleSearchFallbackProvider: "NONE" },
+		});
+	});
+});
+
 describe.sequential("approved-email beta access", () => {
 	const allowlistEnv = {
 		...(env as unknown as AppBindings),
@@ -1817,8 +1883,13 @@ describe.sequential("internship jobs platform", () => {
 				accepted: 1,
 				primaryProviderReturned: 0,
 				primaryAccepted: 0,
-				fallbackProviderReturned: 2,
-				fallbackAccepted: 1,
+				professionalBioProviderReturned: 2,
+				professionalBioAccepted: 1,
+				fallbackProvider: "NONE",
+				fallbackAttempted: false,
+				fallbackStatus: "DISABLED",
+				fallbackReturned: 0,
+				fallbackAccepted: 0,
 				inserted: 1,
 				duplicates: 0,
 				rejected: 1,
@@ -1847,8 +1918,13 @@ describe.sequential("internship jobs platform", () => {
 				accepted: 1,
 				primaryProviderReturned: 0,
 				primaryAccepted: 0,
-				fallbackProviderReturned: 1,
-				fallbackAccepted: 1,
+				professionalBioProviderReturned: 1,
+				professionalBioAccepted: 1,
+				fallbackProvider: "NONE",
+				fallbackAttempted: false,
+				fallbackStatus: "DISABLED",
+				fallbackReturned: 0,
+				fallbackAccepted: 0,
 				inserted: 0,
 				duplicates: 1,
 				rejected: 0,
@@ -1905,6 +1981,406 @@ describe.sequential("internship jobs platform", () => {
 			'("Investment Team" OR "Investment Analyst"',
 		);
 		expect(primaryQuery.query).toContain(" AND ");
+		fetchSpy.mockRestore();
+	});
+
+	it("returns a safe missing-key status when grounded search is enabled", async () => {
+		await env.DB.prepare(
+			"UPDATE user_settings SET people_search_fallback_provider = 'OPENAI' WHERE user_id = ?",
+		)
+			.bind(userA.user.id)
+			.run();
+		const job = (
+			(await (
+				await SELF.fetch(
+					`http://example.com/api/jobs/${activeJobs[0]!.id}`,
+				)
+			).json()) as {
+				job: { id: string; discoveryCriteria: Record<string, unknown> };
+			}
+		).job;
+		const fetchSpy = vi
+			.spyOn(globalThis, "fetch")
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ results: [] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ results: [] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			);
+		const response = await authenticatedWorkerFetch(
+			userA,
+			"/api/discovery",
+			{
+				method: "POST",
+				body: { ...job.discoveryCriteria, jobId: job.id },
+			},
+			{
+				...(env as unknown as AppBindings),
+				ENABLE_JOB_OUTREACH_LINKING: "true",
+			},
+		);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			prospects: [],
+			summary: {
+				fallbackProvider: "OPENAI",
+				fallbackAttempted: false,
+				fallbackStatus: "MISSING_KEY",
+				fallbackModel: "",
+				fallbackReturned: 0,
+				fallbackAccepted: 0,
+			},
+		});
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
+		await env.DB.prepare(
+			"UPDATE user_settings SET people_search_fallback_provider = 'NONE' WHERE user_id = ?",
+		)
+			.bind(userA.user.id)
+			.run();
+		fetchSpy.mockRestore();
+	});
+
+	it("calls only the selected fallback provider with that user's key", async () => {
+		const selectedUser = await authenticatedTestUser(
+			"selected-openai-fallback",
+		);
+		for (const [provider, value] of [
+			["TAVILY", "selected-tavily-key"],
+			["GEMINI", "unselected-gemini-key"],
+			["OPENAI", "selected-openai-key"],
+			["ANTHROPIC", "unselected-anthropic-key"],
+		] as const) {
+			await saveCredential(env as unknown as AppBindings, {
+				userId: selectedUser.user.id,
+				provider,
+				value,
+			});
+		}
+		await env.DB.prepare(
+			`UPDATE user_settings
+			    SET people_search_fallback_provider = 'OPENAI',
+			        openai_model = 'gpt-5.5'
+			  WHERE user_id = ?`,
+		)
+			.bind(selectedUser.user.id)
+			.run();
+		const job = (
+			(await (
+				await SELF.fetch(
+					`http://example.com/api/jobs/${activeJobs[0]!.id}`,
+				)
+			).json()) as {
+				job: { id: string; discoveryCriteria: Record<string, unknown> };
+			}
+		).job;
+		const sourceUrl =
+			"https://www.linkedin.com/in/openai-selected-bmo";
+		const grounded = openAiGroundedResponse({
+			people: [
+				{
+					fullName: "OpenAI Selected",
+					title: "Investment Analyst",
+					company: "BMO Financial Group",
+					location: "Toronto",
+					sourceUrl,
+					evidence:
+						"OpenAI Selected is an Investment Analyst at BMO Financial Group in Toronto.",
+				},
+			],
+			citations: [sourceUrl],
+		});
+		const fetchSpy = vi
+			.spyOn(globalThis, "fetch")
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ results: [] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ results: [] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify(grounded), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			);
+		const response = await authenticatedWorkerFetch(
+			selectedUser,
+			"/api/discovery",
+			{
+				method: "POST",
+				body: { ...job.discoveryCriteria, jobId: job.id, count: 1 },
+			},
+			{
+				...(env as unknown as AppBindings),
+				ENABLE_JOB_OUTREACH_LINKING: "true",
+			},
+		);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			prospects: [
+				{
+					fullName: "OpenAI Selected",
+					discoveryProvider: "OPENAI_GROUNDED",
+					linkedinUrl: sourceUrl,
+				},
+			],
+			summary: {
+				fallbackProvider: "OPENAI",
+				fallbackAttempted: true,
+				fallbackStatus: "SUCCESS",
+				fallbackModel: "gpt-5.5",
+				fallbackAccepted: 1,
+			},
+		});
+		expect(fetchSpy.mock.calls.map(([url]) => url)).toEqual([
+			"https://api.tavily.com/search",
+			"https://api.tavily.com/search",
+			"https://api.openai.com/v1/responses",
+		]);
+		const openAiHeaders = fetchSpy.mock.calls[2]![1]!
+			.headers as Record<string, string>;
+		expect(openAiHeaders.Authorization).toBe(
+			["Bearer", "selected-openai-key"].join(" "),
+		);
+		fetchSpy.mockRestore();
+	});
+
+	it("preserves accepted Tavily people when grounded search fails", async () => {
+		await saveCredential(env as unknown as AppBindings, {
+			userId: userB.user.id,
+			provider: "TAVILY",
+			value: "test-tavily-provider-error",
+		});
+		await saveCredential(env as unknown as AppBindings, {
+			userId: userB.user.id,
+			provider: "GEMINI",
+			value: "test-gemini-provider-error",
+		});
+		await env.DB.prepare(
+			"UPDATE user_settings SET people_search_fallback_provider = 'GEMINI' WHERE user_id = ?",
+		)
+			.bind(userB.user.id)
+			.run();
+		const job = (
+			(await (
+				await SELF.fetch(
+					`http://example.com/api/jobs/${activeJobs[0]!.id}`,
+				)
+			).json()) as {
+				job: { id: string; discoveryCriteria: Record<string, unknown> };
+			}
+		).job;
+		const fetchSpy = vi
+			.spyOn(globalThis, "fetch")
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						results: [
+							{
+								title:
+									"Tavily Example - Investment Analyst - BMO | LinkedIn",
+								url: "https://www.linkedin.com/in/tavily-preserved",
+								content:
+									"Investment Analyst at BMO Financial Group in Toronto.",
+							},
+						],
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				),
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ results: [] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			)
+			.mockRejectedValueOnce(new Error("This operation was aborted"));
+		const response = await authenticatedWorkerFetch(
+			userB,
+			"/api/discovery",
+			{
+				method: "POST",
+				body: { ...job.discoveryCriteria, jobId: job.id, count: 2 },
+			},
+			{
+				...(env as unknown as AppBindings),
+				ENABLE_JOB_OUTREACH_LINKING: "true",
+			},
+		);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			prospects: [
+				{
+					fullName: "Tavily Example",
+					discoveryProvider: "TAVILY",
+				},
+			],
+			summary: {
+				inserted: 1,
+				fallbackProvider: "GEMINI",
+				fallbackAttempted: true,
+				fallbackStatus: "PROVIDER_ERROR",
+				fallbackReturned: 0,
+				fallbackAccepted: 0,
+			},
+		});
+		expect(fetchSpy).toHaveBeenCalledTimes(3);
+		fetchSpy.mockRestore();
+	});
+
+	it("accepts cited grounded people and deduplicates their job link", async () => {
+		const groundedUser = await authenticatedTestUser(
+			"gemini-grounded-discovery",
+		);
+		await saveCredential(env as unknown as AppBindings, {
+			userId: groundedUser.user.id,
+			provider: "TAVILY",
+			value: "test-tavily-grounded",
+		});
+		await saveCredential(env as unknown as AppBindings, {
+			userId: groundedUser.user.id,
+			provider: "GEMINI",
+			value: "test-user-grounded-key",
+		});
+		await env.DB.prepare(
+			"UPDATE user_settings SET people_search_fallback_provider = 'GEMINI' WHERE user_id = ?",
+		)
+			.bind(groundedUser.user.id)
+			.run();
+		const job = (
+			(await (
+				await SELF.fetch(
+					`http://example.com/api/jobs/${activeJobs[0]!.id}`,
+				)
+			).json()) as {
+				job: { id: string; discoveryCriteria: Record<string, unknown> };
+			}
+		).job;
+		const grounded = geminiInteractionResponse({
+			people: [
+				{
+					fullName: "Alexander Spark",
+					title: "Managing Director",
+					company: "BMO Financial Group",
+					location: "Toronto",
+					sourceUrl:
+						"https://privatewealth.bmo.com/en/people/alexander-spark",
+					evidence:
+						"Alexander Spark is a Managing Director at BMO Financial Group in Toronto.",
+				},
+			],
+			citations: [
+				"https://privatewealth.bmo.com/en/people/alexander-spark",
+			],
+		});
+		const fetchSpy = vi.spyOn(globalThis, "fetch");
+		for (const providerResponse of [
+			{ results: [] },
+			{ results: [] },
+			grounded,
+			{ results: [] },
+			{ results: [] },
+			grounded,
+		]) {
+			fetchSpy.mockResolvedValueOnce(
+				new Response(JSON.stringify(providerResponse), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			);
+		}
+		const enabledEnv = {
+			...(env as unknown as AppBindings),
+			ENABLE_JOB_OUTREACH_LINKING: "true",
+		};
+		const body = { ...job.discoveryCriteria, jobId: job.id, count: 1 };
+		const first = await authenticatedWorkerFetch(
+			groundedUser,
+			"/api/discovery",
+			{ method: "POST", body },
+			enabledEnv,
+		);
+		expect(first.status).toBe(200);
+		expect(await first.json()).toMatchObject({
+			prospects: [
+				{
+					fullName: "Alexander Spark",
+					discoveryProvider: "GEMINI_GROUNDED",
+					sourceUrl:
+						"https://privatewealth.bmo.com/en/people/alexander-spark",
+					matchQuality: "BROADER_COMPANY",
+				},
+			],
+			summary: {
+				fallbackProvider: "GEMINI",
+				fallbackAttempted: true,
+				fallbackStatus: "SUCCESS",
+				fallbackModel: "gemini-3.8-flash",
+				fallbackReturned: 1,
+				fallbackAccepted: 1,
+				inserted: 1,
+				duplicates: 0,
+			},
+		});
+		const retry = await authenticatedWorkerFetch(
+			groundedUser,
+			"/api/discovery",
+			{ method: "POST", body },
+			enabledEnv,
+		);
+		expect(retry.status).toBe(200);
+		expect(await retry.json()).toMatchObject({
+			summary: {
+				fallbackProvider: "GEMINI",
+				fallbackStatus: "SUCCESS",
+				fallbackReturned: 1,
+				fallbackAccepted: 1,
+				inserted: 0,
+				duplicates: 1,
+			},
+		});
+		const link = await env.DB.prepare(
+			`SELECT COUNT(*) AS count FROM job_prospects jp
+			  JOIN prospects p ON p.id = jp.prospect_id
+			  WHERE jp.user_id = ? AND jp.job_id = ? AND p.source_url = ?`,
+		)
+			.bind(
+				groundedUser.user.id,
+				job.id,
+				"https://privatewealth.bmo.com/en/people/alexander-spark",
+			)
+			.first<{ count: number }>();
+		expect(link?.count).toBe(1);
+		const auditRow = await env.DB.prepare(
+			`SELECT metadata_json FROM audit_events
+			  WHERE user_id = ? AND action = 'DISCOVERY_COMPLETED'
+			  ORDER BY created_at DESC LIMIT 1`,
+		)
+			.bind(groundedUser.user.id)
+			.first<{ metadata_json: string }>();
+		expect(JSON.parse(auditRow!.metadata_json)).toMatchObject({
+			fallbackProvider: "GEMINI",
+			fallbackStatus: "SUCCESS",
+			fallbackModel: "gemini-3.8-flash",
+			fallbackReturned: 1,
+			fallbackAccepted: 1,
+		});
+		expect(fetchSpy).toHaveBeenCalledTimes(6);
 		fetchSpy.mockRestore();
 	});
 });
@@ -1976,6 +2452,57 @@ async function snapshotBody(
 		snapshotHash: await snapshotHash(jobs),
 		jobs,
 	});
+}
+
+function geminiInteractionResponse(input: {
+	people: unknown[];
+	citations: string[];
+}): object {
+	const text = JSON.stringify({ people: input.people });
+	return {
+		steps: [
+			{
+				type: "model_output",
+				content: [
+					{
+						type: "text",
+						text,
+						annotations: input.citations.map((url) => ({
+							type: "url_citation",
+							url,
+							title: new URL(url).hostname,
+							start_index: 0,
+							end_index: text.length,
+						})),
+					},
+				],
+			},
+		],
+	};
+}
+
+function openAiGroundedResponse(input: {
+	people: unknown[];
+	citations: string[];
+}): object {
+	const text = JSON.stringify({ people: input.people });
+	return {
+		output: [
+			{
+				type: "message",
+				content: [
+					{
+						type: "output_text",
+						text,
+						annotations: input.citations.map((url) => ({
+							type: "url_citation",
+							url,
+						})),
+					},
+				],
+			},
+		],
+	};
 }
 
 async function signedIngest(

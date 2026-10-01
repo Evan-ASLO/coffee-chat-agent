@@ -21,6 +21,11 @@ export interface UserSettings {
 	geminiModel: string;
 	openAiModel: string;
 	anthropicModel: string;
+	peopleSearchFallbackProvider:
+		| "NONE"
+		| "GEMINI"
+		| "OPENAI"
+		| "ANTHROPIC";
 	outreachGoal: string;
 	emailWordLimit: number;
 	personalContext: PersonalContextItem[];
@@ -122,6 +127,7 @@ export async function getSettings(
 	const row = await env.DB.prepare(
 		`SELECT user_id, sender_name, discovery_provider, enrichment_provider,
 		        draft_provider, gemini_model, openai_model, anthropic_model,
+		        people_search_fallback_provider,
 		        outreach_goal, email_word_limit, personal_context_json,
 		        spreadsheet_id, reply_sync_enabled
 		   FROM user_settings WHERE user_id = ?`,
@@ -136,6 +142,11 @@ export async function getSettings(
 			gemini_model: string;
 			openai_model: string;
 			anthropic_model: string;
+			people_search_fallback_provider:
+				| "NONE"
+				| "GEMINI"
+				| "OPENAI"
+				| "ANTHROPIC";
 			outreach_goal: string;
 			email_word_limit: number;
 			personal_context_json: string;
@@ -152,6 +163,8 @@ export async function getSettings(
 		geminiModel: row.gemini_model,
 		openAiModel: row.openai_model,
 		anthropicModel: row.anthropic_model,
+		peopleSearchFallbackProvider:
+			row.people_search_fallback_provider,
 		outreachGoal: row.outreach_goal,
 		emailWordLimit: row.email_word_limit,
 		personalContext: parseContext(row.personal_context_json),
@@ -169,7 +182,8 @@ export async function updateSettings(
 		`UPDATE user_settings SET
 		   sender_name = ?, discovery_provider = ?, enrichment_provider = ?,
 		   draft_provider = ?, gemini_model = ?, openai_model = ?,
-		   anthropic_model = ?, outreach_goal = ?, email_word_limit = ?,
+		   anthropic_model = ?, people_search_fallback_provider = ?,
+		   outreach_goal = ?, email_word_limit = ?,
 		   personal_context_json = ?, reply_sync_enabled = ?, updated_at = ?
 		 WHERE user_id = ?`,
 	)
@@ -181,6 +195,7 @@ export async function updateSettings(
 			settings.geminiModel,
 			settings.openAiModel,
 			settings.anthropicModel,
+			settings.peopleSearchFallbackProvider,
 			settings.outreachGoal,
 			settings.emailWordLimit,
 			JSON.stringify(settings.personalContext),

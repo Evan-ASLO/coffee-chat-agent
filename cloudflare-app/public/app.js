@@ -479,6 +479,15 @@ function renderSettings() {
 				<label>Gemini model<input id="gemini-model" value="${escapeAttr(settings.geminiModel)}" /></label>
 				<label>OpenAI model<input id="openai-model" value="${escapeAttr(settings.openAiModel)}" /></label>
 				<label>Anthropic model<input id="anthropic-model" value="${escapeAttr(settings.anthropicModel)}" /></label>
+				<label class="full">Cited people-search fallback
+					<select id="people-search-fallback-provider">
+						<option value="NONE" ${selected(settings.peopleSearchFallbackProvider, "NONE")}>Disabled</option>
+						<option value="GEMINI" ${selected(settings.peopleSearchFallbackProvider, "GEMINI")}>Gemini Google Search</option>
+						<option value="OPENAI" ${selected(settings.peopleSearchFallbackProvider, "OPENAI")}>OpenAI Web Search</option>
+						<option value="ANTHROPIC" ${selected(settings.peopleSearchFallbackProvider, "ANTHROPIC")}>Anthropic Web Search</option>
+					</select>
+					<small>Runs only when Tavily cannot find enough usable people. It uses your encrypted key and configured model for the selected provider. Web-search tools may incur provider charges, and model/account support varies.</small>
+				</label>
 				<label>Email word limit<input id="word-limit" type="number" min="60" max="250" value="${settings.emailWordLimit}" /></label>
 				<label class="full">Outreach goal<textarea id="outreach-goal" rows="3">${escapeHtml(settings.outreachGoal)}</textarea></label>
 				<label class="full">Background summary<textarea id="background" rows="4">${escapeHtml(contextValue("Background summary"))}</textarea></label>
@@ -840,11 +849,17 @@ async function executeDiscovery(criteria) {
 			accepted: 0,
 			primaryProviderReturned: 0,
 			primaryAccepted: 0,
-			fallbackProviderReturned: 0,
-			fallbackAccepted: 0,
+			professionalBioProviderReturned: 0,
+			professionalBioAccepted: 0,
 			insufficientMatchRejected: 0,
 			strongAccepted: 0,
 			broaderAccepted: 0,
+			fallbackProvider: "NONE",
+			fallbackAttempted: false,
+			fallbackStatus: "NOT_NEEDED",
+			fallbackModel: "",
+			fallbackReturned: 0,
+			fallbackAccepted: 0,
 			inserted: result.prospects?.length || 0,
 			duplicates: 0,
 			rejected: 0,
@@ -913,6 +928,11 @@ function discoverySuccessMessage(summary) {
 			`${summary.broaderAccepted} broader company ${summary.broaderAccepted === 1 ? "match" : "matches"} requiring role review`,
 		);
 	}
+	if (summary.fallbackAccepted) {
+		details.push(
+			`${summary.fallbackAccepted} cited ${fallbackProviderLabel(summary.fallbackProvider)} ${summary.fallbackAccepted === 1 ? "match" : "matches"}`,
+		);
+	}
 	if (summary.duplicates) {
 		details.push(
 			`${summary.duplicates} already ${summary.duplicates === 1 ? "was" : "were"} tracked`,
@@ -920,13 +940,26 @@ function discoverySuccessMessage(summary) {
 	}
 	if (summary.rejected) {
 		details.push(
-			`${summary.rejected} ${summary.rejected === 1 ? "result was" : "results were"} not a usable LinkedIn profile`,
+			`${summary.rejected} ${summary.rejected === 1 ? "result was" : "results were"} not a usable public professional profile`,
 		);
 	}
 	return `${summary.inserted} new ${summary.inserted === 1 ? "person is" : "people are"} ready for approval${details.length ? `; ${details.join("; ")}` : ""}.`;
 }
 
 function discoveryEmptyMessage(summary) {
+	if (summary.fallbackStatus === "DISABLED") {
+		return "Tavily found no usable public professional profiles. The optional cited provider fallback is disabled in Settings.";
+	}
+	if (summary.fallbackStatus === "MISSING_KEY") {
+		const provider = fallbackProviderLabel(summary.fallbackProvider);
+		return `The cited ${provider} fallback is selected, but no ${provider} API key is configured. Add your key under Settings or disable the fallback.`;
+	}
+	if (summary.fallbackStatus === "UNSUPPORTED_MODEL") {
+		return `The configured ${fallbackProviderLabel(summary.fallbackProvider)} model cannot use the required web-search tool. Choose a search-capable model or disable the fallback. Tavily results were preserved.`;
+	}
+	if (summary.fallbackStatus === "PROVIDER_ERROR") {
+		return `Tavily results were preserved, but the cited ${fallbackProviderLabel(summary.fallbackProvider)} fallback could not complete. Check that web search is enabled for the configured model/account before retrying; searches may incur charges.`;
+	}
 	if (summary.providerReturned === 0) {
 		return "The search provider returned no profiles. Edit the roles, company, or location below and retry.";
 	}
@@ -940,9 +973,9 @@ function discoveryEmptyMessage(summary) {
 				`${summary.primaryProviderReturned} LinkedIn-focused ${summary.primaryProviderReturned === 1 ? "candidate" : "candidates"}`,
 			);
 		}
-		if (summary.fallbackProviderReturned) {
+		if (summary.professionalBioProviderReturned) {
 			stages.push(
-				`${summary.fallbackProviderReturned} public-bio ${summary.fallbackProviderReturned === 1 ? "candidate" : "candidates"}`,
+				`${summary.professionalBioProviderReturned} public-bio ${summary.professionalBioProviderReturned === 1 ? "candidate" : "candidates"}`,
 			);
 		}
 		return `The search returned ${stages.length ? stages.join(" and ") : `${summary.providerReturned} candidate results`}, but none were usable public professional profiles. Broaden the roles or location and retry.`;
@@ -951,6 +984,16 @@ function discoveryEmptyMessage(summary) {
 		return `No new people were added. ${summary.duplicates} matching ${summary.duplicates === 1 ? "profile is" : "profiles are"} already tracked and linked to this job. Edit the criteria to search for different roles.`;
 	}
 	return "No new people matched these criteria. Edit the fields below and retry.";
+}
+
+function fallbackProviderLabel(provider) {
+	return (
+		{
+			GEMINI: "Gemini Google Search",
+			OPENAI: "OpenAI Web Search",
+			ANTHROPIC: "Anthropic Web Search",
+		}[provider] || "provider search"
+	);
 }
 
 async function prepare(id) {
@@ -1140,6 +1183,9 @@ async function saveSettings(event) {
 				geminiModel: value("gemini-model"),
 				openAiModel: value("openai-model"),
 				anthropicModel: value("anthropic-model"),
+				peopleSearchFallbackProvider: value(
+					"people-search-fallback-provider",
+				),
 				outreachGoal: value("outreach-goal"),
 				emailWordLimit: Number(value("word-limit")),
 				personalContext: [

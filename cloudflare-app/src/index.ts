@@ -306,6 +306,10 @@ app.post("/api/workspace/init", requireUser, async (c) => {
 app.put("/api/settings", requireUser, async (c) => {
 	await protectMutation(c);
 	const input = settingsSchema.parse(await readJson(c));
+	const peopleSearchFallbackProvider =
+		input.peopleSearchFallbackProvider ??
+		(await getSettings(c.env, c.get("user")!.id))
+			.peopleSearchFallbackProvider;
 	await updateSettings(c.env, c.get("user")!.id, {
 		senderName: input.senderName,
 		discoveryProvider: input.discoveryProvider,
@@ -314,6 +318,7 @@ app.put("/api/settings", requireUser, async (c) => {
 		geminiModel: input.geminiModel,
 		openAiModel: input.openAiModel,
 		anthropicModel: input.anthropicModel,
+		peopleSearchFallbackProvider,
 		outreachGoal: input.outreachGoal,
 		emailWordLimit: input.emailWordLimit,
 		personalContext: input.personalContext,
@@ -328,6 +333,7 @@ app.put("/api/settings", requireUser, async (c) => {
 			draftProvider: input.draftProvider,
 			discoveryProvider: input.discoveryProvider,
 			enrichmentProvider: input.enrichmentProvider,
+			peopleSearchFallbackProvider,
 		},
 	});
 	return c.json({ ok: true });
@@ -649,6 +655,12 @@ const settingsSchema = z.object({
 	geminiModel: z.string().trim().regex(/^[a-z0-9._:-]+$/i).max(100),
 	openAiModel: z.string().trim().regex(/^[a-z0-9._:-]+$/i).max(100),
 	anthropicModel: z.string().trim().regex(/^[a-z0-9._:-]+$/i).max(100),
+	peopleSearchFallbackProvider: z.enum([
+		"NONE",
+		"GEMINI",
+		"OPENAI",
+		"ANTHROPIC",
+	]).optional(),
 	outreachGoal: z
 		.string()
 		.trim()

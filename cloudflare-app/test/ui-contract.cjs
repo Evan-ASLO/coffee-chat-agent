@@ -90,11 +90,27 @@ test("auto-starts job discovery with explicit progress and recovery states", () 
 	assert.match(app, /summary\.broaderAccepted/);
 	assert.match(app, /Broader company match — review role relevance/);
 	assert.match(app, /usable public professional profiles/);
-	assert.match(app, /fallbackProviderReturned/);
+	assert.match(app, /professionalBioProviderReturned/);
 	assert.match(app, /showToast\(\s*`Found \$\{summary\.inserted\}/);
 	assert.match(app, /person\.linkedinUrl \|\| person\.sourceUrl/);
 	assert.match(app, /LinkedIn profile/);
 	assert.match(app, /Public profile/);
 	assert.match(styles, /\.inline-spinner\s*\{/);
 	assert.match(styles, /\.discovery-state\s*\{/);
+});
+
+test("renders one explicit cited-search provider selector and safe statuses", () => {
+	const app = fs.readFileSync(path.join(root, "public", "app.js"), "utf8");
+	assert.match(app, /id="people-search-fallback-provider"/);
+	assert.match(app, /value="NONE"/);
+	assert.match(app, /value="GEMINI"/);
+	assert.match(app, /value="OPENAI"/);
+	assert.match(app, /value="ANTHROPIC"/);
+	assert.match(app, /Web-search tools may incur provider charges/);
+	assert.match(app, /peopleSearchFallbackProvider/);
+	assert.match(app, /fallbackStatus === "DISABLED"/);
+	assert.match(app, /fallbackStatus === "MISSING_KEY"/);
+	assert.match(app, /fallbackStatus === "UNSUPPORTED_MODEL"/);
+	assert.match(app, /fallbackStatus === "PROVIDER_ERROR"/);
+	assert.doesNotMatch(app, /raw model/i);
 });

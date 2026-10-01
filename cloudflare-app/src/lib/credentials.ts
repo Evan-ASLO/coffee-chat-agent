@@ -21,6 +21,17 @@ export async function readCredential(
 	return decryptCredential(env, userId, kind, provider, record);
 }
 
+export async function readOptionalCredential(
+	env: AppBindings,
+	userId: string,
+	provider: CredentialProvider,
+	kind: CredentialKind = "API_KEY",
+): Promise<string | null> {
+	const record = await getCredential(env, userId, kind, provider);
+	if (!record) return null;
+	return decryptCredential(env, userId, kind, provider, record);
+}
+
 export async function saveCredential(
 	env: AppBindings,
 	input: {

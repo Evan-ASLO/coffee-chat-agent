@@ -28,7 +28,11 @@ export interface DiscoveredPerson {
 	companyDomain: string;
 	location: string;
 	linkedinUrl: string;
-	discoveryProvider: "TAVILY";
+	discoveryProvider:
+		| "TAVILY"
+		| "GEMINI_GROUNDED"
+		| "OPENAI_GROUNDED"
+		| "ANTHROPIC_GROUNDED";
 	sourceUrl: string;
 	sourceSnippet: string;
 	whyRelevant: string;
@@ -772,7 +776,14 @@ function linkedInPerson(
 	};
 }
 
-function professionalBioPerson(
+export function linkedInDiscoveryPerson(
+	result: { title?: string; url?: string; content?: string },
+	criteria: DiscoveryCriteria,
+): DiscoveredPerson | null {
+	return linkedInPerson(result, criteria).person;
+}
+
+export function professionalBioPerson(
 	result: { title?: string; url?: string; content?: string },
 	criteria: DiscoveryCriteria,
 ): DiscoveredPerson | null {
@@ -993,7 +1004,7 @@ function normalizeLinkedIn(value: string): string {
 	}
 }
 
-function normalizeProfessionalSourceUrl(value: string): string {
+export function normalizeProfessionalSourceUrl(value: string): string {
 	try {
 		const url = new URL(value);
 		if (url.protocol !== "https:" && url.protocol !== "http:") return "";

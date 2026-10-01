@@ -140,6 +140,20 @@ Catalog freshness becomes stale when the publisher's latest `generatedAt` is mor
 
 Enable it only after the catalog satisfies [`docs/PARALLEL_RUN_CRITERIA.md`](docs/PARALLEL_RUN_CRITERIA.md). For a reviewed rollout, set `ENABLE_JOB_OUTREACH_LINKING` to `true` in the target Worker's environment configuration and redeploy; set it back to `false` (or remove it) to stop new linking without disabling public jobs or core Coffee Chat networking.
 
+### Optional cited people-search fallback
+
+Each user has one disabled-by-default `peopleSearchFallbackProvider` setting: `NONE`, `GEMINI`, `OPENAI`, or `ANTHROPIC`. Job networking always runs Tavily's LinkedIn and approved-domain public-bio searches first. Only when those stages return fewer usable people than requested does the Worker read the selected provider's encrypted user key and make one bounded request with the user's configured model:
+
+- Gemini Interactions API with `google_search`, `store: false`, and a supported configured `gemini-3.8-flash` or `gemini-3.7-flash` model;
+- OpenAI Responses API with `web_search`, low search context, and `filters.allowed_domains`; or
+- Anthropic Messages API with `web_search_20250305`, `max_uses: 1`, and `allowed_domains`.
+
+There is no provider chain, automatic retry, or silent model substitution. A missing key, unsupported Gemini model, provider/model capability error, disabled Anthropic web-search entitlement, malformed response, or timeout returns a safe status and preserves all accepted Tavily results. The exact provider/model and aggregate returned/accepted counts are auditable without storing raw prompts, results, or URLs.
+
+Every accepted object must be strict JSON whose canonical `sourceUrl` exactly matches a direct provider citation and passes the existing LinkedIn/approved-host, page-type, company, role, location, and STRONG/BROADER quality checks. Google redirect citation URLs are rejected rather than resolved or trusted. The prompt contains only public company aliases, role/topics, location, approved domains, and requested count; it never includes the user's profile, resume, email, drafts, personal context, or credentials.
+
+Provider web search and model tokens may be billable. Gemini can execute multiple billable searches within its one API request; OpenAI bills web-search tool usage and tokens under the selected model; Anthropic documents web search at $10 per 1,000 searches plus token charges. Availability and pricing can change, so users must confirm that their selected model/account supports the required search tool before enabling it.
+
 Legacy import v1 is strict:
 
 ```ts

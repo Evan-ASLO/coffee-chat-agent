@@ -53,6 +53,8 @@ Use this checklist for the Cloudflare preview and again before public cutover. R
 - [ ] A completed legacy import preserves existing server states and exact retries are idempotent.
 - [ ] With linking disabled, job cards omit **Find people at this company**, linked discovery/link/unlink return `FEATURE_DISABLED`, and independent Coffee Chat discovery remains available.
 - [ ] With linking enabled, a job CTA auto-starts one search, disables duplicates while running, reports provider/accepted/duplicate outcomes, preserves job context on zero/error, and links new or rediscovered LinkedIn/source-URL profiles once.
+- [ ] Cited people-search fallback defaults to `NONE`, persists independently per user, permits exactly one of Gemini/OpenAI/Anthropic, reads only the selected provider's encrypted key/model, runs one request only after Tavily shortfall, and never chains or retries providers.
+- [ ] Each provider adapter requires a direct canonical citation, rejects uncited/redirect/host-mismatched/job-page objects, exposes no raw prompt/result/URL, and preserves accepted Tavily people on missing-key, unsupported-model, timeout, malformed-response, account-capability, or provider errors.
 
 ## Google and encrypted-data smoke tests
 
