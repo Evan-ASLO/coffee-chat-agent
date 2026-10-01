@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { fetchJson } from "./fetch";
+import { fetchJson, ProviderHttpError } from "./fetch";
 import {
 	employerProfessionalTopics,
 	employerSearchAliases,
@@ -17,6 +17,15 @@ export type PeopleSearchFallbackProvider =
 	| "GEMINI"
 	| "OPENAI"
 	| "ANTHROPIC";
+
+export type PeopleSearchErrorCategory =
+	| "RATE_LIMITED"
+	| "AUTH"
+	| "BAD_REQUEST"
+	| "UNSUPPORTED"
+	| "TIMEOUT"
+	| "MALFORMED_RESPONSE"
+	| "PROVIDER_ERROR";
 
 const GEMINI_SEARCH_MODELS = new Set([
 	"gemini-3.8-flash",
@@ -100,12 +109,13 @@ export interface PeopleSearchFallbackResult {
 	people: DiscoveredPerson[];
 }
 
-export class UnsupportedPeopleSearchModelError extends Error {
-	constructor(provider: PeopleSearchFallbackProvider, model: string) {
-		super(
-			`Configured ${providerLabel(provider)} model "${model}" is not enabled for the required web-search tool.`,
-		);
-		this.name = "UnsupportedPeopleSearchModelError";
+export class PeopleSearchFallbackError extends Error {
+	constructor(
+		readonly category: PeopleSearchErrorCategory,
+		readonly httpStatus: number | null = null,
+	) {
+		super("People-search fallback failed.");
+		this.name = "PeopleSearchFallbackError";
 	}
 }
 
@@ -116,55 +126,59 @@ export async function discoverWithPeopleSearchFallback(input: {
 	criteria: DiscoveryCriteria;
 	count: number;
 }): Promise<PeopleSearchFallbackResult> {
-	const provider = input.provider;
-	const model = validateConfiguredModel(provider, input.model);
-	const allowedDomains = Array.from(
-		new Set(["linkedin.com", ...professionalBioDomains(input.criteria)]),
-	);
-	const prompt = groundedPrompt(
-		input.criteria,
-		Math.min(Math.max(input.count, 1), 10),
-		allowedDomains,
-	);
-	const output = await requestGroundedSearch({
-		provider,
-		apiKey: input.apiKey,
-		model,
-		prompt,
-		allowedDomains,
-	});
-	const parsed = groundedResponseSchema.parse(parseJsonObject(output.text));
-	const citedUrls = new Set(
-		output.citations
-			.map(normalizeProfessionalSourceUrl)
-			.filter(Boolean),
-	);
-	const people = new Map<string, DiscoveredPerson>();
-	for (const candidate of parsed.people) {
-		const sourceUrl = normalizeProfessionalSourceUrl(candidate.sourceUrl);
-		if (!sourceUrl || !citedUrls.has(sourceUrl)) continue;
-		const result = {
-			title: `${candidate.fullName} - ${candidate.title}`,
-			url: sourceUrl,
-			content: `${candidate.evidence} ${candidate.company} ${candidate.location}`,
-		};
-		const accepted =
-			linkedInDiscoveryPerson(result, input.criteria) ||
-			professionalBioPerson(result, input.criteria);
-		if (!accepted) continue;
-		people.set(accepted.linkedinUrl || accepted.sourceUrl, {
-			...accepted,
-			discoveryProvider: groundedDiscoveryProvider(provider),
+	try {
+		const provider = input.provider;
+		const model = validateConfiguredModel(provider, input.model);
+		const allowedDomains = Array.from(
+			new Set(["linkedin.com", ...professionalBioDomains(input.criteria)]),
+		);
+		const prompt = groundedPrompt(
+			input.criteria,
+			Math.min(Math.max(input.count, 1), 10),
+			allowedDomains,
+		);
+		const output = await requestGroundedSearch({
+			provider,
+			apiKey: input.apiKey,
+			model,
+			prompt,
+			allowedDomains,
 		});
-		if (people.size >= input.count) break;
+		const parsed = groundedResponseSchema.parse(parseJsonObject(output.text));
+		const citedUrls = new Set(
+			output.citations
+				.map(normalizeProfessionalSourceUrl)
+				.filter(Boolean),
+		);
+		const people = new Map<string, DiscoveredPerson>();
+		for (const candidate of parsed.people) {
+			const sourceUrl = normalizeProfessionalSourceUrl(candidate.sourceUrl);
+			if (!sourceUrl || !citedUrls.has(sourceUrl)) continue;
+			const result = {
+				title: `${candidate.fullName} - ${candidate.title}`,
+				url: sourceUrl,
+				content: `${candidate.evidence} ${candidate.company} ${candidate.location}`,
+			};
+			const accepted =
+				linkedInDiscoveryPerson(result, input.criteria) ||
+				professionalBioPerson(result, input.criteria);
+			if (!accepted) continue;
+			people.set(accepted.linkedinUrl || accepted.sourceUrl, {
+				...accepted,
+				discoveryProvider: groundedDiscoveryProvider(provider),
+			});
+			if (people.size >= input.count) break;
+		}
+		return {
+			provider,
+			model,
+			returned: parsed.people.length,
+			accepted: people.size,
+			people: [...people.values()],
+		};
+	} catch (error) {
+		throw classifyPeopleSearchError(error);
 	}
-	return {
-		provider,
-		model,
-		returned: parsed.people.length,
-		accepted: people.size,
-		people: [...people.values()],
-	};
 }
 
 function validateConfiguredModel(
@@ -172,9 +186,9 @@ function validateConfiguredModel(
 	selectedModel: string,
 ): string {
 	const model = selectedModel.trim();
-	if (!model) throw new UnsupportedPeopleSearchModelError(provider, model);
+	if (!model) throw new PeopleSearchFallbackError("UNSUPPORTED");
 	if (provider === "GEMINI" && !GEMINI_SEARCH_MODELS.has(model)) {
-		throw new UnsupportedPeopleSearchModelError(provider, model);
+		throw new PeopleSearchFallbackError("UNSUPPORTED");
 	}
 	return model;
 }
@@ -370,8 +384,8 @@ function extractAnthropicOutput(
 			block.content &&
 			!Array.isArray(block.content)
 		) {
-			throw new Error(
-				`Anthropic web search failed: ${block.content.error_code || "provider error"}.`,
+			throw new PeopleSearchFallbackError(
+				anthropicToolErrorCategory(block.content.error_code),
 			);
 		}
 	}
@@ -421,6 +435,69 @@ function parseJsonObject(value: string): unknown {
 	return JSON.parse(clean.slice(start, end + 1));
 }
 
+function classifyPeopleSearchError(
+	error: unknown,
+): PeopleSearchFallbackError {
+	if (error instanceof PeopleSearchFallbackError) return error;
+	if (error instanceof ProviderHttpError) {
+		return new PeopleSearchFallbackError(
+			httpErrorCategory(error.status, error.message),
+			error.status,
+		);
+	}
+	if (
+		error instanceof Error &&
+		(error.name === "AbortError" ||
+			error.message.toLowerCase().includes("aborted"))
+	) {
+		return new PeopleSearchFallbackError("TIMEOUT");
+	}
+	if (
+		error instanceof z.ZodError ||
+		error instanceof SyntaxError ||
+		(error instanceof Error &&
+			/malformed json|no json output|unexpected end of json/i.test(
+				error.message,
+			))
+	) {
+		return new PeopleSearchFallbackError("MALFORMED_RESPONSE");
+	}
+	return new PeopleSearchFallbackError("PROVIDER_ERROR");
+}
+
+function httpErrorCategory(
+	status: number,
+	message: string,
+): PeopleSearchErrorCategory {
+	if (status === 429) return "RATE_LIMITED";
+	if (status === 401 || status === 403) return "AUTH";
+	if (status === 404) return "UNSUPPORTED";
+	if (status === 400 || status === 422) {
+		return /not supported|unsupported|does not support|model.*not found|tool.*(?:disabled|not enabled|unavailable)|web.search.*(?:disabled|not enabled)/i.test(
+			message,
+		)
+			? "UNSUPPORTED"
+			: "BAD_REQUEST";
+	}
+	return "PROVIDER_ERROR";
+}
+
+function anthropicToolErrorCategory(
+	errorCode?: string,
+): PeopleSearchErrorCategory {
+	switch (errorCode) {
+		case "too_many_requests":
+			return "RATE_LIMITED";
+		case "invalid_tool_input":
+		case "max_uses_exceeded":
+		case "query_too_long":
+		case "request_too_large":
+			return "BAD_REQUEST";
+		default:
+			return "PROVIDER_ERROR";
+	}
+}
+
 function groundedDiscoveryProvider(
 	provider: PeopleSearchFallbackProvider,
 ):
@@ -434,16 +511,5 @@ function groundedDiscoveryProvider(
 			return "OPENAI_GROUNDED";
 		case "ANTHROPIC":
 			return "ANTHROPIC_GROUNDED";
-	}
-}
-
-function providerLabel(provider: PeopleSearchFallbackProvider): string {
-	switch (provider) {
-		case "GEMINI":
-			return "Gemini";
-		case "OPENAI":
-			return "OpenAI";
-		case "ANTHROPIC":
-			return "Anthropic";
 	}
 }

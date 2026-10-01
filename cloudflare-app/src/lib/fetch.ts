@@ -6,6 +6,16 @@ interface JsonRequest {
 	attempts?: number;
 }
 
+export class ProviderHttpError extends Error {
+	constructor(
+		readonly status: number,
+		message: string,
+	) {
+		super(message);
+		this.name = "ProviderHttpError";
+	}
+}
+
 const allowedHosts = new Set([
 	"api.tavily.com",
 	"api.hunter.io",
@@ -54,7 +64,8 @@ export async function fetchJson<T>(
 					await sleep(300 * 2 ** (attempt - 1));
 					continue;
 				}
-				throw new Error(
+				throw new ProviderHttpError(
+					response.status,
 					`Provider request failed with HTTP ${response.status}: ${safeProviderMessage(text)}`,
 				);
 			}

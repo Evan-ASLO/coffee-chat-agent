@@ -148,7 +148,7 @@ Each user has one disabled-by-default `peopleSearchFallbackProvider` setting: `N
 - OpenAI Responses API with `web_search`, low search context, and `filters.allowed_domains`; or
 - Anthropic Messages API with `web_search_20250305`, `max_uses: 1`, and `allowed_domains`.
 
-There is no provider chain, automatic retry, or silent model substitution. A missing key, unsupported Gemini model, provider/model capability error, disabled Anthropic web-search entitlement, malformed response, or timeout returns a safe status and preserves all accepted Tavily results. The exact provider/model and aggregate returned/accepted counts are auditable without storing raw prompts, results, or URLs.
+There is no provider chain, automatic retry, or silent model substitution. Selected-provider failures are reduced to `RATE_LIMITED`, `AUTH`, `BAD_REQUEST`, `UNSUPPORTED`, `TIMEOUT`, `MALFORMED_RESPONSE`, or `PROVIDER_ERROR`. Audit and API summaries retain only the provider, category, numeric HTTP status when available, configured model, and aggregate counts; raw provider bodies/messages, prompts, results, URLs, and credentials are never stored. Every failure preserves accepted Tavily results.
 
 Every accepted object must be strict JSON whose canonical `sourceUrl` exactly matches a direct provider citation and passes the existing LinkedIn/approved-host, page-type, company, role, location, and STRONG/BROADER quality checks. Google redirect citation URLs are rejected rather than resolved or trusted. The prompt contains only public company aliases, role/topics, location, approved domains, and requested count; it never includes the user's profile, resume, email, drafts, personal context, or credentials.
 

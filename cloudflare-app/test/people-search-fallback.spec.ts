@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	discoverWithPeopleSearchFallback,
-	UnsupportedPeopleSearchModelError,
+	PeopleSearchFallbackError,
 	type PeopleSearchFallbackProvider,
 } from "../src/lib/people-search-fallback";
 import type { DiscoveryCriteria } from "../src/lib/providers";
@@ -273,16 +273,104 @@ describe("cited people-search fallback providers", () => {
 		}
 	});
 
-	it("surfaces malformed output, provider errors, and Anthropic tool errors without retries", async () => {
-		const fetchSpy = vi
-			.spyOn(globalThis, "fetch")
-			.mockResolvedValueOnce(groundedResponse("OPENAI", { people: [] }))
-			.mockResolvedValueOnce(
-				new Response("provider rejected the web-search tool", {
-					status: 400,
-				}),
-			)
-			.mockResolvedValueOnce(
+	for (const testCase of providerCases) {
+		it(`classifies ${testCase.provider} HTTP 429 without leaking provider content`, async () => {
+			const unsafeBody = JSON.stringify({
+				error: {
+					message:
+						"private prompt https://private.example/profile API-KEY-DO-NOT-STORE",
+				},
+			});
+			const fetchSpy = vi
+				.spyOn(globalThis, "fetch")
+				.mockResolvedValue(
+					new Response(unsafeBody, {
+						status: 429,
+						headers: { "Content-Type": "application/json" },
+					}),
+				);
+			const error = await fallbackError({
+				provider: testCase.provider,
+				model: testCase.model,
+			});
+			expect(error).toMatchObject({
+				category: "RATE_LIMITED",
+				httpStatus: 429,
+				message: "People-search fallback failed.",
+			});
+			expect(JSON.stringify(error)).not.toContain("private prompt");
+			expect(JSON.stringify(error)).not.toContain("private.example");
+			expect(JSON.stringify(error)).not.toContain("API-KEY-DO-NOT-STORE");
+			expect(fetchSpy).toHaveBeenCalledTimes(1);
+		});
+	}
+
+	it("classifies auth, bad request, unsupported, and provider failures safely", async () => {
+		const cases: Array<{
+			provider: PeopleSearchFallbackProvider;
+			model: string;
+			status: number;
+			body: string;
+			category: string;
+		}> = [
+			{
+				provider: "GEMINI",
+				model: "gemini-3.8-flash",
+				status: 401,
+				body: "invalid API key SECRET-VALUE",
+				category: "AUTH",
+			},
+			{
+				provider: "OPENAI",
+				model: "gpt-5.5",
+				status: 422,
+				body: "invalid request body with private prompt",
+				category: "BAD_REQUEST",
+			},
+			{
+				provider: "ANTHROPIC",
+				model: "claude-sonnet-4-6",
+				status: 400,
+				body: "web search tool is not enabled for this account",
+				category: "UNSUPPORTED",
+			},
+			{
+				provider: "GEMINI",
+				model: "gemini-3.8-flash",
+				status: 404,
+				body: "model not found",
+				category: "UNSUPPORTED",
+			},
+			{
+				provider: "OPENAI",
+				model: "gpt-5.5",
+				status: 500,
+				body: "internal provider details",
+				category: "PROVIDER_ERROR",
+			},
+		];
+		const fetchSpy = vi.spyOn(globalThis, "fetch");
+		for (const testCase of cases) {
+			fetchSpy.mockResolvedValueOnce(
+				new Response(testCase.body, { status: testCase.status }),
+			);
+		}
+		for (const testCase of cases) {
+			const error = await fallbackError(testCase);
+			expect(error).toMatchObject({
+				category: testCase.category,
+				httpStatus: testCase.status,
+				message: "People-search fallback failed.",
+			});
+			expect(error.message).not.toContain(testCase.body);
+		}
+		expect(fetchSpy).toHaveBeenCalledTimes(cases.length);
+	});
+
+	it("classifies Anthropic tool errors without exposing their response", async () => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch");
+		for (const errorCode of ["too_many_requests", "unavailable"]) {
+			fetchSpy.mockResolvedValueOnce(
 				new Response(
 					JSON.stringify({
 						content: [
@@ -290,7 +378,7 @@ describe("cited people-search fallback providers", () => {
 								type: "web_search_tool_result",
 								content: {
 									type: "web_search_tool_result_error",
-									error_code: "unavailable",
+									error_code: errorCode,
 								},
 							},
 						],
@@ -298,37 +386,29 @@ describe("cited people-search fallback providers", () => {
 					{ status: 200 },
 				),
 			);
+		}
 		await expect(
-			discoverWithPeopleSearchFallback({
-				provider: "OPENAI",
-				apiKey: "user-key",
-				model: "gpt-5.5",
-				criteria,
-				count: 1,
-			}),
-		).resolves.toMatchObject({ returned: 0, accepted: 0 });
-		await expect(
-			discoverWithPeopleSearchFallback({
-				provider: "OPENAI",
-				apiKey: "user-key",
-				model: "gpt-5.5",
-				criteria,
-				count: 1,
-			}),
-		).rejects.toThrow(/HTTP 400/i);
-		await expect(
-			discoverWithPeopleSearchFallback({
+			fallbackError({
 				provider: "ANTHROPIC",
-				apiKey: "user-key",
 				model: "claude-sonnet-4-6",
-				criteria,
-				count: 1,
 			}),
-		).rejects.toThrow(/unavailable/i);
-		expect(fetchSpy).toHaveBeenCalledTimes(3);
+		).resolves.toMatchObject({
+			category: "RATE_LIMITED",
+			httpStatus: null,
+		});
+		await expect(
+			fallbackError({
+				provider: "ANTHROPIC",
+				model: "claude-sonnet-4-6",
+			}),
+		).resolves.toMatchObject({
+			category: "PROVIDER_ERROR",
+			httpStatus: null,
+		});
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
 	});
 
-	it("surfaces malformed JSON and timeouts without retries", async () => {
+	it("classifies malformed JSON and timeouts without retries", async () => {
 		const fetchSpy = vi
 			.spyOn(globalThis, "fetch")
 			.mockResolvedValueOnce(
@@ -351,31 +431,51 @@ describe("cited people-search fallback providers", () => {
 				),
 			)
 			.mockRejectedValueOnce(new Error("This operation was aborted"));
-		for (let index = 0; index < 2; index += 1) {
-			await expect(
-				discoverWithPeopleSearchFallback({
-					provider: "OPENAI",
-					apiKey: "user-key",
-					model: "gpt-5.5",
-					criteria,
-					count: 1,
-				}),
-			).rejects.toThrow();
-		}
+		await expect(
+			fallbackError({ provider: "OPENAI", model: "gpt-5.5" }),
+		).resolves.toMatchObject({
+			category: "MALFORMED_RESPONSE",
+			httpStatus: null,
+		});
+		await expect(
+			fallbackError({ provider: "OPENAI", model: "gpt-5.5" }),
+		).resolves.toMatchObject({
+			category: "TIMEOUT",
+			httpStatus: null,
+		});
 		expect(fetchSpy).toHaveBeenCalledTimes(2);
 	});
 
 	it("does not silently replace an unsupported configured Gemini model", async () => {
 		const fetchSpy = vi.spyOn(globalThis, "fetch");
 		await expect(
-			discoverWithPeopleSearchFallback({
+			fallbackError({
 				provider: "GEMINI",
-				apiKey: "user-key",
 				model: "gemini-2.5-flash",
-				criteria,
-				count: 1,
 			}),
-		).rejects.toBeInstanceOf(UnsupportedPeopleSearchModelError);
+		).resolves.toMatchObject({
+			category: "UNSUPPORTED",
+			httpStatus: null,
+		});
 		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 });
+
+async function fallbackError(input: {
+	provider: PeopleSearchFallbackProvider;
+	model: string;
+}): Promise<PeopleSearchFallbackError> {
+	try {
+		await discoverWithPeopleSearchFallback({
+			provider: input.provider,
+			apiKey: "user-key",
+			model: input.model,
+			criteria,
+			count: 1,
+		});
+		throw new Error("Expected people-search fallback to fail.");
+	} catch (error) {
+		expect(error).toBeInstanceOf(PeopleSearchFallbackError);
+		return error as PeopleSearchFallbackError;
+	}
+}

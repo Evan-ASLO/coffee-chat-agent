@@ -2157,7 +2157,7 @@ describe.sequential("internship jobs platform", () => {
 		fetchSpy.mockRestore();
 	});
 
-	it("preserves accepted Tavily people when grounded search fails", async () => {
+	it("preserves accepted Tavily people and audits only safe rate-limit fields", async () => {
 		await saveCredential(env as unknown as AppBindings, {
 			userId: userB.user.id,
 			provider: "TAVILY",
@@ -2209,7 +2209,20 @@ describe.sequential("internship jobs platform", () => {
 					headers: { "Content-Type": "application/json" },
 				}),
 			)
-			.mockRejectedValueOnce(new Error("This operation was aborted"));
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						error: {
+							message:
+								"quota exceeded for private prompt https://private.example/person using SECRET-DO-NOT-STORE",
+						},
+					}),
+					{
+						status: 429,
+						headers: { "Content-Type": "application/json" },
+					},
+				),
+			);
 		const response = await authenticatedWorkerFetch(
 			userB,
 			"/api/discovery",
@@ -2223,7 +2236,11 @@ describe.sequential("internship jobs platform", () => {
 			},
 		);
 		expect(response.status).toBe(200);
-		expect(await response.json()).toMatchObject({
+		const payload = (await response.json()) as {
+			prospects: Array<{ fullName: string }>;
+			summary: Record<string, unknown>;
+		};
+		expect(payload).toMatchObject({
 			prospects: [
 				{
 					fullName: "Tavily Example",
@@ -2234,11 +2251,33 @@ describe.sequential("internship jobs platform", () => {
 				inserted: 1,
 				fallbackProvider: "GEMINI",
 				fallbackAttempted: true,
-				fallbackStatus: "PROVIDER_ERROR",
+				fallbackStatus: "RATE_LIMITED",
+				fallbackModel: "gemini-3.8-flash",
+				fallbackHttpStatus: 429,
 				fallbackReturned: 0,
 				fallbackAccepted: 0,
 			},
 		});
+		expect(JSON.stringify(payload.summary)).not.toMatch(
+			/private prompt|private\.example|SECRET-DO-NOT-STORE/i,
+		);
+		const auditRow = await env.DB.prepare(
+			`SELECT metadata_json FROM audit_events
+			  WHERE user_id = ? AND action = 'DISCOVERY_COMPLETED'
+			  ORDER BY created_at DESC LIMIT 1`,
+		)
+			.bind(userB.user.id)
+			.first<{ metadata_json: string }>();
+		const auditMetadata = JSON.parse(auditRow!.metadata_json);
+		expect(auditMetadata).toMatchObject({
+			fallbackProvider: "GEMINI",
+			fallbackStatus: "RATE_LIMITED",
+			fallbackModel: "gemini-3.8-flash",
+			fallbackHttpStatus: 429,
+		});
+		expect(JSON.stringify(auditMetadata)).not.toMatch(
+			/private prompt|private\.example|SECRET-DO-NOT-STORE/i,
+		);
 		expect(fetchSpy).toHaveBeenCalledTimes(3);
 		fetchSpy.mockRestore();
 	});

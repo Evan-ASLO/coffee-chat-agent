@@ -110,7 +110,20 @@ test("renders one explicit cited-search provider selector and safe statuses", ()
 	assert.match(app, /peopleSearchFallbackProvider/);
 	assert.match(app, /fallbackStatus === "DISABLED"/);
 	assert.match(app, /fallbackStatus === "MISSING_KEY"/);
-	assert.match(app, /fallbackStatus === "UNSUPPORTED_MODEL"/);
+	assert.match(app, /fallbackStatus === "RATE_LIMITED"/);
+	assert.match(app, /fallbackStatus === "AUTH"/);
+	assert.match(app, /fallbackStatus === "BAD_REQUEST"/);
+	assert.match(app, /fallbackStatus === "UNSUPPORTED"/);
+	assert.match(app, /fallbackStatus === "TIMEOUT"/);
+	assert.match(app, /fallbackStatus === "MALFORMED_RESPONSE"/);
 	assert.match(app, /fallbackStatus === "PROVIDER_ERROR"/);
+	assert.match(
+		app,
+		/Gemini Search quota or rate limit was reached\. Check the API project's billing and Search grounding quota/,
+	);
+	assert.match(
+		app,
+		/discoverySuccessMessage[\s\S]*discoveryFallbackFailureMessage\(summary\)/,
+	);
 	assert.doesNotMatch(app, /raw model/i);
 });

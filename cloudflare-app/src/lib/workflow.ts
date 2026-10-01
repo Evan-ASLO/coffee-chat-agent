@@ -40,7 +40,8 @@ import { sha256 } from "./encoding";
 import type { QueueMessage } from "../types";
 import {
 	discoverWithPeopleSearchFallback,
-	UnsupportedPeopleSearchModelError,
+	PeopleSearchFallbackError,
+	type PeopleSearchErrorCategory,
 	type PeopleSearchFallbackProvider,
 } from "./people-search-fallback";
 
@@ -49,8 +50,7 @@ type PeopleSearchFallbackStatus =
 	| "DISABLED"
 	| "MISSING_KEY"
 	| "SUCCESS"
-	| "UNSUPPORTED_MODEL"
-	| "PROVIDER_ERROR";
+	| PeopleSearchErrorCategory;
 
 export interface DiscoverySummary {
 	providerReturned: number;
@@ -66,6 +66,7 @@ export interface DiscoverySummary {
 	fallbackAttempted: boolean;
 	fallbackStatus: PeopleSearchFallbackStatus;
 	fallbackModel: string;
+	fallbackHttpStatus: number | null;
 	fallbackReturned: number;
 	fallbackAccepted: number;
 	inserted: number;
@@ -126,6 +127,7 @@ export async function discoverProspects(
 	let fallbackAttempted = false;
 	let fallbackStatus: PeopleSearchFallbackStatus = "NOT_NEEDED";
 	let fallbackModel = "";
+	let fallbackHttpStatus: number | null = null;
 	let fallbackReturned = 0;
 	let groundedAccepted = 0;
 	if (discoveredByUrl.size < requestedCount) {
@@ -166,10 +168,12 @@ export async function discoverProspects(
 						}
 					}
 				} catch (error) {
-					fallbackStatus =
-						error instanceof UnsupportedPeopleSearchModelError
-							? "UNSUPPORTED_MODEL"
-							: "PROVIDER_ERROR";
+					if (error instanceof PeopleSearchFallbackError) {
+						fallbackStatus = error.category;
+						fallbackHttpStatus = error.httpStatus;
+					} else {
+						fallbackStatus = "PROVIDER_ERROR";
+					}
 				}
 			}
 		}
@@ -215,6 +219,7 @@ export async function discoverProspects(
 			fallbackAttempted,
 			fallbackStatus,
 			fallbackModel,
+			fallbackHttpStatus,
 			fallbackReturned,
 			fallbackAccepted: groundedAccepted,
 			inserted: inserted.length,
@@ -254,6 +259,7 @@ export async function discoverProspects(
 			fallbackAttempted,
 			fallbackStatus,
 			fallbackModel,
+			fallbackHttpStatus,
 			fallbackReturned,
 			fallbackAccepted: groundedAccepted,
 			inserted: inserted.length,
