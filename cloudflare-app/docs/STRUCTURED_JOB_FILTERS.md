@@ -82,7 +82,14 @@ Job cards expose server-derived networking criteria. Known employer display alia
 
 LinkedIn remains primary. The Tavily request uses native `include_domains: ["linkedin.com"]` in `restrict` mode; the query text contains no `site:` operator. For company-linked searches it ANDs one company-alias OR group, one combined professional-role/topic OR group, and optional location/seniority groups. It does not hard-AND the broad industry label or the full internship title.
 
-Primary LinkedIn acceptance is stricter than retrieval: when a company is requested, evidence must match both the requested company and at least one requested professional role/topic, with a relevance floor. This rejects company-only, role-only, and unrelated profiles such as an academic machine-learning profile returned for a Lyft role. Independent searches without a company retain a lower but explicit evidence floor.
+Primary LinkedIn acceptance is stricter than retrieval. When a company is requested, company evidence is always mandatory:
+
+- **STRONG:** requested company plus an exact requested professional role/topic, relevance at least 55.
+- **BROADER_COMPANY:** requested company plus a real professional title and either requested location evidence or hiring/talent/recruiting evidence, relevance at least 35.
+
+Company-only profiles without role, location, or hiring relevance remain rejected, as do role-only results such as an academic machine-learning profile returned for a Lyft role. Independent searches without a company retain a lower but explicit evidence floor.
+
+Match quality is stored on the prospect. Broader company matches still enter only the existing first approval queue and display **Broader company match — review role relevance**; no enrichment or drafting occurs until the user explicitly approves that person. Discovery summaries report strong, broader, and insufficient-match counts.
 
 If LinkedIn produces too few accepted profiles, a second public-bio search accepts only person-specific pages on reviewed official company domains or `theorg.com`, with company/role/location evidence. Job, search, news, social-feed, and common data-broker pages are rejected.
 

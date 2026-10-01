@@ -237,6 +237,8 @@ describe("professional bio fallback", () => {
 			fallbackProviderReturned: 5,
 			fallbackAccepted: 3,
 			insufficientMatchRejected: 0,
+			strongAccepted: 3,
+			broaderAccepted: 0,
 		});
 		expect(result.people).toHaveLength(3);
 		expect(result.people[0]).toMatchObject({
@@ -318,6 +320,8 @@ describe("professional bio fallback", () => {
 			fallbackProviderReturned: 0,
 			fallbackAccepted: 0,
 			insufficientMatchRejected: 0,
+			strongAccepted: 1,
+			broaderAccepted: 0,
 		});
 		expect(result.people[0]?.linkedinUrl).toBe(
 			"https://www.linkedin.com/in/alex-example",
@@ -378,11 +382,118 @@ describe("professional bio fallback", () => {
 		expect(bmo.people[0]).toMatchObject({
 			fullName: "Alex Example",
 			company: "BMO Financial Group",
+			matchQuality: "STRONG",
 		});
 		expect(td.people[0]).toMatchObject({
 			fullName: "Taylor Example",
 			company: "TD Bank Group",
+			matchQuality: "STRONG",
 		});
+	});
+
+	it("accepts professional company-and-location profiles as broader matches", async () => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch");
+		fetchSpy
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						results: [
+							{
+								title:
+									"Morgan Example - Managing Director - BMO | LinkedIn",
+								url: "https://www.linkedin.com/in/morgan-bmo",
+								content:
+									"Managing Director at BMO Financial Group in Toronto.",
+							},
+						],
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				),
+			)
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						results: [
+							{
+								title:
+									"Jordan Example - Vice President - TD | LinkedIn",
+								url: "https://www.linkedin.com/in/jordan-td",
+								content:
+									"Vice President at TD Bank Group in Toronto.",
+							},
+						],
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				),
+			);
+		const bmo = await discoverWithTavily("test-key", {
+			...criteria,
+			count: 1,
+		});
+		const td = await discoverWithTavily("test-key", {
+			...criteria,
+			companies: ["TD Bank Group"],
+			count: 1,
+		});
+		expect(bmo).toMatchObject({
+			strongAccepted: 0,
+			broaderAccepted: 1,
+			insufficientMatchRejected: 0,
+		});
+		expect(bmo.people[0]).toMatchObject({
+			company: "BMO Financial Group",
+			matchQuality: "BROADER_COMPANY",
+		});
+		expect(td.people[0]).toMatchObject({
+			company: "TD Bank Group",
+			matchQuality: "BROADER_COMPANY",
+		});
+	});
+
+	it("rejects company-only profiles without location or hiring relevance", async () => {
+		const fetchSpy = vi
+			.spyOn(globalThis, "fetch")
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						results: [
+							{
+								title:
+									"Casey Example - Managing Director - BMO | LinkedIn",
+								url: "https://www.linkedin.com/in/casey-bmo",
+								content: "Managing Director at BMO Financial Group.",
+							},
+						],
+					}),
+					{
+						status: 200,
+						headers: { "Content-Type": "application/json" },
+					},
+				),
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ results: [] }), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			);
+		const result = await discoverWithTavily("test-key", {
+			...criteria,
+			count: 1,
+		});
+		expect(result).toMatchObject({
+			people: [],
+			strongAccepted: 0,
+			broaderAccepted: 0,
+			insufficientMatchRejected: 1,
+		});
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
 	});
 
 	it("rejects a Lyft query result without Lyft company evidence", async () => {
@@ -429,6 +540,8 @@ describe("professional bio fallback", () => {
 			fallbackProviderReturned: 0,
 			fallbackAccepted: 0,
 			insufficientMatchRejected: 1,
+			strongAccepted: 0,
+			broaderAccepted: 0,
 			people: [],
 		});
 		expect(fetchSpy).toHaveBeenCalledTimes(2);

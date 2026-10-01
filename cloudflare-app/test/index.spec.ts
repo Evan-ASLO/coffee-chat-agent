@@ -1314,8 +1314,22 @@ describe.sequential("internship jobs platform", () => {
 		const [prospectB] = await insertProspects(env as unknown as AppBindings, userB.user.id, [
 			testProspect("Other Prospect", activeJobs[0]!.company),
 		]);
+		const [broaderProspect] = await insertProspects(
+			env as unknown as AppBindings,
+			userA.user.id,
+			[
+				{
+					...testProspect(
+						"Broader Prospect",
+						activeJobs[0]!.company,
+					),
+					matchQuality: "BROADER_COMPANY",
+				},
+			],
+		);
 		expect(prospectA).toBeTruthy();
 		expect(prospectB).toBeTruthy();
+		expect(broaderProspect?.matchQuality).toBe("BROADER_COMPANY");
 
 		const disabledLink = await authenticatedFetch(
 			userA,
@@ -1372,6 +1386,7 @@ describe.sequential("internship jobs platform", () => {
 		).json()) as {
 			prospects: Array<{
 				id: string;
+				matchQuality: string;
 				linkedJobs: Array<{ id: string }>;
 			}>;
 		};
@@ -1379,6 +1394,11 @@ describe.sequential("internship jobs platform", () => {
 			sessionA.prospects.find((prospect) => prospect.id === prospectA!.id)
 				?.linkedJobs,
 		).toContainEqual(expect.objectContaining({ id: activeJobs[0]!.id }));
+		expect(
+			sessionA.prospects.find(
+				(prospect) => prospect.id === broaderProspect!.id,
+			)?.matchQuality,
+		).toBe("BROADER_COMPANY");
 
 		const jobsB = (await (
 			await authenticatedFetch(userB, "/api/jobs?pageSize=10")
@@ -2102,6 +2122,9 @@ function authenticatedRequest(
 
 function testProspect(fullName: string, company: string) {
 	const [firstName, ...lastNames] = fullName.split(" ");
+	const profileUrl = `https://www.linkedin.com/in/${fullName
+		.toLowerCase()
+		.replace(/\s+/g, "-")}-${crypto.randomUUID()}`;
 	return {
 		firstName,
 		lastName: lastNames.join(" "),
@@ -2110,14 +2133,13 @@ function testProspect(fullName: string, company: string) {
 		company,
 		companyDomain: "example.com",
 		location: "Toronto",
-		linkedinUrl: `https://www.linkedin.com/in/${fullName
-			.toLowerCase()
-			.replace(/\s+/g, "-")}-${crypto.randomUUID()}`,
+		linkedinUrl: profileUrl,
 		discoveryProvider: "TAVILY",
-		sourceUrl: "https://www.linkedin.com",
+		sourceUrl: profileUrl,
 		sourceSnippet: "Recruiter profile",
 		whyRelevant: "Works at the target company",
 		outreachObjective: "Learn about the internship team",
 		relevanceScore: 90,
+		matchQuality: "STRONG",
 	};
 }

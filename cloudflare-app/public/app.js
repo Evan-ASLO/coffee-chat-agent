@@ -843,6 +843,8 @@ async function executeDiscovery(criteria) {
 			fallbackProviderReturned: 0,
 			fallbackAccepted: 0,
 			insufficientMatchRejected: 0,
+			strongAccepted: 0,
+			broaderAccepted: 0,
 			inserted: result.prospects?.length || 0,
 			duplicates: 0,
 			rejected: 0,
@@ -901,6 +903,16 @@ function readDiscoveryCriteria() {
 
 function discoverySuccessMessage(summary) {
 	const details = [];
+	if (summary.strongAccepted) {
+		details.push(
+			`${summary.strongAccepted} strong ${summary.strongAccepted === 1 ? "match" : "matches"}`,
+		);
+	}
+	if (summary.broaderAccepted) {
+		details.push(
+			`${summary.broaderAccepted} broader company ${summary.broaderAccepted === 1 ? "match" : "matches"} requiring role review`,
+		);
+	}
 	if (summary.duplicates) {
 		details.push(
 			`${summary.duplicates} already ${summary.duplicates === 1 ? "was" : "were"} tracked`,
@@ -1425,8 +1437,10 @@ function prospectCard(person, profileReady) {
 		<div class="chips">
 			<span class="chip">Relevance ${person.relevanceScore}/100</span>
 			${person.email ? '<span class="chip">Email found</span>' : ""}
+			${person.matchQuality === "BROADER_COMPANY" ? '<span class="chip chip-warning">Broader company match</span>' : ""}
 			${linkedJobChips(person)}
 		</div>
+		${person.matchQuality === "BROADER_COMPANY" ? '<p class="notice warning"><strong>Broader company match — review role relevance.</strong> The profile matches the employer and a professional/location or hiring signal, but not the exact target role/topic.</p>' : ""}
 		<p>${escapeHtml(person.whyRelevant || person.sourceSnippet)}</p>
 		${person.errorMessage ? `<p class="notice danger">${escapeHtml(person.errorMessage)}</p>` : ""}
 		<div class="actions">

@@ -48,6 +48,7 @@ export interface Prospect {
 	whyRelevant: string;
 	outreachObjective: string;
 	relevanceScore: number;
+	matchQuality: "STRONG" | "BROADER_COMPANY";
 	subject: string;
 	draftBody: string;
 	personalizationNotes: string;
@@ -91,6 +92,7 @@ interface ProspectRow {
 	why_relevant: string;
 	outreach_objective: string;
 	relevance_score: number;
+	match_quality: "STRONG" | "BROADER_COMPANY";
 	subject: string;
 	draft_body: string;
 	personalization_notes: string;
@@ -292,6 +294,7 @@ export async function insertProspects(
 			| "whyRelevant"
 			| "outreachObjective"
 			| "relevanceScore"
+			| "matchQuality"
 		>
 	>,
 ): Promise<Prospect[]> {
@@ -304,8 +307,8 @@ export async function insertProspects(
 			   id, user_id, status, first_name, last_name, full_name, title,
 			   company, company_domain, location, linkedin_url, discovery_provider,
 			   source_url, source_snippet, why_relevant, outreach_objective,
-			   relevance_score, created_at, updated_at
-			 ) VALUES (?, ?, 'DISCOVERED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			   relevance_score, match_quality, created_at, updated_at
+			 ) VALUES (?, ?, 'DISCOVERED', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		)
 			.bind(
 				id,
@@ -324,6 +327,7 @@ export async function insertProspects(
 				item.whyRelevant,
 				item.outreachObjective,
 				item.relevanceScore,
+				item.matchQuality,
 				now,
 				now,
 			)
@@ -704,6 +708,7 @@ function mapProspect(row: ProspectRow): Prospect {
 		whyRelevant: row.why_relevant,
 		outreachObjective: row.outreach_objective,
 		relevanceScore: row.relevance_score,
+		matchQuality: row.match_quality,
 		subject: row.subject,
 		draftBody: row.draft_body,
 		personalizationNotes: row.personalization_notes,

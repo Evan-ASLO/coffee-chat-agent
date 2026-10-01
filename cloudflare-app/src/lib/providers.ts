@@ -34,6 +34,7 @@ export interface DiscoveredPerson {
 	whyRelevant: string;
 	outreachObjective: string;
 	relevanceScore: number;
+	matchQuality: "STRONG" | "BROADER_COMPANY";
 }
 
 export interface DiscoveryProviderResult {
@@ -43,6 +44,8 @@ export interface DiscoveryProviderResult {
 	fallbackProviderReturned: number;
 	fallbackAccepted: number;
 	insufficientMatchRejected: number;
+	strongAccepted: number;
+	broaderAccepted: number;
 	people: DiscoveredPerson[];
 }
 
@@ -107,6 +110,7 @@ export async function discoverWithTavily(
 				fallbackProviderReturned: 0,
 				fallbackAccepted: 0,
 				insufficientMatchRejected,
+				...matchQualityCounts(people),
 				people,
 			};
 		}
@@ -158,6 +162,7 @@ export async function discoverWithTavily(
 		fallbackProviderReturned: fallbackResults.length,
 		fallbackAccepted: people.length - primaryAccepted,
 		insufficientMatchRejected,
+		...matchQualityCounts(people),
 		people,
 	};
 }
@@ -712,8 +717,23 @@ function linkedInPerson(
 	const score = scoreEvidence(evidence, criteria);
 	const company = matchedRequestedCompany(evidence, criteria.companies);
 	const roleMatch = matchesRoleEvidence(evidence, criteria);
+	let matchQuality: "STRONG" | "BROADER_COMPANY" = "STRONG";
 	if (criteria.companies.length) {
-		if (!company || !roleMatch || score.value < 55) {
+		if (!company) {
+			return { person: null, insufficientMatch: true };
+		}
+		if (roleMatch && score.value >= 55) {
+			matchQuality = "STRONG";
+		} else if (
+			isBroaderCompanyMatch(
+				parsed.title,
+				evidence,
+				criteria,
+				score.value,
+			)
+		) {
+			matchQuality = "BROADER_COMPANY";
+		} else {
 			return { person: null, insufficientMatch: true };
 		}
 	} else {
@@ -736,10 +756,17 @@ function linkedInPerson(
 			sourceUrl: linkedinUrl,
 			sourceSnippet: cleanText(result.content || "", 2500),
 			whyRelevant:
-				score.reasons.join("; ") ||
-				"Matched the requested public profile criteria.",
+				[
+					...(matchQuality === "BROADER_COMPANY"
+						? ["Broader company match"]
+						: []),
+					...(score.reasons.length
+						? score.reasons
+						: ["Matched the requested public profile criteria."]),
+				].join("; "),
 			outreachObjective: cleanText(criteria.objective, 1000),
 			relevanceScore: score.value,
+			matchQuality,
 		},
 		insufficientMatch: false,
 	};
@@ -755,13 +782,7 @@ function professionalBioPerson(
 	if (!parsed) return null;
 	const evidence = `${result.title || ""} ${result.content || ""}`;
 	const company = matchedRequestedCompany(evidence, criteria.companies);
-	if (!company || !matchesRoleEvidence(evidence, criteria)) return null;
-	if (
-		criteria.locations.length &&
-		!matchesAnyCriterion(evidence, criteria.locations)
-	) {
-		return null;
-	}
+	if (!company) return null;
 	const url = new URL(sourceUrl);
 	const officialDomains = employerProfileDomains(criteria.companies);
 	const official = officialDomains.some(
@@ -775,6 +796,16 @@ function professionalBioPerson(
 		...criteria,
 		companies: [company],
 	});
+	let matchQuality: "STRONG" | "BROADER_COMPANY";
+	if (matchesRoleEvidence(evidence, criteria) && score.value >= 55) {
+		matchQuality = "STRONG";
+	} else if (
+		isBroaderCompanyMatch(parsed.title, evidence, criteria, score.value)
+	) {
+		matchQuality = "BROADER_COMPANY";
+	} else {
+		return null;
+	}
 	return {
 		...parsed,
 		company,
@@ -785,10 +816,19 @@ function professionalBioPerson(
 		sourceUrl,
 		sourceSnippet: cleanText(result.content || "", 2500),
 		whyRelevant:
-			score.reasons.join("; ") ||
-			"Matched a public professional biography for the requested company.",
+			[
+				...(matchQuality === "BROADER_COMPANY"
+					? ["Broader company match"]
+					: []),
+				...(score.reasons.length
+					? score.reasons
+					: [
+							"Matched a public professional biography for the requested company.",
+						]),
+			].join("; "),
 		outreachObjective: cleanText(criteria.objective, 1000),
 		relevanceScore: score.value,
+		matchQuality,
 	};
 }
 
@@ -1037,6 +1077,43 @@ function matchesRoleEvidence(
 			"hiring",
 		]),
 	);
+}
+
+function isBroaderCompanyMatch(
+	profileTitle: string,
+	evidence: string,
+	criteria: DiscoveryCriteria,
+	relevanceScore: number,
+): boolean {
+	if (
+		relevanceScore < 35 ||
+		!profileTitle.trim() ||
+		isGenericProfileTitle(profileTitle)
+	) {
+		return false;
+	}
+	const locationMatch =
+		criteria.locations.length > 0 &&
+		matchesAnyCriterion(evidence, criteria.locations);
+	const hiringMatch =
+		/\b(talent acquisition|recruit(?:er|ing)|hiring|human resources)\b/i.test(
+			evidence,
+		);
+	return locationMatch || hiringMatch;
+}
+
+function matchQualityCounts(people: DiscoveredPerson[]): {
+	strongAccepted: number;
+	broaderAccepted: number;
+} {
+	return {
+		strongAccepted: people.filter(
+			(person) => person.matchQuality === "STRONG",
+		).length,
+		broaderAccepted: people.filter(
+			(person) => person.matchQuality === "BROADER_COMPANY",
+		).length,
+	};
 }
 
 function matchesAnyCriterion(evidence: string, values: string[]): boolean {
