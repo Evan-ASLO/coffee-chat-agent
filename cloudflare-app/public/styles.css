@@ -319,9 +319,13 @@ p {
 
 .job-filters {
 	display: grid;
-	grid-template-columns: minmax(240px, 2fr) repeat(4, minmax(140px, 1fr));
+	grid-template-columns: repeat(4, minmax(150px, 1fr));
 	gap: 12px;
 	align-items: end;
+}
+
+.job-search {
+	grid-column: span 2;
 }
 
 .job-filter-actions {
@@ -694,6 +698,35 @@ button:disabled {
 	margin-top: 3px;
 }
 
+.discovery-state {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	margin-bottom: 20px;
+}
+
+.discovery-state div,
+.discovery-state span {
+	display: block;
+}
+
+.discovery-state div > span {
+	margin-top: 3px;
+}
+
+.inline-spinner {
+	display: inline-block !important;
+	width: 18px;
+	height: 18px;
+	flex: 0 0 18px;
+	border: 2px solid currentColor;
+	border-right-color: transparent;
+	border-radius: 50%;
+	animation: spin 700ms linear infinite;
+	vertical-align: -3px;
+}
+
 .beta-landing {
 	width: min(980px, 100%);
 	margin: 5vh auto 0;
@@ -996,6 +1029,11 @@ dialog::backdrop {
 	}
 
 	.networking-context {
+		align-items: stretch;
+		flex-direction: column;
+	}
+
+	.discovery-state {
 		align-items: stretch;
 		flex-direction: column;
 	}

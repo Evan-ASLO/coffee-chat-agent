@@ -24,7 +24,7 @@ import {
 	insertProspects,
 	listReplyCandidates,
 	patchDraft,
-	prospectIdsForLinkedinUrls,
+	prospectIdsForDiscoveryUrls,
 	setSheetRow,
 	setSpreadsheetId,
 	startIdempotentOperation,
@@ -35,6 +35,14 @@ import {
 import { linkProspectsToJob } from "./jobs";
 import { sha256 } from "./encoding";
 import type { QueueMessage } from "../types";
+
+export interface DiscoverySummary {
+	providerReturned: number;
+	accepted: number;
+	inserted: number;
+	duplicates: number;
+	rejected: number;
+}
 
 export async function initializeWorkspace(
 	env: AppBindings,
@@ -63,7 +71,7 @@ export async function discoverProspects(
 	criteria: DiscoveryCriteria,
 	requestId: string,
 	jobId?: string,
-): Promise<Prospect[]> {
+): Promise<{ prospects: Prospect[]; summary: DiscoverySummary }> {
 	await enforceRateLimit(env, {
 		userId,
 		action: "DISCOVERY",
@@ -71,21 +79,22 @@ export async function discoverProspects(
 		windowSeconds: 3600,
 	});
 	const tavilyKey = await readCredential(env, userId, "TAVILY");
-	const discovered = await discoverWithTavily(tavilyKey, {
+	const providerResult = await discoverWithTavily(tavilyKey, {
 		...criteria,
 		count: Math.min(
 			criteria.count,
 			Number(env.MAX_DISCOVERY_RESULTS || 20),
 		),
 	});
+	const discovered = providerResult.people;
 	const inserted = await insertProspects(env, userId, discovered);
 	if (jobId) {
 		const linkedProspectIds = new Set([
 			...inserted.map((prospect) => prospect.id),
-			...(await prospectIdsForLinkedinUrls(
+			...(await prospectIdsForDiscoveryUrls(
 				env,
 				userId,
-				discovered.map((prospect) => prospect.linkedinUrl),
+				discovered,
 			)),
 		]);
 		await linkProspectsToJob(env, userId, jobId, [...linkedProspectIds]);
@@ -96,9 +105,14 @@ export async function discoverProspects(
 		entityType: "prospect",
 		requestId,
 		metadata: {
-			returned: discovered.length,
-			inserted: inserted.length,
+		providerReturned: providerResult.providerReturned,
+		accepted: discovered.length,
+		inserted: inserted.length,
 		duplicates: discovered.length - inserted.length,
+		rejected: Math.max(
+			0,
+			providerResult.providerReturned - discovered.length,
+		),
 		},
 	});
 	for (const prospect of inserted) {
@@ -108,7 +122,19 @@ export async function discoverProspects(
 			prospectId: prospect.id,
 		} satisfies QueueMessage);
 	}
-	return inserted;
+	return {
+		prospects: inserted,
+		summary: {
+			providerReturned: providerResult.providerReturned,
+			accepted: discovered.length,
+			inserted: inserted.length,
+			duplicates: discovered.length - inserted.length,
+			rejected: Math.max(
+				0,
+				providerResult.providerReturned - discovered.length,
+			),
+		},
+	};
 }
 
 export async function prepareProspect(

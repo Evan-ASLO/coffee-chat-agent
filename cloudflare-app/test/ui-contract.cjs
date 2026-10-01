@@ -40,3 +40,54 @@ test("loads the attribution renderer before the SPA", () => {
 	assert.ok(renderer >= 0);
 	assert.ok(app > renderer);
 });
+
+test("renders responsive structured job filter controls", () => {
+	const app = fs.readFileSync(path.join(root, "public", "app.js"), "utf8");
+	const styles = fs.readFileSync(
+		path.join(root, "public", "styles.css"),
+		"utf8",
+	);
+	for (const id of [
+		"job-industry",
+		"job-length",
+		"job-term",
+		"job-category",
+	]) {
+		assert.match(app, new RegExp(`id="${id}"`));
+	}
+	assert.match(app, /Career track/);
+	assert.match(app, /loadJobQueryFromUrl\(\)/);
+	assert.match(app, /syncJobQueryToUrl\(\)/);
+	assert.match(app, /job\.industry/);
+	assert.match(app, /job\.lengthLabel/);
+	assert.match(app, /job\.term\?\.label/);
+	assert.match(styles, /\.job-filters\s*\{[^}]*grid-template-columns:/s);
+	assert.match(
+		styles,
+		/@media \(max-width: 560px\)[\s\S]*\.job-filters,[\s\S]*grid-template-columns:\s*1fr;/,
+	);
+});
+
+test("auto-starts job discovery with explicit progress and recovery states", () => {
+	const app = fs.readFileSync(path.join(root, "public", "app.js"), "utf8");
+	const styles = fs.readFileSync(
+		path.join(root, "public", "styles.css"),
+		"utf8",
+	);
+	assert.match(
+		app,
+		/async function beginJobNetworking[\s\S]*await executeDiscovery\(state\.networkingCriteria\)/,
+	);
+	assert.match(app, /status:\s*"running"/);
+	assert.match(app, /Searching public professional profiles/);
+	assert.match(app, /No people found/);
+	assert.match(app, /retry-job-discovery/);
+	assert.match(app, /summary\.providerReturned === 0/);
+	assert.match(app, /summary\.duplicates > 0/);
+	assert.match(app, /showToast\(\s*`Found \$\{summary\.inserted\}/);
+	assert.match(app, /person\.linkedinUrl \|\| person\.sourceUrl/);
+	assert.match(app, /LinkedIn profile/);
+	assert.match(app, /Public profile/);
+	assert.match(styles, /\.inline-spinner\s*\{/);
+	assert.match(styles, /\.discovery-state\s*\{/);
+});

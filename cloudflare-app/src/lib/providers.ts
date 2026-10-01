@@ -1,6 +1,10 @@
 import type { Prospect } from "./store";
 import type { UserSettings } from "./store";
 import { fetchJson } from "./fetch";
+import {
+	employerDisplayName,
+	employerProfileDomains,
+} from "./job-discovery";
 
 export interface DiscoveryCriteria {
 	roles: string[];
@@ -30,6 +34,11 @@ export interface DiscoveredPerson {
 	relevanceScore: number;
 }
 
+export interface DiscoveryProviderResult {
+	providerReturned: number;
+	people: DiscoveredPerson[];
+}
+
 export interface DraftResult {
 	subject: string;
 	body: string;
@@ -52,14 +61,13 @@ export interface ResumeProfileSuggestions {
 export async function discoverWithTavily(
 	apiKey: string,
 	criteria: DiscoveryCriteria,
-): Promise<DiscoveredPerson[]> {
-	const query = buildDiscoveryQuery(criteria);
-	const response = await fetchJson<{
+): Promise<DiscoveryProviderResult> {
+	const primary = await fetchJson<{
 		results?: Array<{ title?: string; url?: string; content?: string }>;
 	}>("https://api.tavily.com/search", {
 		headers: { Authorization: `Bearer ${apiKey}` },
 		body: {
-			query,
+			query: buildDiscoveryQuery(criteria),
 			search_depth: "basic",
 			max_results: Math.min(criteria.count * 3, 20),
 			topic: "general",
@@ -71,31 +79,60 @@ export async function discoverWithTavily(
 	});
 	const seen = new Set<string>();
 	const people: DiscoveredPerson[] = [];
-	for (const result of response.results ?? []) {
-		const linkedinUrl = normalizeLinkedIn(result.url || "");
-		if (!linkedinUrl || seen.has(linkedinUrl)) continue;
-		const parsed = parseSearchTitle(result.title || "");
-		if (!parsed.fullName) continue;
-		seen.add(linkedinUrl);
-		const evidence = `${result.title || ""} ${result.content || ""}`;
-		const score = scoreEvidence(evidence, criteria);
-		people.push({
-			...parsed,
-			companyDomain: "",
-			location: matchedValue(evidence, criteria.locations),
-			linkedinUrl,
-			discoveryProvider: "TAVILY",
-			sourceUrl: linkedinUrl,
-			sourceSnippet: cleanText(result.content || "", 2500),
-			whyRelevant:
-				score.reasons.join("; ") ||
-				"Matched the requested public profile criteria.",
-			outreachObjective: cleanText(criteria.objective, 1000),
-			relevanceScore: score.value,
-		});
-		if (people.length >= criteria.count) break;
+	const primaryResults = primary.results ?? [];
+	for (const result of primaryResults) {
+		const person = linkedInPerson(result, criteria);
+		if (!person) continue;
+		const key = person.linkedinUrl || person.sourceUrl;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		people.push(person);
+		if (people.length >= criteria.count) {
+			return {
+				providerReturned: primaryResults.length,
+				people,
+			};
+		}
 	}
-	return people;
+
+	let fallbackResults: Array<{
+		title?: string;
+		url?: string;
+		content?: string;
+	}> = [];
+	if (people.length < criteria.count) {
+		const fallback = await fetchJson<{
+			results?: Array<{ title?: string; url?: string; content?: string }>;
+		}>("https://api.tavily.com/search", {
+			headers: { Authorization: `Bearer ${apiKey}` },
+			body: {
+				query: buildProfessionalBioQuery(criteria),
+				search_depth: "basic",
+				max_results: Math.min((criteria.count - people.length) * 4, 20),
+				topic: "general",
+				include_answer: false,
+				include_raw_content: false,
+				safe_search: true,
+			},
+			attempts: 3,
+		});
+		fallbackResults = fallback.results ?? [];
+		for (const result of fallbackResults) {
+			const person =
+				linkedInPerson(result, criteria) ||
+				professionalBioPerson(result, criteria);
+			if (!person) continue;
+			const key = person.linkedinUrl || person.sourceUrl;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			people.push(person);
+			if (people.length >= criteria.count) break;
+		}
+	}
+	return {
+		providerReturned: primaryResults.length + fallbackResults.length,
+		people,
+	};
 }
 
 export async function enrichWithHunter(
@@ -527,20 +564,139 @@ function parseJsonObject(text: string): Record<string, unknown> {
 	return JSON.parse(objectText) as Record<string, unknown>;
 }
 
-function buildDiscoveryQuery(criteria: DiscoveryCriteria): string {
-	return [
-		"site:linkedin.com/in",
-		...criteria.roles.map(quote),
-		...criteria.seniority.map(quote),
-		...criteria.companies.map(quote),
-		...criteria.industries.map(quote),
-		...criteria.locations.map(quote),
-		...criteria.keywords.map(quote),
-	].join(" ");
+export function buildDiscoveryQuery(criteria: DiscoveryCriteria): string {
+	const groups = [
+		queryGroup(criteria.roles, 8),
+		queryGroup(criteria.companies, 6),
+		queryGroup(criteria.locations, 6),
+		queryGroup(criteria.industries, 6),
+		queryGroup(criteria.keywords, 4),
+		queryGroup(criteria.seniority, 6),
+	].filter(Boolean);
+	return buildBoundedQuery("site:linkedin.com/in", groups);
+}
+
+export function buildProfessionalBioQuery(
+	criteria: DiscoveryCriteria,
+): string {
+	const roleTopics = criteria.keywords.length
+		? criteria.keywords
+		: criteria.roles;
+	return buildBoundedQuery("", [
+		queryGroup(roleTopics, 6),
+		queryGroup(criteria.companies, 6),
+		queryGroup(criteria.locations, 6),
+		queryGroup(criteria.industries, 4),
+		queryGroup(["team", "bio", "profile", "leadership"], 4),
+	]);
+}
+
+function buildBoundedQuery(prefix: string, groups: string[]): string {
+	const parts = prefix ? [prefix] : [];
+	for (const group of groups.filter(Boolean)) {
+		const candidate = [...parts, group].join(" AND ");
+		if (candidate.length > 1800) break;
+		parts.push(group);
+	}
+	return parts.join(" AND ");
 }
 
 function quote(value: string): string {
-	return `"${value.replace(/"/g, "")}"`;
+	return `"${sanitizeQueryToken(value)}"`;
+}
+
+function queryGroup(values: string[], limit: number): string {
+	const tokens = Array.from(
+		new Set(
+			values
+				.map(sanitizeQueryToken)
+				.filter(Boolean),
+		),
+	).slice(0, limit);
+	if (!tokens.length) return "";
+	if (tokens.length === 1) return quote(tokens[0]!);
+	return `(${tokens.map(quote).join(" OR ")})`;
+}
+
+function sanitizeQueryToken(value: string): string {
+	return value
+		.replace(/["\\\u0000-\u001f\u007f]/g, " ")
+		.trim()
+		.replace(/\s+/g, " ")
+		.slice(0, 120);
+}
+
+function linkedInPerson(
+	result: { title?: string; url?: string; content?: string },
+	criteria: DiscoveryCriteria,
+): DiscoveredPerson | null {
+	const linkedinUrl = normalizeLinkedIn(result.url || "");
+	if (!linkedinUrl) return null;
+	const parsed = parseSearchTitle(result.title || "");
+	if (!isPersonName(parsed.fullName)) return null;
+	const evidence = `${result.title || ""} ${result.content || ""}`;
+	const score = scoreEvidence(evidence, criteria);
+	return {
+		...parsed,
+		companyDomain: "",
+		location: matchedLocation(evidence, criteria.locations),
+		linkedinUrl,
+		discoveryProvider: "TAVILY",
+		sourceUrl: linkedinUrl,
+		sourceSnippet: cleanText(result.content || "", 2500),
+		whyRelevant:
+			score.reasons.join("; ") ||
+			"Matched the requested public profile criteria.",
+		outreachObjective: cleanText(criteria.objective, 1000),
+		relevanceScore: score.value,
+	};
+}
+
+function professionalBioPerson(
+	result: { title?: string; url?: string; content?: string },
+	criteria: DiscoveryCriteria,
+): DiscoveredPerson | null {
+	const sourceUrl = normalizeProfessionalSourceUrl(result.url || "");
+	if (!sourceUrl || isRejectedProfilePage(sourceUrl)) return null;
+	const parsed = parseProfessionalBioTitle(result.title || "");
+	if (!parsed) return null;
+	const evidence = `${result.title || ""} ${result.content || ""}`;
+	const company = matchedRequestedCompany(evidence, criteria.companies);
+	if (!company || !matchesRoleEvidence(evidence, criteria)) return null;
+	if (
+		criteria.locations.length &&
+		!matchesAnyCriterion(evidence, criteria.locations)
+	) {
+		return null;
+	}
+	const url = new URL(sourceUrl);
+	const officialDomains = employerProfileDomains(criteria.companies);
+	const official = officialDomains.some(
+		(domain) =>
+			url.hostname === domain || url.hostname.endsWith(`.${domain}`),
+	);
+	const vetted =
+		url.hostname === "theorg.com" || url.hostname.endsWith(".theorg.com");
+	if (!official && !vetted) return null;
+	const score = scoreEvidence(evidence, {
+		...criteria,
+		companies: [company],
+	});
+	return {
+		...parsed,
+		company,
+		companyDomain: officialDomains[0] || "",
+		location: matchedLocation(evidence, criteria.locations),
+		linkedinUrl: "",
+		discoveryProvider: "TAVILY",
+		sourceUrl,
+		sourceSnippet: cleanText(result.content || "", 2500),
+		whyRelevant:
+			score.reasons.join("; ") ||
+			"Matched a public professional biography for the requested company.",
+		outreachObjective: cleanText(criteria.objective, 1000),
+		relevanceScore: score.value,
+	};
 }
 
 function parseSearchTitle(title: string): Pick<
@@ -559,6 +715,47 @@ function parseSearchTitle(title: string): Pick<
 		fullName,
 		title: parts[1] || "",
 		company: parts[2] || "",
+	};
+}
+
+export function parseProfessionalBioTitle(
+	title: string,
+): Pick<
+	DiscoveredPerson,
+	"firstName" | "lastName" | "fullName" | "title"
+> | null {
+	const clean = cleanText(title, 500)
+		.replace(/\s*[|]\s*(?:The Org|BMO.*|Company Profile)\s*$/i, "")
+		.replace(/\s+/g, " ")
+		.trim();
+	let name = "";
+	let role = "";
+	const teamMatch = clean.match(
+		/^meet (?:our|the) team\s*[-–—:|]\s*([^|,–—]+?)(?:\s*[-–—|]\s*(.+))?$/i,
+	);
+	if (teamMatch) {
+		name = teamMatch[1] || "";
+		role = teamMatch[2] || "";
+	} else {
+		const commaMatch = clean.match(/^([^,]+),\s*(.+)$/);
+		const dashMatch = clean.match(/^(.+?)\s+[-–—|]\s+(.+)$/);
+		if (commaMatch) {
+			name = commaMatch[1] || "";
+			role = commaMatch[2] || "";
+		} else if (dashMatch) {
+			name = dashMatch[1] || "";
+			role = dashMatch[2] || "";
+		}
+	}
+	name = cleanText(name, 150);
+	if (!isPersonName(name)) return null;
+	role = cleanText(role, 200);
+	const names = name.split(/\s+/);
+	return {
+		firstName: names[0] || "",
+		lastName: names.slice(1).join(" "),
+		fullName: name,
+		title: isGenericProfileTitle(role) ? "" : role,
 	};
 }
 
@@ -661,6 +858,177 @@ function normalizeLinkedIn(value: string): string {
 	} catch {
 		return "";
 	}
+}
+
+function normalizeProfessionalSourceUrl(value: string): string {
+	try {
+		const url = new URL(value);
+		if (url.protocol !== "https:" && url.protocol !== "http:") return "";
+		url.hash = "";
+		for (const key of [...url.searchParams.keys()]) {
+			if (
+				key.toLowerCase().startsWith("utm_") ||
+				["fbclid", "gclid"].includes(key.toLowerCase())
+			) {
+				url.searchParams.delete(key);
+			}
+		}
+		if (url.pathname !== "/") {
+			url.pathname = url.pathname.replace(/\/+$/, "");
+		}
+		return url.toString();
+	} catch {
+		return "";
+	}
+}
+
+function isRejectedProfilePage(value: string): boolean {
+	const url = new URL(value);
+	const hostname = url.hostname.toLowerCase();
+	if (
+		[
+			"facebook.com",
+			"instagram.com",
+			"x.com",
+			"twitter.com",
+			"tiktok.com",
+			"reddit.com",
+			"zoominfo.com",
+			"rocketreach.co",
+			"signalhire.com",
+			"contactout.com",
+			"crunchbase.com",
+		].some(
+			(domain) => hostname === domain || hostname.endsWith(`.${domain}`),
+		)
+	) {
+		return true;
+	}
+	return /\/(jobs?|careers?|search|news|press|articles?|blog|feed|tag|category)(\/|$)/i.test(
+		url.pathname,
+	);
+}
+
+function matchedRequestedCompany(
+	evidence: string,
+	companies: string[],
+): string {
+	return (
+		companies.find((company) =>
+			matchesCriterionEvidence(evidence, company, [
+				"financial",
+				"group",
+				"company",
+				"inc",
+				"limited",
+			]),
+		) || ""
+	);
+}
+
+function matchesRoleEvidence(
+	evidence: string,
+	criteria: DiscoveryCriteria,
+): boolean {
+	const values = criteria.keywords.length
+		? criteria.keywords
+		: criteria.roles;
+	return values.some((value) =>
+		matchesCriterionEvidence(evidence, value, [
+			"team",
+			"manager",
+			"professional",
+			"talent",
+			"acquisition",
+			"recruiter",
+			"hiring",
+		]),
+	);
+}
+
+function matchesAnyCriterion(evidence: string, values: string[]): boolean {
+	return values.some((value) =>
+		matchesCriterionEvidence(evidence, value, [
+			"ontario",
+			"canada",
+			"remote",
+		]),
+	);
+}
+
+function matchesCriterionEvidence(
+	evidence: string,
+	value: string,
+	ignoredWords: string[],
+): boolean {
+	const normalizedEvidence = normalizeEvidence(evidence);
+	const normalizedValue = normalizeEvidence(value);
+	if (normalizedValue && normalizedEvidence.includes(normalizedValue)) return true;
+	const ignored = new Set(ignoredWords);
+	const tokens = normalizedValue
+		.split(" ")
+		.filter(
+			(token) =>
+				token.length >= 3 &&
+				!ignored.has(token),
+		);
+	return tokens.some((token) => normalizedEvidence.includes(token));
+}
+
+function normalizeEvidence(value: string): string {
+	return value
+		.normalize("NFKC")
+		.toLocaleLowerCase("en-US")
+		.replace(/[^\p{L}\p{N}]+/gu, " ")
+		.trim()
+		.replace(/\s+/g, " ");
+}
+
+function matchedLocation(evidence: string, locations: string[]): string {
+	return (
+		locations.find((location) =>
+			matchesCriterionEvidence(evidence, location, [
+				"ontario",
+				"canada",
+				"remote",
+			]),
+		) || ""
+	);
+}
+
+function isPersonName(value: string): boolean {
+	const words = value.trim().split(/\s+/).filter(Boolean);
+	if (words.length < 2 || words.length > 5) return false;
+	const generic = new Set([
+		"meet",
+		"our",
+		"team",
+		"leadership",
+		"management",
+		"company",
+		"group",
+		"careers",
+		"jobs",
+		"investment",
+		"professionals",
+		"profile",
+	]);
+	if (words.some((word) => generic.has(word.toLowerCase()))) return false;
+	if (
+		!words.every((word) => /^[\p{L}][\p{L}'’.-]*$/u.test(word))
+	) {
+		return false;
+	}
+	return /^[\p{Lu}]/u.test(words[0]!) && /^[\p{Lu}]/u.test(words.at(-1)!);
+}
+
+function isGenericProfileTitle(value: string): boolean {
+	return (
+		!value ||
+		/^(?:profile|bio|biography|meet (?:our|the) team|leadership|the org)$/i.test(
+			value.trim(),
+		)
+	);
 }
 
 function linkedinHandle(value: string): string {

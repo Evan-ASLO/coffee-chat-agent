@@ -126,6 +126,8 @@ Job cards normalize source names for display without exposing publisher credenti
 - `POST /api/beta/admin/requests/:id/approve|deny`: environment-admin-only request decisions.
 - `POST /api/beta/admin/access/approve|revoke`: environment-admin-only invite, re-approve, and revoke actions.
 
+The jobs list preserves Search, Company, Location, Region, and Career Track filters and adds D1-backed Industry, Length, and Term filters with dynamic facets. See [`docs/STRUCTURED_JOB_FILTERS.md`](docs/STRUCTURED_JOB_FILTERS.md) for parsing rules, limitations, API values, and the required post-migration normal snapshot refresh.
+
 Catalog freshness becomes stale when the publisher's latest `generatedAt` is more than two hours old. The SPA warns publicly but keeps browsing available.
 
 ### Job-linked outreach preview gate
@@ -166,6 +168,6 @@ npm audit
 
 The Worker test suite covers ingestion authentication, future-boundary replay expiry, strict size/count/schema validation, active-catalog idempotency, A → B → A reactivation, stale replacement, public/private access, cross-user state isolation, status CRUD, zero-match/retry/idempotent legacy import, 500-reference batched matching, and job/prospect ownership.
 
-Production validation, parallel-run, cutover, OAuth, secret, rollback, monitoring, and source-attribution procedures are under [`docs/`](docs/).
+Production validation, parallel-run, cutover, OAuth, secret, rollback, monitoring, structured-filter, and source-attribution procedures are under [`docs/`](docs/).
 
 Resume uploads are encrypted and limited to 5 MB PDF/DOCX/TXT files, but no malware or file-safety scanner exists. That is acceptable only for the controlled private beta. Broad public launch requires the recorded decision in [`docs/VALIDATION_CHECKLIST.md`](docs/VALIDATION_CHECKLIST.md); do not claim scanning and do not send resumes to VirusTotal without an approved privacy design.

@@ -233,20 +233,41 @@ export async function getProspect(
 	return row ? mapProspect(row) : null;
 }
 
-export async function prospectIdsForLinkedinUrls(
+export async function prospectIdsForDiscoveryUrls(
 	env: AppBindings,
 	userId: string,
-	linkedinUrls: string[],
+	prospects: Array<{ linkedinUrl: string; sourceUrl: string }>,
 ): Promise<string[]> {
-	const values = Array.from(
-		new Set(linkedinUrls.map((value) => value.trim()).filter(Boolean)),
+	const linkedinUrls = Array.from(
+		new Set(
+			prospects.map((item) => item.linkedinUrl.trim()).filter(Boolean),
+		),
 	).slice(0, 20);
-	if (!values.length) return [];
+	const sourceUrls = Array.from(
+		new Set(
+			prospects.map((item) => item.sourceUrl.trim()).filter(Boolean),
+		),
+	).slice(0, 20);
+	const clauses: string[] = [];
+	const bindings: string[] = [userId];
+	if (linkedinUrls.length) {
+		clauses.push(
+			`linkedin_url IN (${linkedinUrls.map(() => "?").join(", ")})`,
+		);
+		bindings.push(...linkedinUrls);
+	}
+	if (sourceUrls.length) {
+		clauses.push(
+			`source_url IN (${sourceUrls.map(() => "?").join(", ")})`,
+		);
+		bindings.push(...sourceUrls);
+	}
+	if (!clauses.length) return [];
 	const result = await env.DB.prepare(
 		`SELECT id FROM prospects
-		  WHERE user_id = ? AND linkedin_url IN (${values.map(() => "?").join(", ")})`,
+		  WHERE user_id = ? AND (${clauses.join(" OR ")})`,
 	)
-		.bind(userId, ...values)
+		.bind(...bindings)
 		.all<{ id: string }>();
 	return result.results.map((row) => row.id);
 }

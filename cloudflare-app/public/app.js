@@ -17,6 +17,7 @@ const state = {
 			ageSeconds: null,
 			staleAfterSeconds: 7200,
 		},
+		facets: { industries: [], lengths: [], terms: [] },
 		features: { jobOutreachLinking: false },
 	},
 	trackedJobs: {
@@ -30,11 +31,20 @@ const state = {
 		location: "",
 		region: "",
 		category: "",
+		industry: "",
+		length: "",
+		term: "",
 		page: 1,
 		pageSize: 24,
 	},
 	tab: "jobs",
 	networkingJob: null,
+	networkingCriteria: null,
+	networkingSearch: {
+		status: "idle",
+		message: "",
+		summary: null,
+	},
 	toastTimer: null,
 };
 
@@ -48,6 +58,7 @@ document.getElementById("send-draft").addEventListener("click", sendDraft);
 
 async function load() {
 	try {
+		loadJobQueryFromUrl();
 		state.session = await api("/api/session");
 		if (!betaLandingRequired()) {
 			await Promise.all([loadJobData(), loadBetaAdminData()]);
@@ -206,8 +217,17 @@ function renderJobs() {
 				<label>Region
 					<input id="job-region" value="${escapeAttr(state.jobQuery.region)}" />
 				</label>
-				<label>Category
+				<label>Career track
 					<input id="job-category" value="${escapeAttr(state.jobQuery.category)}" />
+				</label>
+				<label>Industry
+					<select id="job-industry">${facetOptions(state.jobs.facets?.industries, state.jobQuery.industry, "All industries")}</select>
+				</label>
+				<label>Length
+					<select id="job-length">${facetOptions(state.jobs.facets?.lengths, state.jobQuery.length, "All lengths")}</select>
+				</label>
+				<label>Term
+					<select id="job-term">${facetOptions(state.jobs.facets?.terms, state.jobQuery.term, "All terms")}</select>
 				</label>
 				<div class="actions job-filter-actions">
 					<button type="button" id="clear-job-filters">Clear</button>
@@ -261,29 +281,40 @@ function renderApplications() {
 
 function renderNetworking() {
 	const linkingEnabled = jobOutreachLinkingEnabled();
+	const searching = state.networkingSearch.status === "running";
 	const context = linkingEnabled && state.networkingJob
 		? `<section class="notice networking-context">
 				<div>
-					<strong>Finding people for ${escapeHtml(state.networkingJob.title)}</strong>
+					<strong>${searching ? "Finding people" : "Networking"} for ${escapeHtml(state.networkingJob.title)}</strong>
 					<span>${escapeHtml(state.networkingJob.company)} · ${escapeHtml(state.networkingJob.location || state.networkingJob.region || "Location not listed")}</span>
 				</div>
-				<button id="clear-networking-job">Clear job context</button>
+				<button id="clear-networking-job" ${searching ? "disabled" : ""}>Clear job context</button>
 			</section>`
 		: "";
 	const previewNotice = linkingEnabled
 		? ""
 		: '<section class="notice warning">Job-linked outreach is paused until the internship catalog passes the preview stability criteria. Independent Coffee Chat search, drafting, and sending remain available.</section>';
-	return `${previewNotice}${context}${renderFind()}${renderApprove()}${renderOutreach()}`;
+	return `${previewNotice}${context}${renderNetworkingSearchState()}${renderFind()}${renderApprove()}${renderOutreach()}`;
 }
 
 function renderFind() {
 	const ready = state.session.credentials.TAVILY.configured;
 	const job = state.networkingJob;
-	const locations = job
-		? [job.location, job.region].filter(Boolean).join("\n")
-		: "Toronto";
+	const criteria =
+		state.networkingCriteria ||
+		job?.discoveryCriteria || {
+			roles: ["Venture Capital Analyst"],
+			industries: [],
+			companies: [],
+			locations: ["Toronto"],
+			keywords: [],
+			seniority: [],
+			objective: "",
+			count: 5,
+		};
+	const searching = state.networkingSearch.status === "running";
 	return `
-		<section class="panel">
+		<section class="panel" id="find-people-panel" aria-busy="${searching}">
 			<div class="panel-head">
 				<div>
 					<h2>Find relevant people</h2>
@@ -292,27 +323,45 @@ function renderFind() {
 			</div>
 			${ready ? "" : '<p class="notice warning">Add a Tavily key under Settings before searching.</p>'}
 			<form id="find-form" class="grid">
-				${textarea("roles", "Target roles", job ? "Recruiter\nHiring Manager" : "Venture Capital Analyst")}
-				${textarea("industries", "Industries", "")}
-				${textarea("companies", "Companies", job?.company || "")}
-				${textarea("locations", "Locations", locations)}
-				${textarea("keywords", "Keywords", job?.title || "")}
-				${textarea("seniority", "Seniority", "")}
+				${textarea("roles", "Target roles", criteria.roles.join("\n"))}
+				${textarea("industries", "Industries", criteria.industries.join("\n"))}
+				${textarea("companies", "Companies", criteria.companies.join("\n"))}
+				${textarea("locations", "Locations", criteria.locations.join("\n"))}
+				${textarea("keywords", "Keywords", criteria.keywords.join("\n"))}
+				${textarea("seniority", "Seniority", criteria.seniority.join("\n"))}
 				<label class="full">Why you want to meet them
-					<textarea id="objective" rows="3">${escapeHtml(
-						job
-							? `Learn about the ${job.title} opportunity, the team, and the application process at ${job.company}.`
-							: "",
-					)}</textarea>
+					<textarea id="objective" rows="3">${escapeHtml(criteria.objective)}</textarea>
 				</label>
 				<label>Number of people
-					<input id="count" type="number" min="1" max="20" value="5" />
+					<input id="count" type="number" min="1" max="20" value="${Number(criteria.count || 5)}" />
 				</label>
 				<div class="actions full">
-					<button class="primary" ${ready ? "" : "disabled"}>Find people</button>
+					<button class="primary" ${ready && !searching ? "" : "disabled"}>
+						${searching ? '<span class="inline-spinner" aria-hidden="true"></span> Searching…' : "Find people"}
+					</button>
 				</div>
 			</form>
 		</section>`;
+}
+
+function renderNetworkingSearchState() {
+	const search = state.networkingSearch;
+	if (search.status === "idle") return "";
+	if (search.status === "running") {
+		return `<section class="notice discovery-state" role="status">
+			<span class="inline-spinner" aria-hidden="true"></span>
+			<div><strong>Searching public professional profiles…</strong><span>This normally takes a few seconds. Duplicate actions are disabled.</span></div>
+		</section>`;
+	}
+	const className = search.status === "success" ? "notice" : "notice warning";
+	return `<section class="${className} discovery-state" role="${search.status === "error" ? "alert" : "status"}">
+		<div><strong>${escapeHtml(search.status === "success" ? "People found" : search.status === "empty" ? "No people found" : "Search could not be completed")}</strong><span>${escapeHtml(search.message)}</span></div>
+		${
+			search.status === "empty" || search.status === "error"
+				? '<button id="retry-job-discovery" class="secondary">Retry search</button>'
+				: ""
+		}
+	</section>`;
 }
 
 function renderApprove() {
@@ -320,7 +369,7 @@ function renderApprove() {
 		["DISCOVERED", "ERROR"].includes(item.status),
 	);
 	const profileReady = isDraftProfileReady(state.session.settings);
-	return `<section class="panel">
+	return `<section class="panel" id="approve-panel">
 		<div class="panel-head">
 			<div>
 				<h2>Approve people</h2>
@@ -560,7 +609,12 @@ function wireTab() {
 	document.getElementById("init-workspace")?.addEventListener("click", initWorkspace);
 	document.getElementById("clear-networking-job")?.addEventListener("click", () => {
 		state.networkingJob = null;
+		state.networkingCriteria = null;
+		state.networkingSearch = { status: "idle", message: "", summary: null };
 		render();
+	});
+	document.getElementById("retry-job-discovery")?.addEventListener("click", () => {
+		executeDiscovery(readDiscoveryCriteria());
 	});
 	document.getElementById("complete-profile")?.addEventListener("click", () => {
 		state.tab = "settings";
@@ -657,8 +711,12 @@ async function filterJobs(event) {
 		location: value("job-location"),
 		region: value("job-region"),
 		category: value("job-category"),
+		industry: value("job-industry"),
+		length: value("job-length"),
+		term: value("job-term"),
 		page: 1,
 	};
+	syncJobQueryToUrl();
 	await run("Searching jobs…", async () => {
 		state.jobs = await fetchJobs();
 		render();
@@ -673,8 +731,12 @@ async function clearJobFilters() {
 		location: "",
 		region: "",
 		category: "",
+		industry: "",
+		length: "",
+		term: "",
 		page: 1,
 	};
+	syncJobQueryToUrl();
 	await run("Clearing filters…", async () => {
 		state.jobs = await fetchJobs();
 		render();
@@ -684,6 +746,7 @@ async function clearJobFilters() {
 async function changeJobPage(page) {
 	if (!Number.isInteger(page) || page < 1) return;
 	state.jobQuery.page = page;
+	syncJobQueryToUrl();
 	await run("Loading jobs…", async () => {
 		state.jobs = await fetchJobs();
 		render();
@@ -723,45 +786,140 @@ async function removeJobStatus(id) {
 	});
 }
 
-function beginJobNetworking(id) {
+async function beginJobNetworking(id) {
 	if (!jobOutreachLinkingEnabled()) {
 		return showToast(
 			"Job-linked outreach is not enabled yet. Use Networking for an independent search.",
 			true,
 		);
 	}
+	if (state.networkingSearch.status === "running") return;
 	const job = findJob(id);
 	if (!job) return;
 	state.networkingJob = job;
+	state.networkingCriteria = structuredClone(job.discoveryCriteria);
+	state.networkingSearch = { status: "idle", message: "", summary: null };
 	state.tab = "networking";
-	render();
-	document.getElementById("find-form")?.scrollIntoView({
-		behavior: "smooth",
-		block: "start",
-	});
+	await executeDiscovery(state.networkingCriteria);
 }
 
 async function findPeople(event) {
 	event.preventDefault();
-	await run("Searching public profiles…", async () => {
-		await api("/api/discovery", {
-			method: "POST",
-			body: {
-				roles: listValue("roles"),
-				industries: listValue("industries"),
-				companies: listValue("companies"),
-				locations: listValue("locations"),
-				keywords: listValue("keywords"),
-				seniority: listValue("seniority"),
-				objective: value("objective"),
-				count: Number(value("count")),
-				jobId: jobOutreachLinkingEnabled()
-					? state.networkingJob?.id
-					: undefined,
-			},
-		});
-		await refresh("networking");
+	await executeDiscovery(readDiscoveryCriteria());
+}
+
+async function executeDiscovery(criteria) {
+	if (state.networkingSearch.status === "running" || !criteria) return;
+	state.networkingCriteria = {
+		...criteria,
+		jobId:
+			jobOutreachLinkingEnabled() && state.networkingJob
+				? state.networkingJob.id
+				: undefined,
+	};
+	state.networkingSearch = {
+		status: "running",
+		message: "",
+		summary: null,
+	};
+	state.tab = "networking";
+	render();
+	document.getElementById("find-people-panel")?.scrollIntoView({
+		behavior: "smooth",
+		block: "start",
 	});
+	try {
+		const result = await api("/api/discovery", {
+			method: "POST",
+			body: state.networkingCriteria,
+		});
+		state.session = await api("/api/session");
+		await Promise.all([loadJobData(), loadBetaAdminData()]);
+		const summary = result.summary || {
+			providerReturned: 0,
+			accepted: 0,
+			inserted: result.prospects?.length || 0,
+			duplicates: 0,
+			rejected: 0,
+		};
+		if (summary.inserted > 0) {
+			state.networkingSearch = {
+				status: "success",
+				message: discoverySuccessMessage(summary),
+				summary,
+			};
+			render();
+			showToast(
+				`Found ${summary.inserted} new ${summary.inserted === 1 ? "person" : "people"} to review.`,
+			);
+			document.getElementById("approve-panel")?.scrollIntoView({
+				behavior: "smooth",
+				block: "start",
+			});
+			return;
+		}
+		state.networkingSearch = {
+			status: "empty",
+			message: discoveryEmptyMessage(summary),
+			summary,
+		};
+		render();
+		document.getElementById("find-people-panel")?.scrollIntoView({
+			behavior: "smooth",
+			block: "start",
+		});
+	} catch (error) {
+		state.networkingSearch = {
+			status: "error",
+			message:
+				error instanceof Error
+					? error.message
+					: "The search could not be completed.",
+			summary: null,
+		};
+		render();
+	}
+}
+
+function readDiscoveryCriteria() {
+	return {
+		roles: listValue("roles"),
+		industries: listValue("industries"),
+		companies: listValue("companies"),
+		locations: listValue("locations"),
+		keywords: listValue("keywords"),
+		seniority: listValue("seniority"),
+		objective: value("objective"),
+		count: Number(value("count")),
+	};
+}
+
+function discoverySuccessMessage(summary) {
+	const details = [];
+	if (summary.duplicates) {
+		details.push(
+			`${summary.duplicates} already ${summary.duplicates === 1 ? "was" : "were"} tracked`,
+		);
+	}
+	if (summary.rejected) {
+		details.push(
+			`${summary.rejected} ${summary.rejected === 1 ? "result was" : "results were"} not a usable LinkedIn profile`,
+		);
+	}
+	return `${summary.inserted} new ${summary.inserted === 1 ? "person is" : "people are"} ready for approval${details.length ? `; ${details.join("; ")}` : ""}.`;
+}
+
+function discoveryEmptyMessage(summary) {
+	if (summary.providerReturned === 0) {
+		return "The search provider returned no profiles. Edit the roles, company, or location below and retry.";
+	}
+	if (summary.accepted === 0 && summary.rejected > 0) {
+		return `${summary.providerReturned} ${summary.providerReturned === 1 ? "result was" : "results were"} returned, but none contained a usable LinkedIn profile. Broaden the criteria and retry.`;
+	}
+	if (summary.duplicates > 0) {
+		return `No new people were added. ${summary.duplicates} matching ${summary.duplicates === 1 ? "profile is" : "profiles are"} already tracked and linked to this job. Edit the criteria to search for different roles.`;
+	}
+	return "No new people matched these criteria. Edit the fields below and retry.";
 }
 
 async function prepare(id) {
@@ -1050,6 +1208,60 @@ async function fetchTrackedJobs() {
 	return api("/api/job-states?page=1&pageSize=100");
 }
 
+function loadJobQueryFromUrl() {
+	const params = new URLSearchParams(location.search);
+	for (const key of [
+		"q",
+		"company",
+		"location",
+		"region",
+		"category",
+		"industry",
+		"length",
+		"term",
+	]) {
+		state.jobQuery[key] = params.get(key) || "";
+	}
+	const page = Number(params.get("page") || 1);
+	state.jobQuery.page =
+		Number.isInteger(page) && page >= 1 && page <= 100 ? page : 1;
+}
+
+function syncJobQueryToUrl() {
+	const url = new URL(location.href);
+	for (const key of [
+		"q",
+		"company",
+		"location",
+		"region",
+		"category",
+		"industry",
+		"length",
+		"term",
+		"page",
+	]) {
+		url.searchParams.delete(key);
+	}
+	for (const key of [
+		"q",
+		"company",
+		"location",
+		"region",
+		"category",
+		"industry",
+		"length",
+		"term",
+	]) {
+		if (state.jobQuery[key]) {
+			url.searchParams.set(key, state.jobQuery[key]);
+		}
+	}
+	if (state.jobQuery.page > 1) {
+		url.searchParams.set("page", String(state.jobQuery.page));
+	}
+	history.replaceState(null, "", url);
+}
+
 async function loadBetaAdminData() {
 	if (!state.session?.authenticated || !state.session.isBetaAdmin) {
 		state.betaAdmin = null;
@@ -1143,7 +1355,10 @@ function jobCard(job) {
 		<div class="chips">
 			<span class="chip">${escapeHtml(sourceLabel)}</span>
 			<span class="chip">${escapeHtml(posted)}</span>
-			${job.categories.slice(0, 4).map((category) => `<span class="chip">${escapeHtml(category)}</span>`).join("")}
+			${job.industry && job.industry !== "Other" ? `<span class="chip">${escapeHtml(job.industry)}</span>` : ""}
+			${job.lengthLabel ? `<span class="chip">${escapeHtml(job.lengthLabel)}</span>` : ""}
+			${job.term?.label ? `<span class="chip">${escapeHtml(job.term.label)}</span>` : ""}
+			${job.categories.slice(0, 2).map((category) => `<span class="chip">${escapeHtml(category)}</span>`).join("")}
 			${job.active ? "" : '<span class="chip chip-warning">No longer active</span>'}
 		</div>
 		${sourceAttribution}
@@ -1165,7 +1380,7 @@ function jobCard(job) {
 				state.session?.authenticated
 					? `${!status || status === "SAVED" ? `<button data-job-save="${job.id}">${status === "SAVED" ? "Unsave" : "Save"}</button>` : ""}
 						<button data-job-apply="${job.id}" ${APPLICATION_STATUSES.includes(status) ? "disabled" : ""}>Mark applied</button>
-						${jobOutreachLinkingEnabled() ? `<button class="secondary" data-job-network="${job.id}">Find people at this company</button>` : ""}
+						${jobOutreachLinkingEnabled() ? `<button class="secondary" data-job-network="${job.id}" ${state.networkingSearch.status === "running" ? "disabled" : ""}>Find people at this company</button>` : ""}
 						<label class="job-stage">Stage
 							<select data-job-status="${job.id}">
 								${jobStatusOptions(status)}
@@ -1178,6 +1393,8 @@ function jobCard(job) {
 }
 
 function prospectCard(person, profileReady) {
+	const profileUrl = person.linkedinUrl || person.sourceUrl;
+	const profileLabel = person.linkedinUrl ? "LinkedIn profile" : "Public profile";
 	return `<article class="card">
 		<div class="card-head">
 			<div>
@@ -1196,7 +1413,7 @@ function prospectCard(person, profileReady) {
 		<div class="actions">
 			<button class="secondary" data-prepare="${person.id}" ${profileReady ? "" : "disabled"}>Approve & prepare</button>
 			<button class="danger" data-reject="${person.id}">Reject</button>
-			${person.linkedinUrl ? `<a class="button" href="${escapeAttr(person.linkedinUrl)}" target="_blank" rel="noopener">Profile</a>` : ""}
+			${profileUrl ? `<a class="button" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener">${profileLabel}</a>` : ""}
 		</div>
 	</article>`;
 }
@@ -1290,6 +1507,31 @@ function jobStatusOptions(current) {
 				`<option value="${entry}" ${selected(current || "", entry)}>${label}</option>`,
 		)
 		.join("");
+}
+
+function facetOptions(options, current, emptyLabel) {
+	const normalized = (options || []).map((option) => ({
+		...option,
+		value: String(option.value),
+	}));
+	const selectedValue = String(current || "");
+	if (
+		selectedValue &&
+		!normalized.some((option) => option.value === selectedValue)
+	) {
+		normalized.push({
+			value: selectedValue,
+			label: selectedValue,
+			count: 0,
+		});
+	}
+	return [
+		`<option value="">${escapeHtml(emptyLabel)}</option>`,
+		...normalized.map(
+			(option) =>
+				`<option value="${escapeAttr(option.value)}" ${selected(selectedValue, option.value)}>${escapeHtml(option.label)} (${Number(option.count || 0)})</option>`,
+		),
+	].join("");
 }
 
 function findJob(id) {

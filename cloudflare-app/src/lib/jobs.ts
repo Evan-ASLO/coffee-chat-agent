@@ -7,6 +7,19 @@ import {
 	PayloadTooLargeError,
 } from "./errors";
 import { bufferSource, safeEqual, utf8 } from "./encoding";
+import {
+	JOB_INDUSTRIES,
+	JOB_TERM_SEASONS,
+	deriveJobClassification,
+	formatDurationMonths,
+	formatJobTerm,
+	type JobIndustry,
+	type JobTermSeason,
+} from "./job-classification";
+import {
+	deriveJobDiscoveryCriteria,
+	type JobDiscoveryCriteria,
+} from "./job-discovery";
 
 export const MAX_JOB_INGEST_BYTES = 2 * 1024 * 1024;
 export const MAX_SNAPSHOT_JOBS = 1000;
@@ -129,6 +142,21 @@ export const jobListQuerySchema = z
 		location: z.string().trim().max(240).default(""),
 		region: z.string().trim().max(120).default(""),
 		category: z.string().trim().max(80).default(""),
+		industry: z.union([z.literal(""), z.enum(JOB_INDUSTRIES)]).default(""),
+		length: z
+			.union([
+				z.literal(""),
+				z.literal("UNSPECIFIED"),
+				z.coerce.number().int().min(1).max(24),
+			])
+			.default(""),
+		term: z
+			.union([
+				z.literal(""),
+				z.literal("UNSPECIFIED"),
+				z.string().regex(/^(WINTER|SPRING|SUMMER|FALL)-20\d{2}$/),
+			])
+			.default(""),
 		page: z.coerce.number().int().min(1).max(100).default(1),
 		pageSize: z.coerce.number().int().min(1).max(50).default(24),
 	})
@@ -157,6 +185,15 @@ export interface OutreachSummary {
 }
 
 export interface JobRecord extends NormalizedJob {
+	industry: JobIndustry | null;
+	lengthMonths: number[];
+	lengthLabel: string | null;
+	term: {
+		season: JobTermSeason;
+		year: number;
+		label: string;
+	} | null;
+	discoveryCriteria: JobDiscoveryCriteria;
 	active: boolean;
 	firstSeenAt: string;
 	lastSeenAt: string;
@@ -178,6 +215,12 @@ interface JobRow {
 	posted_at: string | null;
 	posted_text: string | null;
 	description: string | null;
+	industry: JobIndustry | null;
+	duration_min_months: number | null;
+	duration_max_months: number | null;
+	duration_options_json: string;
+	term_season: JobTermSeason | null;
+	term_year: number | null;
 	is_active: number;
 	first_seen_at: string;
 	last_seen_at: string;
@@ -189,6 +232,18 @@ interface JobRow {
 	outreach_draft_ready: number | null;
 	outreach_sent: number | null;
 	outreach_replied: number | null;
+}
+
+export interface JobFacetOption<T extends string | number> {
+	value: T;
+	label: string;
+	count: number;
+}
+
+export interface JobFacets {
+	industries: JobFacetOption<JobIndustry>[];
+	lengths: JobFacetOption<number | "UNSPECIFIED">[];
+	terms: JobFacetOption<string>[];
 }
 
 interface VerifiedSnapshot {
@@ -427,14 +482,20 @@ export async function ingestJobSnapshot(
 		for (let index = 0; index < payload.jobs.length; index += 100) {
 			const statements = payload.jobs
 				.slice(index, index + 100)
-				.map((job) =>
-					env.DB.prepare(
+				.map((job) => {
+					const derived = deriveJobClassification(job);
+					return env.DB.prepare(
 						`INSERT INTO job_import_stage(
 						   import_run_id, job_id, external_id, source, company,
 						   company_normalized, title, title_normalized, location,
 						   region, categories_json, url, canonical_url, posted_at,
-						   posted_text, description
-						 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+						   posted_text, description, industry, duration_min_months,
+						   duration_max_months, duration_options_json, term_season,
+						   term_year
+						 ) VALUES (
+						   ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+						   ?, ?, ?, ?, ?, ?
+						 )`,
 					).bind(
 						runId,
 						job.id,
@@ -452,8 +513,14 @@ export async function ingestJobSnapshot(
 						job.postedAt,
 						job.postedText,
 						job.description,
-					),
-				);
+						derived.industry,
+						derived.durationMinMonths,
+						derived.durationMaxMonths,
+						JSON.stringify(derived.durationMonths),
+						derived.termSeason,
+						derived.termYear,
+					);
+				});
 			await env.DB.batch(statements);
 		}
 
@@ -489,7 +556,9 @@ export async function ingestJobSnapshot(
 				`INSERT INTO jobs(
 				   id, external_id, source, company, company_normalized, title,
 				   title_normalized, location, region, categories_json, url,
-				   canonical_url, posted_at, posted_text, description, is_active,
+				   canonical_url, posted_at, posted_text, description, industry,
+				   duration_min_months, duration_max_months,
+				   duration_options_json, term_season, term_year, is_active,
 				   first_seen_at, last_seen_at, deactivated_at,
 				   latest_import_run_id, created_at, updated_at
 				 )
@@ -497,7 +566,9 @@ export async function ingestJobSnapshot(
 				        s.company_normalized, s.title, s.title_normalized,
 				        s.location, s.region, s.categories_json, s.url,
 				        s.canonical_url, s.posted_at, s.posted_text, s.description,
-				        1, ?, ?, NULL, ?, ?, ?
+				        s.industry, s.duration_min_months,
+				        s.duration_max_months, s.duration_options_json,
+				        s.term_season, s.term_year, 1, ?, ?, NULL, ?, ?, ?
 				   FROM job_import_stage s
 				  WHERE s.import_run_id = ?
 				    AND EXISTS (
@@ -519,6 +590,12 @@ export async function ingestJobSnapshot(
 				    posted_at = excluded.posted_at,
 				    posted_text = excluded.posted_text,
 				    description = excluded.description,
+				    industry = excluded.industry,
+				    duration_min_months = excluded.duration_min_months,
+				    duration_max_months = excluded.duration_max_months,
+				    duration_options_json = excluded.duration_options_json,
+				    term_season = excluded.term_season,
+				    term_year = excluded.term_year,
 				    is_active = 1,
 				    last_seen_at = excluded.last_seen_at,
 				    deactivated_at = NULL,
@@ -616,50 +693,32 @@ export async function listJobs(
 	jobs: JobRecord[];
 	pagination: { page: number; pageSize: number; total: number; totalPages: number };
 	catalog: JobCatalogFreshness;
+	facets: JobFacets;
 }> {
-	const where = ["j.is_active = 1"];
-	const whereBindings: unknown[] = [];
-	if (query.q) {
-		const value = containsPattern(query.q);
-		where.push(
-			`(
-			  j.title LIKE ? ESCAPE '\\' COLLATE NOCASE OR
-			  j.company LIKE ? ESCAPE '\\' COLLATE NOCASE OR
-			  j.location LIKE ? ESCAPE '\\' COLLATE NOCASE OR
-			  j.region LIKE ? ESCAPE '\\' COLLATE NOCASE OR
-			  COALESCE(j.description, '') LIKE ? ESCAPE '\\' COLLATE NOCASE
-			)`,
-		);
-		whereBindings.push(value, value, value, value, value);
-	}
-	addExactFilter(where, whereBindings, "j.company", query.company);
-	addExactFilter(where, whereBindings, "j.location", query.location);
-	addExactFilter(where, whereBindings, "j.region", query.region);
-	if (query.category) {
-		where.push("j.categories_json LIKE ? ESCAPE '\\' COLLATE NOCASE");
-		whereBindings.push(`%\"${escapeLike(query.category)}\"%`);
-	}
-	const clause = where.join(" AND ");
+	const filter = buildJobFilter(query);
 	const selection = jobSelection(userId);
 	const offset = (query.page - 1) * query.pageSize;
-	const [result, count, catalog] = await Promise.all([
+	const [result, count, catalog, facets] = await Promise.all([
 		env.DB.prepare(
 			`${selection.sql}
-			  WHERE ${clause}
+			  WHERE ${filter.clause}
 			  ORDER BY COALESCE(j.posted_at, j.last_seen_at) DESC, j.id
 			  LIMIT ? OFFSET ?`,
 		)
 			.bind(
 				...selection.bindings,
-				...whereBindings,
+				...filter.bindings,
 				query.pageSize,
 				offset,
 			)
 			.all<JobRow>(),
-		env.DB.prepare(`SELECT COUNT(*) AS count FROM jobs j WHERE ${clause}`)
-			.bind(...whereBindings)
+		env.DB.prepare(
+			`SELECT COUNT(*) AS count FROM jobs j WHERE ${filter.clause}`,
+		)
+			.bind(...filter.bindings)
 			.first<{ count: number }>(),
 		getCatalogFreshness(env),
+		getJobFacets(env, query),
 	]);
 	const total = Number(count?.count || 0);
 	return {
@@ -671,6 +730,111 @@ export async function listJobs(
 			totalPages: Math.ceil(total / query.pageSize),
 		},
 		catalog,
+		facets,
+	};
+}
+
+async function getJobFacets(
+	env: AppBindings,
+	query: JobListQuery,
+): Promise<JobFacets> {
+	const industryFilter = buildJobFilter(query, "industry");
+	const lengthFilter = buildJobFilter(query, "length");
+	const termFilter = buildJobFilter(query, "term");
+	const [
+		industryRows,
+		lengthRows,
+		unspecifiedLength,
+		termRows,
+		unspecifiedTerm,
+	] = await Promise.all([
+		env.DB.prepare(
+			`SELECT j.industry AS value, COUNT(*) AS count
+			   FROM jobs j
+			  WHERE ${industryFilter.clause} AND j.industry IS NOT NULL
+			  GROUP BY j.industry
+			  ORDER BY j.industry`,
+		)
+			.bind(...industryFilter.bindings)
+			.all<{ value: JobIndustry; count: number }>(),
+		env.DB.prepare(
+			`SELECT CAST(d.value AS INTEGER) AS value,
+			        COUNT(DISTINCT j.id) AS count
+			   FROM jobs j
+			   JOIN json_each(j.duration_options_json) d
+			  WHERE ${lengthFilter.clause}
+			  GROUP BY CAST(d.value AS INTEGER)
+			  ORDER BY CAST(d.value AS INTEGER)`,
+		)
+			.bind(...lengthFilter.bindings)
+			.all<{ value: number; count: number }>(),
+		env.DB.prepare(
+			`SELECT COUNT(*) AS count FROM jobs j
+			  WHERE ${lengthFilter.clause}
+			    AND json_array_length(j.duration_options_json) = 0`,
+		)
+			.bind(...lengthFilter.bindings)
+			.first<{ count: number }>(),
+		env.DB.prepare(
+			`SELECT j.term_season, j.term_year, COUNT(*) AS count
+			   FROM jobs j
+			  WHERE ${termFilter.clause}
+			    AND j.term_season IS NOT NULL AND j.term_year IS NOT NULL
+			  GROUP BY j.term_season, j.term_year
+			  ORDER BY j.term_year, CASE j.term_season
+			    WHEN 'WINTER' THEN 1
+			    WHEN 'SPRING' THEN 2
+			    WHEN 'SUMMER' THEN 3
+			    ELSE 4 END`,
+		)
+			.bind(...termFilter.bindings)
+			.all<{
+				term_season: JobTermSeason;
+				term_year: number;
+				count: number;
+			}>(),
+		env.DB.prepare(
+			`SELECT COUNT(*) AS count FROM jobs j
+			  WHERE ${termFilter.clause}
+			    AND (j.term_season IS NULL OR j.term_year IS NULL)`,
+		)
+			.bind(...termFilter.bindings)
+			.first<{ count: number }>(),
+	]);
+
+	const lengths: JobFacetOption<number | "UNSPECIFIED">[] =
+		lengthRows.results.map((row) => ({
+			value: Number(row.value),
+			label: `${row.value} months`,
+			count: Number(row.count),
+		}));
+	if (Number(unspecifiedLength?.count || 0) > 0) {
+		lengths.push({
+			value: "UNSPECIFIED",
+			label: "Unspecified",
+			count: Number(unspecifiedLength!.count),
+		});
+	}
+	const terms: JobFacetOption<string>[] = termRows.results.map((row) => ({
+		value: `${row.term_season}-${row.term_year}`,
+		label: formatJobTerm(row.term_season, row.term_year),
+		count: Number(row.count),
+	}));
+	if (Number(unspecifiedTerm?.count || 0) > 0) {
+		terms.push({
+			value: "UNSPECIFIED",
+			label: "Unspecified",
+			count: Number(unspecifiedTerm!.count),
+		});
+	}
+	return {
+		industries: industryRows.results.map((row) => ({
+			value: row.value,
+			label: row.value,
+			count: Number(row.count),
+		})),
+		lengths,
+		terms,
 	};
 }
 
@@ -1225,6 +1389,7 @@ function activeCatalogResult(
 
 function mapJob(row: JobRow): JobRecord {
 	let categories: string[] = [];
+	let lengthMonths: number[] = [];
 	try {
 		const parsed = JSON.parse(row.categories_json);
 		if (Array.isArray(parsed)) {
@@ -1234,6 +1399,21 @@ function mapJob(row: JobRow): JobRecord {
 		}
 	} catch {
 		categories = [];
+	}
+	try {
+		const parsed = JSON.parse(row.duration_options_json);
+		if (Array.isArray(parsed)) {
+			lengthMonths = Array.from(
+				new Set(
+					parsed.filter(
+						(value): value is number =>
+							Number.isInteger(value) && value >= 1 && value <= 24,
+					),
+				),
+			).sort((left, right) => left - right);
+		}
+	} catch {
+		lengthMonths = [];
 	}
 	const hasPrivateData = row.user_status !== null || row.outreach_total !== null;
 	return {
@@ -1249,6 +1429,24 @@ function mapJob(row: JobRow): JobRecord {
 		postedAt: row.posted_at,
 		postedText: row.posted_text,
 		description: row.description,
+		industry: row.industry,
+		lengthMonths,
+		lengthLabel: formatDurationMonths(lengthMonths),
+		term:
+			row.term_season && row.term_year
+				? {
+						season: row.term_season,
+						year: row.term_year,
+						label: formatJobTerm(row.term_season, row.term_year),
+					}
+				: null,
+		discoveryCriteria: deriveJobDiscoveryCriteria({
+			company: row.company,
+			title: row.title,
+			location: row.location,
+			region: row.region,
+			industry: row.industry,
+		}),
 		active: row.is_active === 1,
 		firstSeenAt: row.first_seen_at,
 		lastSeenAt: row.last_seen_at,
@@ -1465,6 +1663,61 @@ function chunkValues<T>(values: T[], size: number): T[][] {
 		chunks.push(values.slice(index, index + size));
 	}
 	return chunks;
+}
+
+function buildJobFilter(
+	query: JobListQuery,
+	omit?: "industry" | "length" | "term",
+): { clause: string; bindings: unknown[] } {
+	const where = ["j.is_active = 1"];
+	const bindings: unknown[] = [];
+	if (query.q) {
+		const value = containsPattern(query.q);
+		where.push(
+			`(
+			  j.title LIKE ? ESCAPE '\\' COLLATE NOCASE OR
+			  j.company LIKE ? ESCAPE '\\' COLLATE NOCASE OR
+			  j.location LIKE ? ESCAPE '\\' COLLATE NOCASE OR
+			  j.region LIKE ? ESCAPE '\\' COLLATE NOCASE OR
+			  COALESCE(j.description, '') LIKE ? ESCAPE '\\' COLLATE NOCASE
+			)`,
+		);
+		bindings.push(value, value, value, value, value);
+	}
+	addExactFilter(where, bindings, "j.company", query.company);
+	addExactFilter(where, bindings, "j.location", query.location);
+	addExactFilter(where, bindings, "j.region", query.region);
+	if (query.category) {
+		where.push("j.categories_json LIKE ? ESCAPE '\\' COLLATE NOCASE");
+		bindings.push(`%\"${escapeLike(query.category)}\"%`);
+	}
+	if (omit !== "industry" && query.industry) {
+		where.push("j.industry = ?");
+		bindings.push(query.industry);
+	}
+	if (omit !== "length" && query.length !== "") {
+		if (query.length === "UNSPECIFIED") {
+			where.push("json_array_length(j.duration_options_json) = 0");
+		} else {
+			where.push(
+				`EXISTS (
+				  SELECT 1 FROM json_each(j.duration_options_json) duration
+				   WHERE CAST(duration.value AS INTEGER) = ?
+				)`,
+			);
+			bindings.push(query.length);
+		}
+	}
+	if (omit !== "term" && query.term) {
+		if (query.term === "UNSPECIFIED") {
+			where.push("(j.term_season IS NULL OR j.term_year IS NULL)");
+		} else {
+			const [season, year] = query.term.split("-");
+			where.push("j.term_season = ? AND j.term_year = ?");
+			bindings.push(season, Number(year));
+		}
+	}
+	return { clause: where.join(" AND "), bindings };
 }
 
 function addExactFilter(

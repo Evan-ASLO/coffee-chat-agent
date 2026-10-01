@@ -1468,6 +1468,411 @@ describe.sequential("internship jobs platform", () => {
 		},
 		20_000,
 	);
+
+	it("filters structured industry, length, and term facets in D1", async () => {
+		generatedBase += 60_000;
+		const structuredJobs = await Promise.all([
+			normalizedJobFixture("bmo-investment", {
+				company: "bmo",
+				title: "Investment Team Intern - Winter 2027 - 4 Months",
+				categories: ["Finance"],
+			}),
+			normalizedJobFixture("scotia-actuarial", {
+				company: "Scotiabank",
+				title: "Actuarial Insurance Intern - Winter '27 (4-month)",
+				categories: ["Finance"],
+			}),
+			normalizedJobFixture("d2l-software", {
+				source: "adzuna",
+				company: "D2L",
+				title: "Software Developer Intern - Summer '27 - 8 Months",
+				categories: ["Technology"],
+			}),
+			normalizedJobFixture("deloitte-consulting", {
+				company: "Deloitte",
+				title: "Consulting Internship - Fall 2027 - 4 or 8 months",
+				categories: ["Consulting"],
+			}),
+			normalizedJobFixture("maple-research", {
+				company: "Maple Research Collective",
+				title: "Research Internship",
+				description:
+					"This 12 Months placement begins in Spring 2028 and supports general research.",
+				categories: ["Research"],
+			}),
+			normalizedJobFixture("bmo-finance-unspecified", {
+				company: "BMO",
+				title: "Finance Intern",
+				categories: ["Finance"],
+			}),
+		]);
+		const ingest = await signedIngest(
+			await snapshotBody(structuredJobs, generatedBase),
+		);
+		expect(ingest.status).toBe(200);
+		expect(await ingest.json()).toMatchObject({ activeCount: 6 });
+		activeJobs = structuredJobs;
+
+		const unfiltered = (await (
+			await SELF.fetch("http://example.com/api/jobs?pageSize=20")
+		).json()) as {
+			jobs: Array<{
+				id: string;
+				source: string;
+				industry: string;
+				lengthMonths: number[];
+				lengthLabel: string | null;
+				term: { label: string } | null;
+				discoveryCriteria: {
+					companies: string[];
+					roles: string[];
+					keywords: string[];
+				};
+			}>;
+			facets: {
+				industries: Array<{ value: string; count: number }>;
+				lengths: Array<{ value: number | string; count: number }>;
+				terms: Array<{ value: string; label: string; count: number }>;
+			};
+		};
+		const bmo = unfiltered.jobs.find(
+			(job) => job.id === structuredJobs[0]!.id,
+		)!;
+		expect(bmo).toMatchObject({
+			industry: "Banking & Financial Services",
+			lengthMonths: [4],
+			lengthLabel: "4 months",
+			term: { label: "Winter '27" },
+			discoveryCriteria: {
+				companies: ["BMO Financial Group"],
+				keywords: ["investment", "portfolio"],
+			},
+		});
+		expect(bmo.discoveryCriteria.roles.slice(0, 2)).toEqual([
+			"Investment Team",
+			"Investment Analyst",
+		]);
+		expect(
+			unfiltered.jobs.find((job) => job.id === structuredJobs[2]!.id)
+				?.source,
+		).toBe("adzuna");
+		expect(
+			Object.fromEntries(
+				unfiltered.facets.industries.map((facet) => [
+					facet.value,
+					facet.count,
+				]),
+			),
+		).toMatchObject({
+			"Banking & Financial Services": 2,
+			Insurance: 1,
+			Technology: 1,
+			"Consulting & Professional Services": 1,
+			Other: 1,
+		});
+		expect(
+			Object.fromEntries(
+				unfiltered.facets.lengths.map((facet) => [
+					String(facet.value),
+					facet.count,
+				]),
+			),
+		).toMatchObject({
+			"4": 3,
+			"8": 2,
+			"12": 1,
+			UNSPECIFIED: 1,
+		});
+		expect(
+			unfiltered.facets.terms.map((facet) => [
+				facet.value,
+				facet.label,
+			]),
+		).toEqual(
+			expect.arrayContaining([
+				["WINTER-2027", "Winter '27"],
+				["SUMMER-2027", "Summer '27"],
+				["FALL-2027", "Fall '27"],
+				["SPRING-2028", "Spring '28"],
+				["UNSPECIFIED", "Unspecified"],
+			]),
+		);
+
+		const combination = await SELF.fetch(
+			`http://example.com/api/jobs?industry=${encodeURIComponent(
+				"Banking & Financial Services",
+			)}&length=4&term=WINTER-2027&category=Finance&pageSize=10`,
+		);
+		expect(combination.status).toBe(200);
+		const combined = (await combination.json()) as {
+			jobs: Array<{ id: string }>;
+			pagination: { total: number };
+			facets: {
+				lengths: Array<{ value: number | string; count: number }>;
+			};
+		};
+		expect(combined.jobs.map((job) => job.id)).toEqual([
+			structuredJobs[0]!.id,
+		]);
+		expect(combined.pagination.total).toBe(1);
+
+		const paged = (await (
+			await SELF.fetch(
+				"http://example.com/api/jobs?length=4&pageSize=1&page=2",
+			)
+		).json()) as {
+			jobs: Array<{ id: string }>;
+			pagination: { page: number; pageSize: number; total: number };
+		};
+		expect(paged.jobs).toHaveLength(1);
+		expect(paged.pagination).toMatchObject({
+			page: 2,
+			pageSize: 1,
+			total: 3,
+		});
+
+		const unspecified = (await (
+			await SELF.fetch(
+				"http://example.com/api/jobs?length=UNSPECIFIED&term=UNSPECIFIED&pageSize=10",
+			)
+		).json()) as { jobs: Array<{ id: string }> };
+		expect(unspecified.jobs.map((job) => job.id)).toEqual([
+			structuredJobs[5]!.id,
+		]);
+	});
+
+	it("repopulates derived fields when the same hash arrives at a later generatedAt", async () => {
+		const target = activeJobs[0]!;
+		await env.DB.prepare(
+			`UPDATE jobs SET industry = NULL, duration_min_months = NULL,
+			        duration_max_months = NULL, duration_options_json = '[]',
+			        term_season = NULL, term_year = NULL
+			  WHERE id = ?`,
+		)
+			.bind(target.id)
+			.run();
+		generatedBase += 60_000;
+		const refresh = await signedIngest(
+			await snapshotBody(activeJobs, generatedBase),
+		);
+		expect(refresh.status).toBe(200);
+		expect(await refresh.json()).toMatchObject({ idempotent: false });
+		const restored = (await (
+			await SELF.fetch(
+				`http://example.com/api/jobs/${target.id}`,
+			)
+		).json()) as {
+			job: {
+				industry: string;
+				lengthMonths: number[];
+				term: { label: string };
+			};
+		};
+		expect(restored.job).toMatchObject({
+			industry: "Banking & Financial Services",
+			lengthMonths: [4],
+			term: { label: "Winter '27" },
+		});
+	});
+
+	it("keeps structured filters behind the allowlist gate", async () => {
+		const gatedEnv = {
+			...(env as unknown as AppBindings),
+			BETA_ACCESS_MODE: "ALLOWLIST",
+			BETA_ADMIN_EMAILS: "filters-admin@example.com",
+		};
+		const denied = await workerRequest(
+			gatedEnv,
+			`/api/jobs?industry=${encodeURIComponent(
+				"Banking & Financial Services",
+			)}&length=4`,
+		);
+		expect(denied.status).toBe(401);
+		const user = await upsertUser(gatedEnv, {
+			googleSub: `filters-admin-${crypto.randomUUID()}`,
+			email: "filters-admin@example.com",
+			name: "Filters Admin",
+			image: "",
+		});
+		const auth = await authenticatedSessionForUser(user, gatedEnv);
+		const allowed = await authenticatedWorkerFetch(
+			auth,
+			`/api/jobs?industry=${encodeURIComponent(
+				"Banking & Financial Services",
+			)}&length=4&term=WINTER-2027`,
+			{},
+			gatedEnv,
+		);
+		expect(allowed.status).toBe(200);
+		expect(await allowed.json()).toMatchObject({
+			pagination: { total: 1 },
+		});
+	});
+
+	it("summarizes fallback discovery, deduplicates source URLs, and links once", async () => {
+		await saveCredential(env as unknown as AppBindings, {
+			userId: userA.user.id,
+			provider: "TAVILY",
+			value: "test-tavily-discovery-key",
+		});
+		const bmoJob = (
+			(await (
+				await SELF.fetch(
+					`http://example.com/api/jobs/${activeJobs[0]!.id}`,
+				)
+			).json()) as {
+				job: NormalizedJob & {
+					discoveryCriteria: {
+						roles: string[];
+						industries: string[];
+						companies: string[];
+						locations: string[];
+						keywords: string[];
+						seniority: string[];
+						objective: string;
+						count: number;
+					};
+				};
+			}
+		).job;
+		const enabledEnv = {
+			...(env as unknown as AppBindings),
+			ENABLE_JOB_OUTREACH_LINKING: "true",
+		};
+		const providerResponses = [
+			{ results: [] },
+			{
+				results: [
+					{
+						title:
+							"Brent Joyce, Chief Investment Strategist | BMO",
+						url: "https://capitalmarkets.bmo.com/en/our-people/brent-joyce",
+						content:
+							"Brent Joyce is Chief Investment Strategist at BMO Financial Group in Toronto.",
+					},
+					{
+						title: "Investment jobs at BMO",
+						url: "https://www.bmo.com/careers/jobs/investment",
+						content:
+							"Search investment jobs at BMO Financial Group in Toronto.",
+					},
+				],
+			},
+			{ results: [] },
+			{
+				results: [
+					{
+						title:
+							"Brent Joyce, Chief Investment Strategist | BMO",
+						url: "https://capitalmarkets.bmo.com/en/our-people/brent-joyce",
+						content:
+							"Brent Joyce is Chief Investment Strategist at BMO Financial Group in Toronto.",
+					},
+				],
+			},
+		];
+		const fetchSpy = vi.spyOn(globalThis, "fetch");
+		for (const response of providerResponses) {
+			fetchSpy.mockResolvedValueOnce(
+				new Response(JSON.stringify(response), {
+					status: 200,
+					headers: { "Content-Type": "application/json" },
+				}),
+			);
+		}
+		const requestBody = {
+			...bmoJob.discoveryCriteria,
+			jobId: bmoJob.id,
+		};
+		const first = await authenticatedWorkerFetch(
+			userA,
+			"/api/discovery",
+			{ method: "POST", body: requestBody },
+			enabledEnv,
+		);
+		expect(first.status).toBe(200);
+		expect(await first.json()).toMatchObject({
+			summary: {
+				providerReturned: 2,
+				accepted: 1,
+				inserted: 1,
+				duplicates: 0,
+				rejected: 1,
+			},
+			prospects: [
+				{
+					fullName: "Brent Joyce",
+					company: "BMO Financial Group",
+					companyDomain: "bmo.com",
+					linkedinUrl: "",
+					sourceUrl:
+						"https://capitalmarkets.bmo.com/en/our-people/brent-joyce",
+				},
+			],
+		});
+		const retry = await authenticatedWorkerFetch(
+			userA,
+			"/api/discovery",
+			{ method: "POST", body: requestBody },
+			enabledEnv,
+		);
+		expect(retry.status).toBe(200);
+		expect(await retry.json()).toMatchObject({
+			summary: {
+				providerReturned: 1,
+				accepted: 1,
+				inserted: 0,
+				duplicates: 1,
+				rejected: 0,
+			},
+			prospects: [],
+		});
+		const stored = await env.DB.prepare(
+			`SELECT full_name, company, company_domain, linkedin_url, source_url
+			   FROM prospects WHERE user_id = ? AND source_url = ?`,
+		)
+			.bind(
+				userA.user.id,
+				"https://capitalmarkets.bmo.com/en/our-people/brent-joyce",
+			)
+			.all<{
+				full_name: string;
+				company: string;
+				company_domain: string;
+				linkedin_url: string;
+				source_url: string;
+			}>();
+		expect(stored.results).toEqual([
+			{
+				full_name: "Brent Joyce",
+				company: "BMO Financial Group",
+				company_domain: "bmo.com",
+				linkedin_url: "",
+				source_url:
+					"https://capitalmarkets.bmo.com/en/our-people/brent-joyce",
+			},
+		]);
+		const links = await env.DB.prepare(
+			`SELECT COUNT(*) AS count FROM job_prospects jp
+			  JOIN prospects p ON p.id = jp.prospect_id
+			  WHERE jp.user_id = ? AND jp.job_id = ? AND p.source_url = ?`,
+		)
+			.bind(
+				userA.user.id,
+				bmoJob.id,
+				"https://capitalmarkets.bmo.com/en/our-people/brent-joyce",
+			)
+			.first<{ count: number }>();
+		expect(links?.count).toBe(1);
+		const primaryQuery = JSON.parse(
+			String((fetchSpy.mock.calls[0]?.[1] as RequestInit)?.body),
+		).query;
+		expect(primaryQuery).toContain(
+			'("Investment Team" OR "Investment Analyst"',
+		);
+		expect(primaryQuery).toContain(" AND ");
+		fetchSpy.mockRestore();
+	});
 });
 
 function encryptionEnv(): AppBindings {
@@ -1502,6 +1907,28 @@ async function testJob(seed: string): Promise<NormalizedJob> {
 		postedAt: new Date("2026-09-30T12:00:00.000Z").toISOString(),
 		postedText: "Posted yesterday",
 		description: `Internship description for ${seed}.`,
+	};
+}
+
+async function normalizedJobFixture(
+	seed: string,
+	overrides: Partial<NormalizedJob>,
+): Promise<NormalizedJob> {
+	const source = overrides.source || "workday";
+	const externalId = overrides.externalId || `jobs.example.com:${seed}`;
+	return {
+		id: await sha256Hex(`${source}\n${externalId}`),
+		externalId,
+		source,
+		company: overrides.company || `${seed} Company`,
+		title: overrides.title || `${seed} Internship`,
+		location: overrides.location ?? "Toronto, ON",
+		region: overrides.region ?? "Canada",
+		categories: overrides.categories || ["Internship"],
+		url: overrides.url || `https://jobs.example.com/${seed}`,
+		postedAt: overrides.postedAt ?? null,
+		postedText: overrides.postedText ?? null,
+		description: overrides.description ?? null,
 	};
 }
 

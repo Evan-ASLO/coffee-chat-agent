@@ -419,28 +419,38 @@ app.post("/api/discovery", requireUser, async (c) => {
 		requireJobOutreachLinking(c.env);
 		const job = await getJob(c.env, linkedJobId, c.get("user")!.id);
 		if (!job) throw new ClientInputError("Job was not found.");
+		const derived = job.discoveryCriteria;
 		criteria = {
 			...submittedCriteria,
-			companies: uniqueValues([job.company, ...submittedCriteria.companies]),
+			roles: uniqueValues([...derived.roles, ...submittedCriteria.roles]),
+			industries: uniqueValues([
+				...derived.industries,
+				...submittedCriteria.industries,
+			]),
+			companies: uniqueValues([
+				...derived.companies,
+				...submittedCriteria.companies,
+			]),
 			locations: uniqueValues(
-				[job.location, job.region, ...submittedCriteria.locations].filter(
-					Boolean,
-				),
+				[...derived.locations, ...submittedCriteria.locations],
 			),
-			keywords: uniqueValues([job.title, ...submittedCriteria.keywords]),
+			keywords: uniqueValues([
+				...derived.keywords,
+				...submittedCriteria.keywords,
+			]),
 			objective:
 				submittedCriteria.objective ||
-				`Learn about ${job.title} opportunities and the team at ${job.company}.`,
+				derived.objective,
 		};
 	}
-	const prospects = await discoverProspects(
+	const result = await discoverProspects(
 		c.env,
 		c.get("user")!.id,
 		criteria,
 		c.get("requestId"),
 		linkedJobId,
 	);
-	return c.json({ prospects });
+	return c.json(result);
 });
 
 app.get("/api/prospects", requireUser, async (c) =>

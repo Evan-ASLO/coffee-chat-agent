@@ -18,6 +18,7 @@ Use this checklist for the Cloudflare preview and again before public cutover. R
 - [ ] `npx wrangler deploy --dry-run` lists D1, queue, assets, and `JOBS_INGEST_RATE_LIMITER`.
 - [ ] Migration `0003_jobs_platform.sql` applies to a fresh isolated local D1 store.
 - [ ] Migration `0004_beta_access.sql` applies before beta mode is enabled.
+- [ ] Migration `0005_structured_job_filters.sql` applies, then a normal later-generated tracker snapshot repopulates derived fields.
 - [ ] `JOBS_INGEST_SECRET` exists in the Worker and tracker publisher stores with matching values.
 - [ ] `BETA_ACCESS_MODE=ALLOWLIST` and normalized `BETA_ADMIN_EMAILS` are configured only after migration 0004.
 - [ ] `ENABLE_JOB_OUTREACH_LINKING` is absent or `false`.
@@ -31,6 +32,8 @@ Use this checklist for the Cloudflare preview and again before public cutover. R
 - [ ] Exercise A → B → A and confirm A-only jobs reactivate.
 - [ ] Confirm stale/equal-time conflicting snapshots fail.
 - [ ] Confirm `/api/jobs` reports `catalog.state = fresh`.
+- [ ] Confirm Industry, Length, and Term facets have expected counts; test at least one combined filter and pagination.
+- [ ] Confirm existing Search, Company, Location, Region, and Career Track filters still combine with the new selects.
 - [ ] Confirm a generated time older than two hours produces a warning while jobs remain browsable.
 - [ ] Confirm ingest logs contain counts/hash only, never the secret or raw body.
 - [ ] Before enabling Adzuna credentials, verify every `source === "adzuna"` card shows the linked **Jobs by Adzuna** text/logo at least 116 × 23, with keyboard focus and accessible label/alt.
@@ -49,6 +52,7 @@ Use this checklist for the Cloudflare preview and again before public cutover. R
 - [ ] A zero-match legacy import remains retryable and returns only the caller's references.
 - [ ] A completed legacy import preserves existing server states and exact retries are idempotent.
 - [ ] With linking disabled, job cards omit **Find people at this company**, linked discovery/link/unlink return `FEATURE_DISABLED`, and independent Coffee Chat discovery remains available.
+- [ ] With linking enabled, a job CTA auto-starts one search, disables duplicates while running, reports provider/accepted/duplicate outcomes, preserves job context on zero/error, and links new or rediscovered LinkedIn/source-URL profiles once.
 
 ## Google and encrypted-data smoke tests
 
