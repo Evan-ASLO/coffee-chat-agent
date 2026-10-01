@@ -607,6 +607,27 @@ button:disabled {
 	background: var(--warning-soft);
 }
 
+.adzuna-attribution {
+	display: inline-flex;
+	width: max-content;
+	min-width: 116px;
+	min-height: 23px;
+	align-items: center;
+	gap: 5px;
+	color: var(--ink);
+	font-size: 0.78rem;
+	font-weight: 850;
+	line-height: 23px;
+	text-decoration: none;
+}
+
+.adzuna-attribution img {
+	display: block;
+	width: 87px;
+	height: 23px;
+	object-fit: contain;
+}
+
 .outreach-summary {
 	display: flex;
 	align-items: center;

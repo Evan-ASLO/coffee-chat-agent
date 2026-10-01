@@ -1125,6 +1125,8 @@ function jobOutreachLinkingEnabled() {
 
 function jobCard(job) {
 	const status = job.userState?.status;
+	const sourceLabel = JobSourceUi.sourceLabel(job.source);
+	const sourceAttribution = JobSourceUi.attributionHtml(job.source);
 	const posted = job.postedAt
 		? `Posted ${formatDateOnly(job.postedAt)}`
 		: job.postedText || "Posting date unavailable";
@@ -1139,11 +1141,12 @@ function jobCard(job) {
 			${status ? `<span class="status status-${status.toLowerCase()}">${formatStatus(status)}</span>` : ""}
 		</div>
 		<div class="chips">
-			<span class="chip">${escapeHtml(job.source)}</span>
+			<span class="chip">${escapeHtml(sourceLabel)}</span>
 			<span class="chip">${escapeHtml(posted)}</span>
 			${job.categories.slice(0, 4).map((category) => `<span class="chip">${escapeHtml(category)}</span>`).join("")}
 			${job.active ? "" : '<span class="chip chip-warning">No longer active</span>'}
 		</div>
+		${sourceAttribution}
 		${job.description ? `<p>${escapeHtml(truncate(job.description, 300))}</p>` : ""}
 		${
 			state.session?.authenticated && outreach

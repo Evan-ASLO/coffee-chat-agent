@@ -33,6 +33,7 @@ Use this checklist for the Cloudflare preview and again before public cutover. R
 - [ ] Confirm `/api/jobs` reports `catalog.state = fresh`.
 - [ ] Confirm a generated time older than two hours produces a warning while jobs remain browsable.
 - [ ] Confirm ingest logs contain counts/hash only, never the secret or raw body.
+- [ ] Before enabling Adzuna credentials, verify every `source === "adzuna"` card shows the linked **Jobs by Adzuna** text/logo at least 116 × 23, with keyboard focus and accessible label/alt.
 
 ## Public and private behavior
 

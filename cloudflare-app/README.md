@@ -109,6 +109,10 @@ Successful response:
 
 See [`examples/job-snapshot-v1.json`](examples/job-snapshot-v1.json).
 
+### Source attribution
+
+Job cards normalize source names for display without exposing publisher credentials. For `source === "adzuna"`, every card renders a linked **Jobs by Adzuna** badge using the self-hosted official logo at a minimum 116 × 23 CSS pixels. The link target is `https://www.adzuna.ca/`; the existing CSP remains `img-src 'self'`. Adzuna credentials must remain disabled until the attribution release gate in [`docs/SOURCE_ATTRIBUTION.md`](docs/SOURCE_ATTRIBUTION.md) passes.
+
 ## Public and authenticated APIs
 
 - `GET /api/jobs`: public bounded search/filter/pagination plus safe catalog freshness (`never-imported`, `fresh`, or `stale`) and feature flags; authenticated requests also receive their own state and outreach summary.
@@ -162,6 +166,6 @@ npm audit
 
 The Worker test suite covers ingestion authentication, future-boundary replay expiry, strict size/count/schema validation, active-catalog idempotency, A → B → A reactivation, stale replacement, public/private access, cross-user state isolation, status CRUD, zero-match/retry/idempotent legacy import, 500-reference batched matching, and job/prospect ownership.
 
-Production validation, parallel-run, cutover, OAuth, secret, rollback, and monitoring procedures are under [`docs/`](docs/).
+Production validation, parallel-run, cutover, OAuth, secret, rollback, monitoring, and source-attribution procedures are under [`docs/`](docs/).
 
 Resume uploads are encrypted and limited to 5 MB PDF/DOCX/TXT files, but no malware or file-safety scanner exists. That is acceptable only for the controlled private beta. Broad public launch requires the recorded decision in [`docs/VALIDATION_CHECKLIST.md`](docs/VALIDATION_CHECKLIST.md); do not claim scanning and do not send resumes to VirusTotal without an approved privacy design.
