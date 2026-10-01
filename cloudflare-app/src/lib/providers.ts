@@ -4,6 +4,8 @@ import { fetchJson } from "./fetch";
 import {
 	employerDisplayName,
 	employerProfileDomains,
+	employerProfessionalTopics,
+	employerSearchAliases,
 } from "./job-discovery";
 
 export interface DiscoveryCriteria {
@@ -36,6 +38,10 @@ export interface DiscoveredPerson {
 
 export interface DiscoveryProviderResult {
 	providerReturned: number;
+	primaryProviderReturned: number;
+	primaryAccepted: number;
+	fallbackProviderReturned: number;
+	fallbackAccepted: number;
 	people: DiscoveredPerson[];
 }
 
@@ -90,11 +96,16 @@ export async function discoverWithTavily(
 		if (people.length >= criteria.count) {
 			return {
 				providerReturned: primaryResults.length,
+				primaryProviderReturned: primaryResults.length,
+				primaryAccepted: people.length,
+				fallbackProviderReturned: 0,
+				fallbackAccepted: 0,
 				people,
 			};
 		}
 	}
 
+	const primaryAccepted = people.length;
 	let fallbackResults: Array<{
 		title?: string;
 		url?: string;
@@ -131,6 +142,10 @@ export async function discoverWithTavily(
 	}
 	return {
 		providerReturned: primaryResults.length + fallbackResults.length,
+		primaryProviderReturned: primaryResults.length,
+		primaryAccepted,
+		fallbackProviderReturned: fallbackResults.length,
+		fallbackAccepted: people.length - primaryAccepted,
 		people,
 	};
 }
@@ -579,14 +594,21 @@ export function buildDiscoveryQuery(criteria: DiscoveryCriteria): string {
 export function buildProfessionalBioQuery(
 	criteria: DiscoveryCriteria,
 ): string {
-	const roleTopics = criteria.keywords.length
-		? criteria.keywords
-		: criteria.roles;
+	const roleTopics = Array.from(
+		new Set([
+			...criteria.keywords,
+			...employerProfessionalTopics(criteria.companies),
+			...professionalRoleTopics(criteria.roles),
+		]),
+	);
+	const domains = Array.from(
+		new Set([...employerProfileDomains(criteria.companies), "theorg.com"]),
+	);
 	return buildBoundedQuery("", [
-		queryGroup(roleTopics, 6),
-		queryGroup(criteria.companies, 6),
+		domainGroup(domains, 8),
+		queryGroup(roleTopics, 10),
+		queryGroup(employerSearchAliases(criteria.companies), 8),
 		queryGroup(criteria.locations, 6),
-		queryGroup(criteria.industries, 4),
 		queryGroup(["team", "bio", "profile", "leadership"], 4),
 	]);
 }
@@ -616,6 +638,45 @@ function queryGroup(values: string[], limit: number): string {
 	if (!tokens.length) return "";
 	if (tokens.length === 1) return quote(tokens[0]!);
 	return `(${tokens.map(quote).join(" OR ")})`;
+}
+
+function domainGroup(domains: string[], limit: number): string {
+	const values = Array.from(
+		new Set(
+			domains
+				.map((domain) => domain.trim().toLowerCase())
+				.filter((domain) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(domain)),
+		),
+	).slice(0, limit);
+	if (!values.length) return "";
+	if (values.length === 1) return `site:${values[0]}`;
+	return `(${values.map((domain) => `site:${domain}`).join(" OR ")})`;
+}
+
+function professionalRoleTopics(roles: string[]): string[] {
+	const ignored = new Set([
+		"team",
+		"manager",
+		"analyst",
+		"professional",
+		"hiring",
+		"acquisition",
+		"recruiter",
+	]);
+	return Array.from(
+		new Set(
+			roles.flatMap((role) =>
+				sanitizeQueryToken(role)
+					.toLowerCase()
+					.split(" ")
+					.filter(
+						(token) =>
+							token.length >= 4 &&
+							!ignored.has(token),
+					),
+			),
+		),
+	);
 }
 
 function sanitizeQueryToken(value: string): string {
@@ -685,7 +746,7 @@ function professionalBioPerson(
 	return {
 		...parsed,
 		company,
-		companyDomain: officialDomains[0] || "",
+		companyDomain: officialDomains.at(-1) || "",
 		location: matchedLocation(evidence, criteria.locations),
 		linkedinUrl: "",
 		discoveryProvider: "TAVILY",

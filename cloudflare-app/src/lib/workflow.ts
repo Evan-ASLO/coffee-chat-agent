@@ -39,6 +39,10 @@ import type { QueueMessage } from "../types";
 export interface DiscoverySummary {
 	providerReturned: number;
 	accepted: number;
+	primaryProviderReturned: number;
+	primaryAccepted: number;
+	fallbackProviderReturned: number;
+	fallbackAccepted: number;
 	inserted: number;
 	duplicates: number;
 	rejected: number;
@@ -107,6 +111,10 @@ export async function discoverProspects(
 		metadata: {
 		providerReturned: providerResult.providerReturned,
 		accepted: discovered.length,
+		primaryProviderReturned: providerResult.primaryProviderReturned,
+		primaryAccepted: providerResult.primaryAccepted,
+		fallbackProviderReturned: providerResult.fallbackProviderReturned,
+		fallbackAccepted: providerResult.fallbackAccepted,
 		inserted: inserted.length,
 		duplicates: discovered.length - inserted.length,
 		rejected: Math.max(
@@ -127,6 +135,10 @@ export async function discoverProspects(
 		summary: {
 			providerReturned: providerResult.providerReturned,
 			accepted: discovered.length,
+			primaryProviderReturned: providerResult.primaryProviderReturned,
+			primaryAccepted: providerResult.primaryAccepted,
+			fallbackProviderReturned: providerResult.fallbackProviderReturned,
+			fallbackAccepted: providerResult.fallbackAccepted,
 			inserted: inserted.length,
 			duplicates: discovered.length - inserted.length,
 			rejected: Math.max(

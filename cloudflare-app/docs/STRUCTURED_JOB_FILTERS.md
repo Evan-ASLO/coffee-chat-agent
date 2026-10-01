@@ -83,3 +83,12 @@ Job cards expose server-derived networking criteria. Known employer display alia
 Search query construction is OR within each category and AND between categories. LinkedIn remains primary. If it produces too few accepted profiles, a second public-bio search accepts only person-specific pages on reviewed official company domains or `theorg.com`, with company/role/location evidence. Job, search, news, social-feed, and common data-broker pages are rejected.
 
 Prospects deduplicate by LinkedIn URL when present and otherwise by canonical source URL. The UI identifies those links as **LinkedIn profile** or **Public profile**.
+
+Known employers may have a narrow discovery-hint record containing canonical search aliases, approved people/bio domains, and broad professional topics. For BMO, fallback queries directly OR:
+
+- `privatewealth.bmo.com`
+- `privatewealth-insights.bmo.com`
+- `bmo.com`
+- vetted `theorg.com`
+
+with BMO/Bank of Montreal aliases, Toronto/location terms, and investment/portfolio/wealth/talent topics. This improves recall without opening acceptance to arbitrary domains. Discovery summaries expose only aggregate primary/fallback candidate and accepted counts plus inserted/duplicate/rejected counts; they never expose provider queries, URLs, credentials, or raw provider responses.

@@ -95,7 +95,13 @@ describe("discovery query semantics", () => {
 	it("builds a broader professional bio query without a LinkedIn site lock", () => {
 		const query = buildProfessionalBioQuery(criteria);
 		expect(query).not.toContain("site:linkedin.com/in");
-		expect(query).toContain('("investment" OR "portfolio")');
+		expect(query).toContain(
+			"(site:privatewealth.bmo.com OR site:privatewealth-insights.bmo.com OR site:bmo.com OR site:theorg.com)",
+		);
+		expect(query).toContain('"investment" OR "portfolio" OR "wealth"');
+		expect(query).toContain(
+			'("BMO" OR "BMO Financial Group" OR "Bank of Montreal")',
+		);
 		expect(query).toContain(
 			'("team" OR "bio" OR "profile" OR "leadership")',
 		);
@@ -130,7 +136,7 @@ describe("professional bio fallback", () => {
 		keywords: ["investment", "portfolio"],
 		seniority: [],
 		objective: "Learn about the investment team.",
-		count: 2,
+		count: 3,
 	};
 
 	it("parses person-specific professional bio title patterns", () => {
@@ -175,9 +181,15 @@ describe("professional bio fallback", () => {
 					JSON.stringify({
 						results: [
 							{
+								title: "Meet Our Team - Alexander Spark",
+								url: "https://privatewealth.bmo.com/en/people/alexander-spark",
+								content:
+									"Alexander Spark works with the investment and portfolio team at BMO Financial Group in Toronto.",
+							},
+							{
 								title:
 									"Brent Joyce, Chief Investment Strategist | BMO",
-								url: "https://capitalmarkets.bmo.com/en/our-people/brent-joyce",
+								url: "https://privatewealth-insights.bmo.com/en/people/brent-joyce",
 								content:
 									"Brent Joyce is Chief Investment Strategist at BMO Financial Group in Toronto.",
 							},
@@ -209,17 +221,31 @@ describe("professional bio fallback", () => {
 			);
 
 		const result = await discoverWithTavily("test-tavily-key", criteria);
-		expect(result.providerReturned).toBe(4);
-		expect(result.people).toHaveLength(2);
+		expect(result).toMatchObject({
+			providerReturned: 5,
+			primaryProviderReturned: 0,
+			primaryAccepted: 0,
+			fallbackProviderReturned: 5,
+			fallbackAccepted: 3,
+		});
+		expect(result.people).toHaveLength(3);
 		expect(result.people[0]).toMatchObject({
+			fullName: "Alexander Spark",
+			company: "BMO Financial Group",
+			companyDomain: "bmo.com",
+			linkedinUrl: "",
+			sourceUrl:
+				"https://privatewealth.bmo.com/en/people/alexander-spark",
+		});
+		expect(result.people[1]).toMatchObject({
 			fullName: "Brent Joyce",
 			company: "BMO Financial Group",
 			companyDomain: "bmo.com",
 			linkedinUrl: "",
 			sourceUrl:
-				"https://capitalmarkets.bmo.com/en/our-people/brent-joyce",
+				"https://privatewealth-insights.bmo.com/en/people/brent-joyce",
 		});
-		expect(result.people[1]).toMatchObject({
+		expect(result.people[2]).toMatchObject({
 			fullName: "Natalya Demberg",
 			company: "BMO Financial Group",
 			linkedinUrl: "",
@@ -236,6 +262,8 @@ describe("professional bio fallback", () => {
 			'("Investment Team" OR "Investment Analyst"',
 		);
 		expect(fallbackBody.query).not.toContain("site:linkedin.com/in");
+		expect(fallbackBody.query).toContain("site:privatewealth.bmo.com");
+		expect(fallbackBody.query).toContain("site:theorg.com");
 	});
 
 	it("preserves accepted LinkedIn results without invoking fallback", async () => {
@@ -263,6 +291,12 @@ describe("professional bio fallback", () => {
 			count: 1,
 		});
 		expect(result.people).toHaveLength(1);
+		expect(result).toMatchObject({
+			primaryProviderReturned: 1,
+			primaryAccepted: 1,
+			fallbackProviderReturned: 0,
+			fallbackAccepted: 0,
+		});
 		expect(result.people[0]?.linkedinUrl).toBe(
 			"https://www.linkedin.com/in/alex-example",
 		);

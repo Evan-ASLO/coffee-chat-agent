@@ -838,6 +838,10 @@ async function executeDiscovery(criteria) {
 		const summary = result.summary || {
 			providerReturned: 0,
 			accepted: 0,
+			primaryProviderReturned: 0,
+			primaryAccepted: 0,
+			fallbackProviderReturned: 0,
+			fallbackAccepted: 0,
 			inserted: result.prospects?.length || 0,
 			duplicates: 0,
 			rejected: 0,
@@ -914,7 +918,18 @@ function discoveryEmptyMessage(summary) {
 		return "The search provider returned no profiles. Edit the roles, company, or location below and retry.";
 	}
 	if (summary.accepted === 0 && summary.rejected > 0) {
-		return `${summary.providerReturned} ${summary.providerReturned === 1 ? "result was" : "results were"} returned, but none contained a usable LinkedIn profile. Broaden the criteria and retry.`;
+		const stages = [];
+		if (summary.primaryProviderReturned) {
+			stages.push(
+				`${summary.primaryProviderReturned} LinkedIn-focused ${summary.primaryProviderReturned === 1 ? "candidate" : "candidates"}`,
+			);
+		}
+		if (summary.fallbackProviderReturned) {
+			stages.push(
+				`${summary.fallbackProviderReturned} public-bio ${summary.fallbackProviderReturned === 1 ? "candidate" : "candidates"}`,
+			);
+		}
+		return `The search returned ${stages.length ? stages.join(" and ") : `${summary.providerReturned} candidate results`}, but none were usable public professional profiles. Broaden the roles or location and retry.`;
 	}
 	if (summary.duplicates > 0) {
 		return `No new people were added. ${summary.duplicates} matching ${summary.duplicates === 1 ? "profile is" : "profiles are"} already tracked and linked to this job. Edit the criteria to search for different roles.`;

@@ -28,13 +28,62 @@ const EMPLOYER_DISPLAY_ALIASES = new Map<string, string>([
 	["desire2learn", "D2L"],
 ]);
 
-const EMPLOYER_PROFILE_DOMAINS = new Map<string, string[]>([
-	["bmo financial group", ["bmo.com"]],
-	["td bank group", ["td.com"]],
-	["scotiabank", ["scotiabank.com"]],
-	["cibc", ["cibc.com"]],
-	["rbc", ["rbc.com"]],
-	["d2l", ["d2l.com"]],
+const EMPLOYER_DISCOVERY_HINTS = new Map<
+	string,
+	{ aliases: string[]; domains: string[]; topics: string[] }
+>([
+	[
+		"bmo financial group",
+		{
+			aliases: ["BMO", "BMO Financial Group", "Bank of Montreal"],
+			domains: [
+				"privatewealth.bmo.com",
+				"privatewealth-insights.bmo.com",
+				"bmo.com",
+			],
+			topics: ["investment", "portfolio", "wealth", "talent"],
+		},
+	],
+	[
+		"td bank group",
+		{
+			aliases: ["TD", "TD Bank Group", "Toronto-Dominion Bank"],
+			domains: ["td.com"],
+			topics: ["investment", "wealth", "capital markets", "talent"],
+		},
+	],
+	[
+		"scotiabank",
+		{
+			aliases: ["Scotiabank", "Bank of Nova Scotia"],
+			domains: ["scotiabank.com"],
+			topics: ["investment", "wealth", "capital markets", "talent"],
+		},
+	],
+	[
+		"cibc",
+		{
+			aliases: ["CIBC", "Canadian Imperial Bank of Commerce"],
+			domains: ["cibc.com"],
+			topics: ["investment", "wealth", "capital markets", "talent"],
+		},
+	],
+	[
+		"rbc",
+		{
+			aliases: ["RBC", "Royal Bank of Canada"],
+			domains: ["rbc.com"],
+			topics: ["investment", "wealth", "capital markets", "talent"],
+		},
+	],
+	[
+		"d2l",
+		{
+			aliases: ["D2L", "Desire2Learn"],
+			domains: ["d2l.com"],
+			topics: ["engineering", "product", "data", "talent"],
+		},
+	],
 ]);
 
 const ROLE_RULES: Array<{
@@ -158,7 +207,38 @@ export function employerProfileDomains(companies: string[]): string[] {
 		new Set(
 			companies.flatMap((company) => {
 				const display = employerDisplayName(company);
-				return EMPLOYER_PROFILE_DOMAINS.get(normalizeEmployer(display)) || [];
+				return (
+					EMPLOYER_DISCOVERY_HINTS.get(normalizeEmployer(display))
+						?.domains || []
+				);
+			}),
+		),
+	);
+}
+
+export function employerSearchAliases(companies: string[]): string[] {
+	return Array.from(
+		new Set(
+			companies.flatMap((company) => {
+				const display = employerDisplayName(company);
+				return (
+					EMPLOYER_DISCOVERY_HINTS.get(normalizeEmployer(display))
+						?.aliases || [display]
+				);
+			}),
+		),
+	);
+}
+
+export function employerProfessionalTopics(companies: string[]): string[] {
+	return Array.from(
+		new Set(
+			companies.flatMap((company) => {
+				const display = employerDisplayName(company);
+				return (
+					EMPLOYER_DISCOVERY_HINTS.get(normalizeEmployer(display))
+						?.topics || []
+				);
 			}),
 		),
 	);

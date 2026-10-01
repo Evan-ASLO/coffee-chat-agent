@@ -1746,7 +1746,7 @@ describe.sequential("internship jobs platform", () => {
 					{
 						title:
 							"Brent Joyce, Chief Investment Strategist | BMO",
-						url: "https://capitalmarkets.bmo.com/en/our-people/brent-joyce",
+						url: "https://privatewealth-insights.bmo.com/en/people/brent-joyce",
 						content:
 							"Brent Joyce is Chief Investment Strategist at BMO Financial Group in Toronto.",
 					},
@@ -1764,7 +1764,7 @@ describe.sequential("internship jobs platform", () => {
 					{
 						title:
 							"Brent Joyce, Chief Investment Strategist | BMO",
-						url: "https://capitalmarkets.bmo.com/en/our-people/brent-joyce",
+						url: "https://privatewealth-insights.bmo.com/en/people/brent-joyce",
 						content:
 							"Brent Joyce is Chief Investment Strategist at BMO Financial Group in Toronto.",
 					},
@@ -1795,6 +1795,10 @@ describe.sequential("internship jobs platform", () => {
 			summary: {
 				providerReturned: 2,
 				accepted: 1,
+				primaryProviderReturned: 0,
+				primaryAccepted: 0,
+				fallbackProviderReturned: 2,
+				fallbackAccepted: 1,
 				inserted: 1,
 				duplicates: 0,
 				rejected: 1,
@@ -1806,7 +1810,7 @@ describe.sequential("internship jobs platform", () => {
 					companyDomain: "bmo.com",
 					linkedinUrl: "",
 					sourceUrl:
-						"https://capitalmarkets.bmo.com/en/our-people/brent-joyce",
+						"https://privatewealth-insights.bmo.com/en/people/brent-joyce",
 				},
 			],
 		});
@@ -1821,6 +1825,10 @@ describe.sequential("internship jobs platform", () => {
 			summary: {
 				providerReturned: 1,
 				accepted: 1,
+				primaryProviderReturned: 0,
+				primaryAccepted: 0,
+				fallbackProviderReturned: 1,
+				fallbackAccepted: 1,
 				inserted: 0,
 				duplicates: 1,
 				rejected: 0,
@@ -1833,7 +1841,7 @@ describe.sequential("internship jobs platform", () => {
 		)
 			.bind(
 				userA.user.id,
-				"https://capitalmarkets.bmo.com/en/our-people/brent-joyce",
+				"https://privatewealth-insights.bmo.com/en/people/brent-joyce",
 			)
 			.all<{
 				full_name: string;
@@ -1849,7 +1857,7 @@ describe.sequential("internship jobs platform", () => {
 				company_domain: "bmo.com",
 				linkedin_url: "",
 				source_url:
-					"https://capitalmarkets.bmo.com/en/our-people/brent-joyce",
+					"https://privatewealth-insights.bmo.com/en/people/brent-joyce",
 			},
 		]);
 		const links = await env.DB.prepare(
@@ -1860,7 +1868,7 @@ describe.sequential("internship jobs platform", () => {
 			.bind(
 				userA.user.id,
 				bmoJob.id,
-				"https://capitalmarkets.bmo.com/en/our-people/brent-joyce",
+				"https://privatewealth-insights.bmo.com/en/people/brent-joyce",
 			)
 			.first<{ count: number }>();
 		expect(links?.count).toBe(1);
