@@ -15,6 +15,8 @@ Never put secret values in this file, tickets, logs, screenshots, fixtures, or c
 
 Non-secret configuration includes `GOOGLE_CLIENT_ID`, D1 database ID, rate-limit namespace, model names, `APP_ORIGIN`, and `ENABLE_JOB_OUTREACH_LINKING`.
 
+`BETA_ACCESS_MODE` and `BETA_ADMIN_EMAILS` are also normal configuration rather than cryptographic secrets. Treat the admin email list as access-control configuration and limited personal data: restrict who can edit/read deployment settings, normalize entries, and never expose the list through public APIs or client flags.
+
 ## Rotation procedures
 
 ### Ingestion secret

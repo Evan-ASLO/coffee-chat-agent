@@ -1,6 +1,6 @@
 # Seven-day parallel-run criteria
 
-Run the tracker against the existing Vercel experience and the Cloudflare ingestion endpoint for seven consecutive 24-hour periods before cutover. Keep `ENABLE_JOB_OUTREACH_LINKING=false` throughout.
+Run the tracker against the existing Vercel experience and the Cloudflare ingestion endpoint for seven consecutive 24-hour periods before cutover. Keep `ENABLE_JOB_OUTREACH_LINKING=false` throughout. Keep the Cloudflare site in `BETA_ACCESS_MODE=ALLOWLIST` with only approved test/beta accounts.
 
 ## Evidence collected for every scheduled publisher run
 
@@ -23,8 +23,9 @@ The Tracker Operator records:
 6. **Isolation:** automated cross-user tests pass daily in CI; one manual two-account check passes at the start and end of the seven-day period.
 7. **Application tracking:** save, apply, interview, offer/reject, archive, delete, and one-time import flows preserve ownership and existing states.
 8. **Coffee Chat:** basic login, incremental Google connect, Sheet creation/update, one approved test send, reply sync, and encrypted resume smoke tests pass at the start and end.
-9. **Operations:** no dead-letter queue messages, unexplained D1 errors, secret/body logging, or repeated ingest rate-limit events.
-10. **Rollback readiness:** a non-production restore drill and DNS/Vercel rollback walkthrough are completed before day seven closes.
+9. **Beta gate:** request, approve, deny, revoke, re-approve, admin override, neutral confirmation, and active-session revocation checks pass at the start and end; jobs never leak to a signed-out allowlist-mode request.
+10. **Operations:** no dead-letter queue messages, unexplained D1 errors, secret/body logging, or repeated ingest rate-limit events.
+11. **Rollback readiness:** a non-production restore drill and DNS/Vercel rollback walkthrough are completed before day seven closes.
 
 ## Clock reset rules
 

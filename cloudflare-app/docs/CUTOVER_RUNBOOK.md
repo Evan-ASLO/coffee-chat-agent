@@ -4,6 +4,8 @@
 
 - Seven-day criteria pass.
 - The target Worker version, tracker commit, current hash/count, D1 migration list, Vercel fallback URL, old/new OAuth callback URLs, and DNS values are recorded.
+- Migration 0004 is applied and the owner/admin emails are confirmed.
+- `BETA_ACCESS_MODE=ALLOWLIST`; never rely on its absent-value `OPEN` compatibility default during the beta.
 - `ENABLE_JOB_OUTREACH_LINKING=false`.
 - Monitoring and rollback owners are online.
 - The broad-launch resume decision is recorded; private-beta acceptance alone is not approval for unrestricted public uploads.
@@ -44,14 +46,17 @@ Cloudflare Operator:
 
 ## Cutover sequence
 
-1. Deploy the approved Worker version and apply only the reviewed D1 migrations.
-2. Confirm Worker health, public jobs, freshness metadata, login, and private APIs before changing traffic.
-3. Keep dual publishing active.
-4. Update the public domain/DNS or routing from Vercel to Cloudflare using the recorded values.
-5. Keep the Vercel fallback deployed and reachable; do not delete its project or OAuth callback.
-6. Run public browsing, login, save/application, Gmail/Sheets, and support smoke tests.
-7. Observe the thresholds in [MONITORING_CONFIG.md](MONITORING_CONFIG.md) continuously for the first hour and at least hourly for the next 24 hours.
-8. Enable job-linked outreach only as a separate change after catalog stability is accepted:
+1. Apply migration `0004_beta_access.sql` before enabling the gate.
+2. Configure `BETA_ADMIN_EMAILS`, then set `BETA_ACCESS_MODE=ALLOWLIST`.
+3. Deploy the approved Worker version and confirm the signed-out private-beta landing, admin override, request flow, and denied direct jobs API.
+4. Approve the designated beta/test emails through the admin UI.
+5. Confirm Worker health, authenticated jobs, freshness metadata, login, and private APIs before changing traffic.
+6. Keep dual publishing active.
+7. Update the public domain/DNS or routing from Vercel to Cloudflare using the recorded values.
+8. Keep the Vercel fallback deployed and reachable; do not delete its project or OAuth callback.
+9. Run landing, approved login, save/application, Gmail/Sheets, and support smoke tests.
+10. Observe the thresholds in [MONITORING_CONFIG.md](MONITORING_CONFIG.md) continuously for the first hour and at least hourly for the next 24 hours.
+11. Enable job-linked outreach only as a separate change after catalog stability is accepted:
 
    ```text
    ENABLE_JOB_OUTREACH_LINKING=true

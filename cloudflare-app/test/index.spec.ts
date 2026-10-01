@@ -35,6 +35,7 @@ import {
 import { saveCredential } from "../src/lib/credentials";
 import { createSession, upsertUser } from "../src/lib/db";
 import { insertProspects } from "../src/lib/store";
+import { acceptVerifiedGoogleLogin } from "../src/lib/auth";
 import {
 	hmacSha256Hex,
 	sha256Hex,
@@ -59,7 +60,10 @@ describe("security boundaries", () => {
 	it("returns no authenticated data without a valid session", async () => {
 		const response = await SELF.fetch("http://example.com/api/session");
 		expect(response.status).toBe(200);
-		expect(await response.json()).toEqual({ authenticated: false });
+		expect(await response.json()).toEqual({
+			authenticated: false,
+			betaAccessMode: "OPEN",
+		});
 	});
 
 	it("adds restrictive security headers", async () => {
@@ -329,6 +333,356 @@ describe("worker export", () => {
 		const response = await worker.fetch(request, env, context);
 		await waitOnExecutionContext(context);
 		expect(response.status).toBe(200);
+	});
+});
+
+describe.sequential("approved-email beta access", () => {
+	const allowlistEnv = {
+		...(env as unknown as AppBindings),
+		BETA_ACCESS_MODE: "ALLOWLIST",
+		BETA_ADMIN_EMAILS: " Owner@Example.com , SECOND-OWNER@example.com ",
+	};
+	const requestedProfile = {
+		googleSub: `requested-${crypto.randomUUID()}`,
+		email: "Candidate.User@Example.com",
+		name: "Candidate User",
+		image: "",
+	};
+	let requestId = "";
+	let adminUser: Awaited<ReturnType<typeof upsertUser>>;
+	let adminAuth: Awaited<ReturnType<typeof authenticatedSessionForUser>>;
+	let approvedUser: Awaited<ReturnType<typeof upsertUser>>;
+	let approvedAuth: Awaited<ReturnType<typeof authenticatedSessionForUser>>;
+
+	it("keeps OPEN mode backward compatible", async () => {
+		const profile = {
+			googleSub: `open-${crypto.randomUUID()}`,
+			email: "Open.User@Example.com",
+			name: "Open User",
+			image: "",
+		};
+		const user = await acceptVerifiedGoogleLogin(
+			env as unknown as AppBindings,
+			profile,
+		);
+		expect(user).toMatchObject({ email: "open.user@example.com" });
+		const stored = await env.DB.prepare(
+			"SELECT email FROM users WHERE google_sub = ?",
+		)
+			.bind(profile.googleSub)
+			.first<{ email: string }>();
+		expect(stored?.email).toBe("open.user@example.com");
+		const jobs = await SELF.fetch("http://example.com/api/jobs?pageSize=1");
+		expect(jobs.status).toBe(200);
+	});
+
+	it("creates one neutral pending request without a user or session", async () => {
+		const requestStart = await workerRequest(
+			allowlistEnv,
+			"/auth/google/request",
+		{ method: "GET" },
+		);
+		expect(requestStart.status).toBe(302);
+		expect(requestStart.headers.get("Location")).toContain(
+			"accounts.google.com/o/oauth2",
+		);
+
+		await expect(
+			acceptVerifiedGoogleLogin(allowlistEnv, requestedProfile),
+		).resolves.toBeNull();
+		await expect(
+			acceptVerifiedGoogleLogin(allowlistEnv, {
+				...requestedProfile,
+				email: requestedProfile.email.toUpperCase(),
+			}),
+		).resolves.toBeNull();
+
+		const requests = await env.DB.prepare(
+			`SELECT id, email, status FROM beta_access_requests
+			  WHERE google_sub = ? ORDER BY requested_at`,
+		)
+			.bind(requestedProfile.googleSub)
+			.all<{ id: string; email: string; status: string }>();
+		expect(requests.results).toHaveLength(1);
+		expect(requests.results[0]).toMatchObject({
+			email: "candidate.user@example.com",
+			status: "PENDING",
+		});
+		requestId = requests.results[0]!.id;
+		const normalUser = await env.DB.prepare(
+			"SELECT id FROM users WHERE google_sub = ?",
+		)
+			.bind(requestedProfile.googleSub)
+			.first<{ id: string }>();
+		expect(normalUser).toBeNull();
+		const sessions = await env.DB.prepare(
+			`SELECT COUNT(*) AS count FROM sessions s
+			  JOIN users u ON u.id = s.user_id
+			  WHERE u.google_sub = ?`,
+		)
+			.bind(requestedProfile.googleSub)
+			.first<{ count: number }>();
+		expect(sessions?.count).toBe(0);
+
+		const session = await workerRequest(allowlistEnv, "/api/session");
+		expect(await session.json()).toEqual({
+			authenticated: false,
+			betaAccessMode: "ALLOWLIST",
+		});
+		const jobs = await workerRequest(
+			allowlistEnv,
+			"/api/jobs?pageSize=1",
+		);
+		expect(jobs.status).toBe(401);
+		expect(await jobs.json()).toMatchObject({
+			error: "BETA_ACCESS_REQUIRED",
+		});
+	});
+
+	it("allows normalized environment admins without a D1 allowlist row", async () => {
+		adminUser = (await acceptVerifiedGoogleLogin(allowlistEnv, {
+			googleSub: `owner-${crypto.randomUUID()}`,
+			email: "OWNER@example.com",
+			name: "Owner",
+			image: "",
+		}))!;
+		expect(adminUser.email).toBe("owner@example.com");
+		const access = await env.DB.prepare(
+			"SELECT email FROM beta_access WHERE email = ?",
+		)
+			.bind(adminUser.email)
+			.first<{ email: string }>();
+		expect(access).toBeNull();
+		adminAuth = await authenticatedSessionForUser(adminUser, allowlistEnv);
+		const session = await authenticatedWorkerFetch(
+			adminAuth,
+			"/api/session",
+			{},
+			allowlistEnv,
+		);
+		expect(await session.json()).toMatchObject({
+			authenticated: true,
+			betaAccessMode: "ALLOWLIST",
+			isBetaAdmin: true,
+			user: { email: "owner@example.com" },
+		});
+	});
+
+	it("approves, revokes, and re-approves while enforcing admin authorization", async () => {
+		const pending = await authenticatedWorkerFetch(
+			adminAuth,
+			"/api/beta/admin/access",
+			{},
+			allowlistEnv,
+		);
+		expect(pending.status).toBe(200);
+		expect(await pending.json()).toMatchObject({
+			requests: [
+				expect.objectContaining({
+					id: requestId,
+					email: "candidate.user@example.com",
+					status: "PENDING",
+				}),
+			],
+		});
+
+		const approved = await authenticatedWorkerFetch(
+			adminAuth,
+			`/api/beta/admin/requests/${requestId}/approve`,
+			{ method: "POST" },
+			allowlistEnv,
+		);
+		expect(approved.status).toBe(200);
+		const approvedRequest = await env.DB.prepare(
+			"SELECT google_sub, status FROM beta_access_requests WHERE id = ?",
+		)
+			.bind(requestId)
+			.first<{ google_sub: string; status: string }>();
+		expect(approvedRequest).toEqual({
+			google_sub: "",
+			status: "APPROVED",
+		});
+		approvedUser = (await acceptVerifiedGoogleLogin(
+			allowlistEnv,
+			requestedProfile,
+		))!;
+		expect(approvedUser.email).toBe("candidate.user@example.com");
+		approvedAuth = await authenticatedSessionForUser(
+			approvedUser,
+			allowlistEnv,
+		);
+		const approvedJobs = await authenticatedWorkerFetch(
+			approvedAuth,
+			"/api/jobs?pageSize=1",
+			{},
+			allowlistEnv,
+		);
+		expect(approvedJobs.status).toBe(200);
+
+		const nonAdmin = await authenticatedWorkerFetch(
+			approvedAuth,
+			"/api/beta/admin/access",
+			{},
+			allowlistEnv,
+		);
+		expect(nonAdmin.status).toBe(403);
+		const nonAdminSession = await authenticatedWorkerFetch(
+			approvedAuth,
+			"/api/session",
+			{},
+			allowlistEnv,
+		);
+		expect(await nonAdminSession.json()).toMatchObject({
+			authenticated: true,
+			isBetaAdmin: false,
+		});
+
+		const revoked = await authenticatedWorkerFetch(
+			adminAuth,
+			"/api/beta/admin/access/revoke",
+			{
+				method: "POST",
+				body: { email: requestedProfile.email.toUpperCase() },
+			},
+			allowlistEnv,
+		);
+		expect(revoked.status).toBe(200);
+		const revokedSession = await authenticatedWorkerFetch(
+			approvedAuth,
+			"/api/session",
+			{},
+			allowlistEnv,
+		);
+		expect(await revokedSession.json()).toEqual({
+			authenticated: false,
+			betaAccessMode: "ALLOWLIST",
+		});
+		const revokedApi = await authenticatedWorkerFetch(
+			approvedAuth,
+			"/api/job-states?pageSize=1",
+			{},
+			allowlistEnv,
+		);
+		expect(revokedApi.status).toBe(401);
+		const staleSession = await authenticatedSessionForUser(
+			approvedUser,
+			allowlistEnv,
+		);
+		const revalidated = await authenticatedWorkerFetch(
+			staleSession,
+			"/api/session",
+			{},
+			allowlistEnv,
+		);
+		expect(await revalidated.json()).toEqual({
+			authenticated: false,
+			betaAccessMode: "ALLOWLIST",
+		});
+
+		const reapproved = await authenticatedWorkerFetch(
+			adminAuth,
+			"/api/beta/admin/access/approve",
+			{
+				method: "POST",
+				body: { email: "Candidate.User@Example.com" },
+			},
+			allowlistEnv,
+		);
+		expect(reapproved.status).toBe(200);
+		await expect(
+			acceptVerifiedGoogleLogin(allowlistEnv, requestedProfile),
+		).resolves.toMatchObject({
+			id: approvedUser.id,
+			email: "candidate.user@example.com",
+		});
+		const newSession = await authenticatedSessionForUser(
+			approvedUser,
+			allowlistEnv,
+		);
+		const activeAgain = await authenticatedWorkerFetch(
+			newSession,
+			"/api/session",
+			{},
+			allowlistEnv,
+		);
+		expect(await activeAgain.json()).toMatchObject({ authenticated: true });
+		const auditActions = await env.DB.prepare(
+			"SELECT action FROM audit_events WHERE user_id = ? ORDER BY created_at",
+		)
+			.bind(adminUser.id)
+			.all<{ action: string }>();
+		expect(auditActions.results.map((row) => row.action)).toEqual(
+			expect.arrayContaining([
+				"BETA_ACCESS_REQUEST_APPROVED",
+				"BETA_ACCESS_REVOKED",
+				"BETA_ACCESS_APPROVED",
+			]),
+		);
+	});
+
+	it("denies and safely accepts a later verified re-request without enumeration", async () => {
+		const profile = {
+			googleSub: `denied-${crypto.randomUUID()}`,
+			email: "Denied.User@Example.com",
+			name: "Denied User",
+			image: "",
+		};
+		await expect(
+			acceptVerifiedGoogleLogin(allowlistEnv, profile),
+		).resolves.toBeNull();
+		const firstRequest = await env.DB.prepare(
+			`SELECT id FROM beta_access_requests
+			  WHERE email = ? AND status = 'PENDING'`,
+		)
+			.bind("denied.user@example.com")
+			.first<{ id: string }>();
+		const denied = await authenticatedWorkerFetch(
+			adminAuth,
+			`/api/beta/admin/requests/${firstRequest!.id}/deny`,
+			{ method: "POST" },
+			allowlistEnv,
+		);
+		expect(denied.status).toBe(200);
+		const deniedRow = await env.DB.prepare(
+			"SELECT google_sub, status FROM beta_access_requests WHERE id = ?",
+		)
+			.bind(firstRequest!.id)
+			.first<{ google_sub: string; status: string }>();
+		expect(deniedRow).toEqual({ google_sub: "", status: "DENIED" });
+
+		await expect(
+			acceptVerifiedGoogleLogin(allowlistEnv, {
+				...profile,
+				email: profile.email.toUpperCase(),
+			}),
+		).resolves.toBeNull();
+		await expect(
+			acceptVerifiedGoogleLogin(allowlistEnv, profile),
+		).resolves.toBeNull();
+		const statuses = await env.DB.prepare(
+			`SELECT status, COUNT(*) AS count FROM beta_access_requests
+			  WHERE email = ? GROUP BY status`,
+		)
+			.bind("denied.user@example.com")
+			.all<{ status: string; count: number }>();
+		expect(
+			Object.fromEntries(
+				statuses.results.map((row) => [row.status, row.count]),
+			),
+		).toMatchObject({ DENIED: 1, PENDING: 1 });
+		const noUser = await env.DB.prepare(
+			"SELECT id FROM users WHERE google_sub = ?",
+		)
+			.bind(profile.googleSub)
+			.first<{ id: string }>();
+		expect(noUser).toBeNull();
+		const deniedAudit = await env.DB.prepare(
+			`SELECT COUNT(*) AS count FROM audit_events
+			  WHERE user_id = ? AND action = 'BETA_ACCESS_REQUEST_DENIED'`,
+		)
+			.bind(adminUser.id)
+			.first<{ count: number }>();
+		expect(deniedAudit?.count).toBe(1);
 	});
 });
 
@@ -1192,6 +1546,21 @@ async function ingestSignature(
 	);
 }
 
+async function workerRequest(
+	bindings: AppBindings,
+	path: string,
+	init: RequestInit = {},
+): Promise<Response> {
+	const context = createExecutionContext();
+	const response = await worker.fetch(
+		new Request(`http://example.com${path}`, init),
+		bindings,
+		context,
+	);
+	await waitOnExecutionContext(context);
+	return response;
+}
+
 async function authenticatedTestUser(seed: string): Promise<{
 	user: Awaited<ReturnType<typeof upsertUser>>;
 	cookie: string;
@@ -1204,6 +1573,17 @@ async function authenticatedTestUser(seed: string): Promise<{
 		name: seed,
 		image: "",
 	});
+	return authenticatedSessionForUser(user, bindings);
+}
+
+async function authenticatedSessionForUser(
+	user: Awaited<ReturnType<typeof upsertUser>>,
+	bindings: AppBindings,
+): Promise<{
+	user: Awaited<ReturnType<typeof upsertUser>>;
+	cookie: string;
+	csrf: string;
+}> {
 	const token = `session-${crypto.randomUUID()}`;
 	const csrf = `csrf-${crypto.randomUUID()}`;
 	await createSession(

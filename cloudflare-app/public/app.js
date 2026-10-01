@@ -23,6 +23,7 @@ const state = {
 		jobs: [],
 		pagination: { page: 1, pageSize: 100, total: 0, totalPages: 0 },
 	},
+	betaAdmin: null,
 	jobQuery: {
 		q: "",
 		company: "",
@@ -48,7 +49,9 @@ document.getElementById("send-draft").addEventListener("click", sendDraft);
 async function load() {
 	try {
 		state.session = await api("/api/session");
-		await loadJobData();
+		if (!betaLandingRequired()) {
+			await Promise.all([loadJobData(), loadBetaAdminData()]);
+		}
 		render();
 	} catch (error) {
 		renderFailure(error);
@@ -57,6 +60,10 @@ async function load() {
 
 function render() {
 	const authenticated = Boolean(state.session?.authenticated);
+	if (betaLandingRequired()) {
+		renderBetaLanding();
+		return;
+	}
 	const user = state.session?.user;
 	const credentials = state.session?.credentials;
 	app.innerHTML = `
@@ -78,14 +85,15 @@ function render() {
 				}
 			</div>
 		</header>
-		<nav class="tabs ${authenticated ? "tabs-authenticated" : "tabs-public"}" aria-label="Primary">
+		<nav class="tabs ${authenticated ? "tabs-authenticated" : "tabs-public"} ${state.session?.isBetaAdmin ? "tabs-admin" : ""}" aria-label="Primary">
 			${tabButton("jobs", "Jobs")}
 			${
 				authenticated
 					? `${tabButton("saved", "Saved")}
 						${tabButton("applications", "Applications")}
 						${tabButton("networking", "Networking")}
-						${tabButton("settings", "Settings")}`
+						${tabButton("settings", "Settings")}
+						${state.session.isBetaAdmin ? tabButton("beta-access", "Beta access") : ""}`
 					: ""
 			}
 		</nav>
@@ -100,6 +108,37 @@ function render() {
 		}),
 	);
 	wireTab();
+}
+
+function renderBetaLanding() {
+	const requested =
+		new URLSearchParams(location.search).get("access") === "requested";
+	app.innerHTML = `
+		<section class="beta-landing">
+			<div class="beta-landing-brand">
+				<div class="brand-mark">CC</div>
+				<div>
+					<strong>Internship & Coffee Chat</strong>
+					<span>Private beta</span>
+				</div>
+			</div>
+			<div class="beta-landing-copy">
+				<p class="eyebrow">Approved-email beta</p>
+				<h1>Find internships and build thoughtful professional connections.</h1>
+				<p>The combined internship tracker and approval-first Coffee Chat workspace is currently open to a small private-beta group while catalog reliability, privacy, and operations are validated.</p>
+				${
+					requested
+						? '<p class="notice">Thanks. If this Google account can be considered for the beta, the request has been recorded. This confirmation is intentionally the same for every account.</p>'
+						: ""
+				}
+				<div class="actions beta-actions">
+					<a class="button primary" href="/auth/google/login">Sign in with Google</a>
+					<a class="button" href="/auth/google/request">Request access</a>
+				</div>
+				<p class="beta-privacy">Request access verifies your Google email and records only the minimum information needed to review the request. It does not create a normal app account or session unless approved.</p>
+			</div>
+			${legalLinks()}
+		</section>`;
 }
 
 function renderStats() {
@@ -129,6 +168,13 @@ function renderTab() {
 	}
 	if (state.tab === "settings" && state.session?.authenticated) {
 		return renderSettings();
+	}
+	if (
+		state.tab === "beta-access" &&
+		state.session?.authenticated &&
+		state.session.isBetaAdmin
+	) {
+		return renderBetaAccessAdmin();
 	}
 	return renderJobs();
 }
@@ -407,6 +453,84 @@ function renderSettings() {
 		</section>`;
 }
 
+function renderBetaAccessAdmin() {
+	const data = state.betaAdmin || { requests: [], access: [] };
+	const pending = data.requests.filter((item) => item.status === "PENDING");
+	const denied = data.requests.filter((item) => item.status === "DENIED");
+	const approved = data.access.filter((item) => item.status === "APPROVED");
+	const revoked = data.access.filter((item) => item.status === "REVOKED");
+	return `
+		<section class="panel">
+			<div class="panel-head">
+				<div>
+					<p class="eyebrow">Owner controls</p>
+					<h2>Private-beta access</h2>
+					<p>Authorization is enforced server-side from <code>BETA_ADMIN_EMAILS</code>. Changes take effect immediately; revocation terminates active sessions for that email.</p>
+				</div>
+			</div>
+			<form id="beta-approve-email-form" class="beta-invite-form">
+				<label>Approve or re-approve an email
+					<input id="beta-approve-email" type="email" maxlength="320" autocomplete="off" required />
+				</label>
+				<button class="primary">Approve email</button>
+			</form>
+		</section>
+		<section class="panel">
+			<div class="panel-head"><div><h2>Pending requests</h2><p>Requests come only from verified Google identities.</p></div></div>
+			${pending.length ? `<div class="cards">${pending.map(betaRequestCard).join("")}</div>` : empty("No access requests are pending.")}
+		</section>
+		<section class="panel">
+			<div class="panel-head"><div><h2>Approved access</h2></div></div>
+			${approved.length ? `<div class="cards">${approved.map(betaAccessCard).join("")}</div>` : empty("No D1 allowlist entries are approved. Environment admins remain authorized separately.")}
+		</section>
+		<section class="panel">
+			<div class="panel-head"><div><h2>Revoked and denied</h2><p>Re-approve only after reviewing the original decision.</p></div></div>
+			${
+				revoked.length || denied.length
+					? `<div class="cards">
+							${revoked.map(betaAccessCard).join("")}
+							${denied.map(betaRequestCard).join("")}
+						</div>`
+					: empty("No revoked or denied entries.")
+			}
+		</section>`;
+}
+
+function betaRequestCard(request) {
+	return `<article class="card">
+		<div class="card-head">
+			<div>
+				<h3>${escapeHtml(request.email)}</h3>
+				<p>Requested ${formatDate(request.requestedAt)}</p>
+			</div>
+			<span class="status status-${request.status.toLowerCase()}">${formatStatus(request.status)}</span>
+		</div>
+		<div class="actions">
+			<button class="primary" data-beta-approve-request="${request.id}">Approve</button>
+			${request.status === "PENDING" ? `<button class="danger" data-beta-deny-request="${request.id}">Deny</button>` : ""}
+		</div>
+	</article>`;
+}
+
+function betaAccessCard(access) {
+	return `<article class="card">
+		<div class="card-head">
+			<div>
+				<h3>${escapeHtml(access.email)}</h3>
+				<p>Updated ${formatDate(access.updatedAt)}</p>
+			</div>
+			<span class="status status-${access.status.toLowerCase()}">${formatStatus(access.status)}</span>
+		</div>
+		<div class="actions">
+			${
+				access.status === "APPROVED"
+					? `<button class="danger" data-beta-revoke-email="${escapeAttr(access.email)}">Revoke</button>`
+					: `<button class="primary" data-beta-approve-email="${escapeAttr(access.email)}">Re-approve</button>`
+			}
+		</div>
+	</article>`;
+}
+
 function wireTab() {
 	document.getElementById("job-filter-form")?.addEventListener("submit", filterJobs);
 	document.getElementById("clear-job-filters")?.addEventListener("click", clearJobFilters);
@@ -430,6 +554,7 @@ function wireTab() {
 	document.getElementById("find-form")?.addEventListener("submit", findPeople);
 	document.getElementById("settings-form")?.addEventListener("submit", saveSettings);
 	document.getElementById("legacy-import-form")?.addEventListener("submit", importLegacyState);
+	document.getElementById("beta-approve-email-form")?.addEventListener("submit", approveBetaEmailForm);
 	document.getElementById("resume-form")?.addEventListener("submit", uploadResume);
 	document.getElementById("delete-resume")?.addEventListener("click", removeResume);
 	document.getElementById("init-workspace")?.addEventListener("click", initWorkspace);
@@ -460,6 +585,67 @@ function wireTab() {
 	document.querySelectorAll("[data-delete-secret]").forEach((button) =>
 		button.addEventListener("click", () => deleteSecret(button.dataset.deleteSecret)),
 	);
+	document.querySelectorAll("[data-beta-approve-request]").forEach((button) =>
+		button.addEventListener("click", () => approveBetaRequest(button.dataset.betaApproveRequest)),
+	);
+	document.querySelectorAll("[data-beta-deny-request]").forEach((button) =>
+		button.addEventListener("click", () => denyBetaRequest(button.dataset.betaDenyRequest)),
+	);
+	document.querySelectorAll("[data-beta-revoke-email]").forEach((button) =>
+		button.addEventListener("click", () => revokeBetaAccess(button.dataset.betaRevokeEmail)),
+	);
+	document.querySelectorAll("[data-beta-approve-email]").forEach((button) =>
+		button.addEventListener("click", () => approveBetaAccess(button.dataset.betaApproveEmail)),
+	);
+}
+
+async function approveBetaEmailForm(event) {
+	event.preventDefault();
+	const email = value("beta-approve-email");
+	if (!email) return;
+	await approveBetaAccess(email);
+}
+
+async function approveBetaRequest(id) {
+	await run("Approving beta request…", async () => {
+		await api(`/api/beta/admin/requests/${id}/approve`, { method: "POST" });
+		await loadBetaAdminData();
+		render();
+	});
+}
+
+async function denyBetaRequest(id) {
+	if (!confirm("Deny this beta access request?")) return;
+	await run("Denying beta request…", async () => {
+		await api(`/api/beta/admin/requests/${id}/deny`, { method: "POST" });
+		await loadBetaAdminData();
+		render();
+	});
+}
+
+async function approveBetaAccess(email) {
+	await run("Approving beta access…", async () => {
+		await api("/api/beta/admin/access/approve", {
+			method: "POST",
+			body: { email },
+		});
+		await loadBetaAdminData();
+		render();
+	});
+}
+
+async function revokeBetaAccess(email) {
+	if (!confirm(`Revoke beta access for ${email}? Active sessions will end.`)) {
+		return;
+	}
+	await run("Revoking beta access…", async () => {
+		await api("/api/beta/admin/access/revoke", {
+			method: "POST",
+			body: { email },
+		});
+		await loadBetaAdminData();
+		render();
+	});
 }
 
 async function filterJobs(event) {
@@ -826,7 +1012,11 @@ async function logout() {
 async function refresh(tab = state.tab) {
 	state.session = await api("/api/session");
 	state.tab = state.session.authenticated ? tab : "jobs";
-	await loadJobData();
+	if (!betaLandingRequired()) {
+		await Promise.all([loadJobData(), loadBetaAdminData()]);
+	} else {
+		state.betaAdmin = null;
+	}
 	render();
 }
 
@@ -858,6 +1048,21 @@ async function fetchJobs() {
 
 async function fetchTrackedJobs() {
 	return api("/api/job-states?page=1&pageSize=100");
+}
+
+async function loadBetaAdminData() {
+	if (!state.session?.authenticated || !state.session.isBetaAdmin) {
+		state.betaAdmin = null;
+		return;
+	}
+	state.betaAdmin = await api("/api/beta/admin/access");
+}
+
+function betaLandingRequired() {
+	return (
+		!state.session?.authenticated &&
+		state.session?.betaAccessMode === "ALLOWLIST"
+	);
 }
 
 async function run(message, callback) {

@@ -10,6 +10,7 @@ Cloudflare Operator maintains panels for:
 - D1 errors, latency, writes, and storage;
 - queue retries and dead-letter messages;
 - OAuth callback errors and unauthorized/CSRF rejections;
+- beta requests by status, admin decisions, revocations, rejected signed-out jobs API requests, and session invalidations;
 - Gmail sends/reply sync and Sheets synchronization failures; and
 - resume upload/analyze/delete failures by MIME type and size band, never file contents.
 
@@ -25,6 +26,8 @@ Cloudflare Operator maintains panels for:
 | D1 operation errors | 1 repeated operation | 3 consecutive failures or integrity error | Cloudflare Operator |
 | Queue/DLQ | any retry spike | any DLQ message | Cloudflare Operator |
 | OAuth callbacks | 2 failures in 10 minutes | 5 failures in 10 minutes or existing-user login outage | OAuth Owner |
+| Beta gate | unexpected OPEN mode or signed-out jobs 200 | any allowlist bypass/cross-user/admin authorization failure | Privacy/Security Reviewer + Release Lead |
+| Beta requests | review queue older than 2 business days | request/admin endpoint outage or revocation not ending sessions | Support Observer + Privacy/Security Reviewer |
 | Gmail/Sheets sync | 2 consecutive test failures | confirmed send/state corruption | OAuth Owner + Release Lead |
 | Cross-user isolation | n/a | any failure | Privacy/Security Reviewer + Release Lead |
 

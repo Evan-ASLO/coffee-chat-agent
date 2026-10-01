@@ -1,6 +1,11 @@
 import { Hono } from "hono";
 import { z } from "zod";
-import type { AppEnvironment, CredentialProvider, QueueMessage } from "./types";
+import type {
+	AppEnvironment,
+	AuthenticatedUser,
+	CredentialProvider,
+	QueueMessage,
+} from "./types";
 import {
 	authenticatedUser,
 	beginGoogleOAuth,
@@ -65,6 +70,15 @@ import {
 	unlinkProspectFromJob,
 	verifyJobSnapshotRequest,
 } from "./lib/jobs";
+import {
+	approveBetaEmail,
+	approveBetaRequest,
+	betaAccessMode,
+	denyBetaRequest,
+	isBetaAdmin,
+	listBetaAccessAdmin,
+	revokeBetaEmail,
+} from "./lib/beta";
 
 const app = new Hono<AppEnvironment>();
 
@@ -123,6 +137,7 @@ app.post("/api/internal/jobs/snapshot", async (c) => {
 
 app.get("/api/jobs", async (c) => {
 	const user = await authenticatedUser(c);
+	requireBetaCatalogAccess(c.env, user);
 	if (user) c.set("user", user);
 	const query = jobListQuerySchema.parse(c.req.query());
 	return c.json({
@@ -135,6 +150,7 @@ app.get("/api/jobs", async (c) => {
 
 app.get("/api/jobs/:id", async (c) => {
 	const user = await authenticatedUser(c);
+	requireBetaCatalogAccess(c.env, user);
 	if (user) c.set("user", user);
 	const [job, catalog] = await Promise.all([
 		getJob(c.env, jobId.parse(c.req.param("id")), user?.id),
@@ -152,6 +168,8 @@ app.get("/api/jobs/:id", async (c) => {
 
 app.get("/auth/google/login", (c) => beginGoogleOAuth(c, "login"));
 
+app.get("/auth/google/request", (c) => beginGoogleOAuth(c, "request"));
+
 app.get("/auth/google/connect", requireUser, (c) =>
 	beginGoogleOAuth(c, "connect", c.get("user")?.id),
 );
@@ -167,7 +185,13 @@ app.post("/logout", requireUser, async (c) => {
 
 app.get("/api/session", async (c) => {
 	const user = await authenticatedUser(c);
-	if (!user) return c.json({ authenticated: false });
+	const mode = betaAccessMode(c.env);
+	if (!user) {
+		return c.json({
+			authenticated: false,
+			betaAccessMode: mode,
+		});
+	}
 	c.set("user", user);
 	const [settings, credentials, prospects, resume] = await Promise.all([
 		getSettings(c.env, user.id),
@@ -177,6 +201,8 @@ app.get("/api/session", async (c) => {
 	]);
 	return c.json({
 		authenticated: true,
+		betaAccessMode: mode,
+		isBetaAdmin: isBetaAdmin(c.env, user.email),
 		user,
 		csrfCookieName: csrfCookieName(c),
 		settings,
@@ -184,6 +210,87 @@ app.get("/api/session", async (c) => {
 		prospects,
 		resume,
 	});
+});
+
+app.get("/api/beta/admin/access", requireUser, async (c) => {
+	requireBetaAdmin(c.env, c.get("user")!);
+	return c.json(await listBetaAccessAdmin(c.env));
+});
+
+app.post(
+	"/api/beta/admin/requests/:id/approve",
+	requireUser,
+	async (c) => {
+		await protectMutation(c);
+		const admin = c.get("user")!;
+		requireBetaAdmin(c.env, admin);
+		const requestId = uuid.parse(c.req.param("id"));
+		const email = await approveBetaRequest(c.env, requestId, admin.id);
+		await audit(c.env, {
+			userId: admin.id,
+			action: "BETA_ACCESS_REQUEST_APPROVED",
+			entityType: "beta_access_request",
+			entityId: requestId,
+			requestId: c.get("requestId"),
+			metadata: { email },
+		});
+		return c.json({ ok: true });
+	},
+);
+
+app.post(
+	"/api/beta/admin/requests/:id/deny",
+	requireUser,
+	async (c) => {
+		await protectMutation(c);
+		const admin = c.get("user")!;
+		requireBetaAdmin(c.env, admin);
+		const requestId = uuid.parse(c.req.param("id"));
+		const email = await denyBetaRequest(c.env, requestId);
+		await audit(c.env, {
+			userId: admin.id,
+			action: "BETA_ACCESS_REQUEST_DENIED",
+			entityType: "beta_access_request",
+			entityId: requestId,
+			requestId: c.get("requestId"),
+			metadata: { email },
+		});
+		return c.json({ ok: true });
+	},
+);
+
+app.post("/api/beta/admin/access/approve", requireUser, async (c) => {
+	await protectMutation(c);
+	const admin = c.get("user")!;
+	requireBetaAdmin(c.env, admin);
+	const input = betaEmailSchema.parse(await readJson(c, 8 * 1024));
+	const email = await approveBetaEmail(c.env, input.email, admin.id);
+	await audit(c.env, {
+		userId: admin.id,
+		action: "BETA_ACCESS_APPROVED",
+		entityType: "beta_access",
+		entityId: email,
+		requestId: c.get("requestId"),
+		metadata: { email },
+	});
+	return c.json({ ok: true });
+});
+
+app.post("/api/beta/admin/access/revoke", requireUser, async (c) => {
+	await protectMutation(c);
+	const admin = c.get("user")!;
+	requireBetaAdmin(c.env, admin);
+	const input = betaEmailSchema.parse(await readJson(c, 8 * 1024));
+	const email = await revokeBetaEmail(c.env, input.email, admin.id);
+	await audit(c.env, {
+		userId: admin.id,
+		action: "BETA_ACCESS_REVOKED",
+		entityType: "beta_access",
+		entityId: email,
+		requestId: c.get("requestId"),
+		metadata: { email },
+	});
+	return c.json({ ok: true });
 });
 
 app.post("/api/workspace/init", requireUser, async (c) => {
@@ -510,6 +617,11 @@ async function protectMutation(
 const uuid = z.string().uuid();
 const jobId = z.string().regex(/^[a-f0-9]{64}$/);
 const jobState = z.enum(JOB_STATES);
+const betaEmailSchema = z
+	.object({
+		email: z.string().trim().email().max(320),
+	})
+	.strict();
 const shortText = z.string().trim().max(500);
 const personalContextItem = z.object({
 	category: z.string().trim().min(1).max(120),
@@ -648,5 +760,31 @@ function requireJobOutreachLinking(
 		403,
 		"FEATURE_DISABLED",
 		"Job-linked outreach is not enabled yet.",
+	);
+}
+
+function requireBetaCatalogAccess(
+	env: AppEnvironment["Bindings"],
+	user: AuthenticatedUser | null,
+): void {
+	if (betaAccessMode(env) === "OPEN" || user) return;
+	throw new PublicHttpError(
+		"Beta access is required.",
+		401,
+		"BETA_ACCESS_REQUIRED",
+		"Sign in with an approved private-beta account.",
+	);
+}
+
+function requireBetaAdmin(
+	env: AppEnvironment["Bindings"],
+	user: AuthenticatedUser,
+): void {
+	if (isBetaAdmin(env, user.email)) return;
+	throw new PublicHttpError(
+		"Beta admin access is required.",
+		403,
+		"FORBIDDEN",
+		"The request was rejected.",
 	);
 }

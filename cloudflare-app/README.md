@@ -11,7 +11,36 @@ npm run db:migrate:local
 npm run dev
 ```
 
-Configure the existing Google/encryption values plus `JOBS_INGEST_SECRET` in `.dev.vars`. `ENABLE_JOB_OUTREACH_LINKING` defaults to false when absent; keep it false for preview unless deliberately testing the gated job-link flow. Never commit `.dev.vars`. Apply migrations remotely only as a separately approved deployment step.
+Configure the existing Google/encryption values plus `JOBS_INGEST_SECRET` in `.dev.vars`. `BETA_ACCESS_MODE` defaults to `OPEN` when absent for backward compatibility. `ENABLE_JOB_OUTREACH_LINKING` defaults to false when absent; keep it false for preview unless deliberately testing the gated job-link flow. Never commit `.dev.vars`. Apply migrations remotely only as a separately approved deployment step.
+
+## Approved-email beta
+
+The private-beta gate uses two normal environment variables:
+
+- `BETA_ACCESS_MODE`: only the exact value `ALLOWLIST` enables the gate; absent or any other value is `OPEN`.
+- `BETA_ADMIN_EMAILS`: comma-separated emails, normalized to lowercase/trimmed. Environment admins are authorized even without a D1 allowlist row.
+
+In `ALLOWLIST` mode:
+
+- signed-out visitors see only the private-beta landing, legal/contact links, Google sign-in, and verified **Request access** flow;
+- `/api/jobs` and job detail require an approved authenticated session;
+- a verified but unapproved Google login creates/refreshes one pending request without creating a normal user or session;
+- approved D1 emails and environment admins may create sessions;
+- admin APIs require both a valid session and membership in `BETA_ADMIN_EMAILS`; and
+- revocation ends existing sessions and is rechecked on later session validation.
+
+Request responses are neutral and never disclose whether an email is already approved, pending, denied, or unknown. The request table stores normalized email, verified Google subject only while pending, status, and timestamps; the subject is cleared on approval/denial. It does not store an unverified form email or display name.
+
+### Beta deployment order
+
+1. Apply `0004_beta_access.sql`.
+2. Configure `BETA_ADMIN_EMAILS` with the approved owner/admin email list.
+3. Set `BETA_ACCESS_MODE=ALLOWLIST`.
+4. Deploy the Worker and verify the landing plus admin override.
+5. Approve test/user emails through the server-authorized admin UI.
+6. Keep `ENABLE_JOB_OUTREACH_LINKING` independently false or true according to its separate rollout decision.
+
+Do not enable `ALLOWLIST` before migration 0004 exists. During the beta, do not remove/misspell `BETA_ACCESS_MODE`: the intentional compatibility default is `OPEN`.
 
 ## Job snapshot ingestion v1
 
@@ -89,6 +118,9 @@ See [`examples/job-snapshot-v1.json`](examples/job-snapshot-v1.json).
 - `DELETE /api/jobs/:id/state`: authenticated/CSRF-protected removal.
 - `POST /api/job-states/import-legacy`: authenticated one-time import.
 - `POST|DELETE /api/jobs/:jobId/prospects/:prospectId`: authenticated ownership-checked job/prospect linkage.
+- `GET /api/beta/admin/access`: environment-admin-only pending/access list.
+- `POST /api/beta/admin/requests/:id/approve|deny`: environment-admin-only request decisions.
+- `POST /api/beta/admin/access/approve|revoke`: environment-admin-only invite, re-approve, and revoke actions.
 
 Catalog freshness becomes stale when the publisher's latest `generatedAt` is more than two hours old. The SPA warns publicly but keeps browsing available.
 

@@ -29,6 +29,11 @@ import {
 	toBase64Url,
 	utf8,
 } from "./encoding";
+import {
+	hasBetaAccess,
+	normalizeBetaEmail,
+	requestVerifiedBetaAccess,
+} from "./beta";
 
 const SESSION_COOKIE = "cc_session";
 const CSRF_COOKIE = "cc_csrf";
@@ -37,7 +42,7 @@ const googleJwks = createRemoteJWKSet(
 	new URL("https://www.googleapis.com/oauth2/v3/certs"),
 );
 
-type OAuthMode = "login" | "connect";
+type OAuthMode = "login" | "connect" | "request";
 interface OAuthState {
 	state: string;
 	verifier: string;
@@ -93,7 +98,7 @@ export async function beginGoogleOAuth(
 	);
 
 	const scopes =
-		mode === "login"
+		mode !== "connect"
 			? ["openid", "email", "profile"]
 			: [
 					"openid",
@@ -175,18 +180,23 @@ export async function handleGoogleCallback(
 		throw new Error("Google identity validation failed.");
 	}
 
-	const user = await upsertUser(c.env, {
+	const profile = {
 		googleSub: payload.sub,
-		email: String(payload.email),
+		email: normalizeBetaEmail(String(payload.email)),
 		name: String(payload.name || ""),
 		image: String(payload.picture || ""),
-	});
+	};
 
 	if (oauth.mode === "connect") {
 		const session = await authenticatedUser(c);
-		if (!session || session.id !== user.id || oauth.userId !== user.id) {
+		if (
+			!session ||
+			session.googleSub !== profile.googleSub ||
+			oauth.userId !== session.id
+		) {
 			throw new Error("Connected Google account does not match the session.");
 		}
+		const user = await upsertUser(c.env, profile);
 		if (tokens.refresh_token) {
 			const encrypted = await encryptCredential(
 				c.env,
@@ -207,8 +217,36 @@ export async function handleGoogleCallback(
 		return c.redirect("/?connected=1", 302);
 	}
 
+	if (oauth.mode === "request") {
+		await requestVerifiedBetaAccess(c.env, {
+			email: profile.email,
+			googleSub: profile.googleSub,
+		});
+		return c.redirect("/?access=requested", 302);
+	}
+
+	const user = await acceptVerifiedGoogleLogin(c.env, profile);
+	if (!user) return c.redirect("/?access=requested", 302);
 	await issueSession(c, user);
 	return c.redirect("/", 302);
+}
+
+export async function acceptVerifiedGoogleLogin(
+	env: AppEnvironment["Bindings"],
+	profile: Omit<AuthenticatedUser, "id">,
+): Promise<AuthenticatedUser | null> {
+	const normalizedProfile = {
+		...profile,
+		email: normalizeBetaEmail(profile.email),
+	};
+	if (await hasBetaAccess(env, normalizedProfile.email)) {
+		return upsertUser(env, normalizedProfile);
+	}
+	await requestVerifiedBetaAccess(env, {
+		email: normalizedProfile.email,
+		googleSub: normalizedProfile.googleSub,
+	});
+	return null;
 }
 
 async function issueSession(
@@ -251,6 +289,10 @@ export async function authenticatedUser(
 	if (!token) return null;
 	const session = await findSession(c.env, await sha256(token));
 	if (!session) return null;
+	if (!(await hasBetaAccess(c.env, session.email))) {
+		await revokeSession(c.env, session.id);
+		return null;
+	}
 	c.set("sessionId", session.id);
 	c.set("csrfHash", session.csrf_hash);
 	await touchSession(c.env, session.id, session.last_seen_at);

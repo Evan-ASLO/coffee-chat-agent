@@ -11,17 +11,20 @@
 ## Immediate containment
 
 1. Set or keep `ENABLE_JOB_OUTREACH_LINKING=false`.
-2. Pause scheduled tracker publishing if ingestion/catalog correctness is in doubt.
-3. Preserve logs, current Worker version ID, current hash/count, D1 bookmark, and incident timestamps.
-4. Do not rotate secrets unless compromise is suspected; unnecessary rotation can complicate recovery.
+2. Keep `BETA_ACCESS_MODE=ALLOWLIST` and the approved `BETA_ADMIN_EMAILS` while the beta is active. Removing or misspelling the mode intentionally falls back to `OPEN`.
+3. Pause scheduled tracker publishing if ingestion/catalog correctness is in doubt.
+4. Preserve logs, current Worker version ID, current hash/count, D1 bookmark, and incident timestamps.
+5. Do not rotate secrets unless compromise is suspected; unnecessary rotation can complicate recovery.
 
 ## Application/traffic rollback
 
-1. Roll back to the exact pre-cutover Worker version recorded in the release ticket when the fault is Worker code and D1 data is sound.
+1. Roll back to the exact approved **gated** Worker version when the fault is Worker code and D1 data is sound. A pre-beta-gate Worker does not understand `BETA_ACCESS_MODE` and would expose the open public experience.
 2. For public routing failure, restore the recorded domain/DNS route to the still-deployed Vercel fallback.
 3. Keep both old and new Google OAuth callbacks registered so either route can complete login during the rollback window.
 4. Verify Vercel browsing, old callback login, and any supported legacy state behavior before declaring traffic restored.
 5. Keep the Cloudflare Worker available on its direct URL for diagnosis unless security requires disabling it.
+
+If only a pre-gate Worker is available, route traffic to the approved Vercel/private fallback or add a Cloudflare Access/edge restriction before deploying it.
 
 ## D1 rollback
 

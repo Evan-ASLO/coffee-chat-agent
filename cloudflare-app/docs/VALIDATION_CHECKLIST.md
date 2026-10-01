@@ -17,7 +17,9 @@ Use this checklist for the Cloudflare preview and again before public cutover. R
 - [ ] `npm audit --audit-level=low` reports no unresolved vulnerabilities.
 - [ ] `npx wrangler deploy --dry-run` lists D1, queue, assets, and `JOBS_INGEST_RATE_LIMITER`.
 - [ ] Migration `0003_jobs_platform.sql` applies to a fresh isolated local D1 store.
+- [ ] Migration `0004_beta_access.sql` applies before beta mode is enabled.
 - [ ] `JOBS_INGEST_SECRET` exists in the Worker and tracker publisher stores with matching values.
+- [ ] `BETA_ACCESS_MODE=ALLOWLIST` and normalized `BETA_ADMIN_EMAILS` are configured only after migration 0004.
 - [ ] `ENABLE_JOB_OUTREACH_LINKING` is absent or `false`.
 - [ ] The Cloudflare edge rate limiter is 10 requests per 60 seconds per `CF-Connecting-IP`.
 
@@ -34,7 +36,13 @@ Use this checklist for the Cloudflare preview and again before public cutover. R
 
 ## Public and private behavior
 
-- [ ] Signed-out users can search, filter, paginate, and open job source URLs.
+- [ ] In `ALLOWLIST` mode, signed-out visitors see only the private-beta landing and legal/contact/sign-in/request links.
+- [ ] Direct signed-out `/api/jobs` access returns `BETA_ACCESS_REQUIRED`.
+- [ ] Verified unapproved Google login/request creates one normalized pending request, no normal user, and no session; repeated requests return the same neutral confirmation.
+- [ ] Environment admins can list and manage requests; approved non-admins receive `FORBIDDEN`.
+- [ ] Approve, deny, revoke, and re-approve actions create audit events.
+- [ ] Revocation invalidates existing sessions and a stale session is rejected on its next validation.
+- [ ] Approved signed-in users can search, filter, paginate, and open job source URLs; OPEN-mode compatibility is covered by automated tests only.
 - [ ] Saved and application-state APIs require authentication and CSRF.
 - [ ] User A cannot read, update, import, link, or unlink User B's data.
 - [ ] A zero-match legacy import remains retryable and returns only the caller's references.

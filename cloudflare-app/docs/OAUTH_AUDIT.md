@@ -12,6 +12,12 @@ Requested scopes:
 
 This flow creates the application session. It must not request Gmail, Drive, or Sheets permissions.
 
+In allowlist mode, the verified Google identity is checked before the normal user record and session are created. An unapproved login creates/refreshes a pending beta request and receives the same neutral confirmation as the explicit **Request access** flow.
+
+### Request access
+
+`/auth/google/request` uses the same basic identity scopes, PKCE, state, and nonce validation. It records only normalized verified email, Google subject, status, and timestamps. It does not accept an unverified email form and does not issue a normal session.
+
 ### Incremental Google connect
 
 Requested scopes:
@@ -41,6 +47,7 @@ Keep both authorized during the parallel run, cutover, and rollback window. Addi
 - [ ] Redirect URIs are exact; no wildcard or unowned origin is present.
 - [ ] Basic login and incremental connect use the intended scopes above.
 - [ ] The connected Google identity must equal the signed-in session identity.
+- [ ] Allowlist/admin authorization occurs only after verified Google identity and before user/session creation.
 - [ ] Refresh tokens remain encrypted and are never returned to the browser or logs.
 - [ ] Gmail sends require exact-draft approval and idempotency.
 - [ ] Drive access remains `drive.file`, not broad Drive access.
