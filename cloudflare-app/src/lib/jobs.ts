@@ -11,6 +11,7 @@ import { bufferSource, safeEqual, utf8 } from "./encoding";
 export const MAX_JOB_INGEST_BYTES = 2 * 1024 * 1024;
 export const MAX_SNAPSHOT_JOBS = 1000;
 export const INGEST_REPLAY_WINDOW_SECONDS = 300;
+export const JOB_CATALOG_STALE_SECONDS = 2 * 60 * 60;
 
 export const JOB_STATES = [
 	"SAVED",
@@ -207,8 +208,10 @@ interface ExistingImportRun {
 interface CatalogImportState {
 	latest_import_run_id: string | null;
 	snapshot_hash: string | null;
+	generated_at: string | null;
 	generated_epoch: number | null;
 	run_status: string | null;
+	applied_at: string | null;
 	job_count: number | null;
 	upserted_count: number | null;
 	deactivated_count: number | null;
@@ -221,6 +224,14 @@ export interface JobIngestResult {
 	activeCount: number;
 	upsertedCount: number;
 	deactivatedCount: number;
+}
+
+export interface JobCatalogFreshness {
+	state: "never-imported" | "fresh" | "stale";
+	generatedAt: string | null;
+	importedAt: string | null;
+	ageSeconds: number | null;
+	staleAfterSeconds: number;
 }
 
 export interface LegacyUnmatchedReference {
@@ -604,6 +615,7 @@ export async function listJobs(
 ): Promise<{
 	jobs: JobRecord[];
 	pagination: { page: number; pageSize: number; total: number; totalPages: number };
+	catalog: JobCatalogFreshness;
 }> {
 	const where = ["j.is_active = 1"];
 	const whereBindings: unknown[] = [];
@@ -630,7 +642,7 @@ export async function listJobs(
 	const clause = where.join(" AND ");
 	const selection = jobSelection(userId);
 	const offset = (query.page - 1) * query.pageSize;
-	const [result, count] = await Promise.all([
+	const [result, count, catalog] = await Promise.all([
 		env.DB.prepare(
 			`${selection.sql}
 			  WHERE ${clause}
@@ -647,6 +659,7 @@ export async function listJobs(
 		env.DB.prepare(`SELECT COUNT(*) AS count FROM jobs j WHERE ${clause}`)
 			.bind(...whereBindings)
 			.first<{ count: number }>(),
+		getCatalogFreshness(env),
 	]);
 	const total = Number(count?.count || 0);
 	return {
@@ -657,6 +670,48 @@ export async function listJobs(
 			total,
 			totalPages: Math.ceil(total / query.pageSize),
 		},
+		catalog,
+	};
+}
+
+export async function getCatalogFreshness(
+	env: AppBindings,
+	now = Date.now(),
+): Promise<JobCatalogFreshness> {
+	const catalog = await getCatalogImportState(env);
+	if (
+		!catalog.latest_import_run_id ||
+		!catalog.generated_at ||
+		catalog.run_status !== "APPLIED"
+	) {
+		return {
+			state: "never-imported",
+			generatedAt: null,
+			importedAt: null,
+			ageSeconds: null,
+			staleAfterSeconds: JOB_CATALOG_STALE_SECONDS,
+		};
+	}
+	const generatedTime = Date.parse(catalog.generated_at);
+	if (!Number.isFinite(generatedTime)) {
+		return {
+			state: "never-imported",
+			generatedAt: null,
+			importedAt: catalog.applied_at,
+			ageSeconds: null,
+			staleAfterSeconds: JOB_CATALOG_STALE_SECONDS,
+		};
+	}
+	const ageSeconds = Math.max(0, Math.floor((now - generatedTime) / 1000));
+	return {
+		state:
+			ageSeconds > JOB_CATALOG_STALE_SECONDS
+				? "stale"
+				: "fresh",
+		generatedAt: catalog.generated_at,
+		importedAt: catalog.applied_at,
+		ageSeconds,
+		staleAfterSeconds: JOB_CATALOG_STALE_SECONDS,
 	};
 }
 
@@ -1094,8 +1149,9 @@ async function getCatalogImportState(
 	env: AppBindings,
 ): Promise<CatalogImportState> {
 	const state = await env.DB.prepare(
-		`SELECT s.latest_import_run_id, s.snapshot_hash, s.generated_epoch,
-		        r.status AS run_status, r.job_count, r.upserted_count,
+		`SELECT s.latest_import_run_id, s.snapshot_hash, s.generated_at,
+		        s.generated_epoch, r.status AS run_status, r.applied_at,
+		        r.job_count, r.upserted_count,
 		        r.deactivated_count
 		   FROM job_catalog_state s
 		   LEFT JOIN job_import_runs r ON r.id = s.latest_import_run_id
@@ -1104,8 +1160,10 @@ async function getCatalogImportState(
 	return {
 		latest_import_run_id: state?.latest_import_run_id ?? null,
 		snapshot_hash: state?.snapshot_hash ?? null,
+		generated_at: state?.generated_at ?? null,
 		generated_epoch: state?.generated_epoch ?? null,
 		run_status: state?.run_status ?? null,
+		applied_at: state?.applied_at ?? null,
 		job_count: state?.job_count ?? null,
 		upserted_count: state?.upserted_count ?? null,
 		deactivated_count: state?.deactivated_count ?? null,

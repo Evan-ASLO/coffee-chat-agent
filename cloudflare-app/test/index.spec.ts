@@ -450,6 +450,22 @@ describe.sequential("internship jobs platform", () => {
 		expect(tooMany.status).toBe(400);
 	});
 
+	it("reports a never-imported catalog and keeps job outreach linking disabled by default", async () => {
+		const response = await SELF.fetch("http://example.com/api/jobs?pageSize=10");
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			jobs: [],
+			catalog: {
+				state: "never-imported",
+				generatedAt: null,
+				importedAt: null,
+				ageSeconds: null,
+				staleAfterSeconds: 7200,
+			},
+			features: { jobOutreachLinking: false },
+		});
+	});
+
 	it("does not consume the legacy import lock when the catalog has no matches", async () => {
 		snapshotA = [await testJob("alpha"), await testJob("beta")];
 		retryLegacyUser = await authenticatedTestUser("legacy-retry-user");
@@ -527,6 +543,71 @@ describe.sequential("internship jobs platform", () => {
 			idempotent: true,
 			activeCount: 2,
 		});
+	});
+
+	it("reports fresh and stale catalog metadata without blocking browsing", async () => {
+		const freshResponse = await SELF.fetch(
+			"http://example.com/api/jobs?pageSize=10",
+		);
+		expect(freshResponse.status).toBe(200);
+		const fresh = (await freshResponse.json()) as {
+			jobs: Array<{ id: string }>;
+			catalog: {
+				state: string;
+				generatedAt: string | null;
+				importedAt: string | null;
+				ageSeconds: number | null;
+			};
+		};
+		expect(fresh.jobs).toHaveLength(2);
+		expect(fresh.catalog).toMatchObject({
+			state: "fresh",
+			generatedAt: new Date(generatedBase).toISOString(),
+		});
+		expect(fresh.catalog.importedAt).toBeTruthy();
+		expect(fresh.catalog.ageSeconds).toBe(0);
+
+		const original = await env.DB.prepare(
+			"SELECT generated_at, generated_epoch FROM job_catalog_state WHERE singleton = 1",
+		).first<{ generated_at: string; generated_epoch: number }>();
+		const staleGeneratedAt = new Date(
+			Date.now() - 3 * 60 * 60 * 1000,
+		).toISOString();
+		await env.DB.prepare(
+			`UPDATE job_catalog_state
+			    SET generated_at = ?, generated_epoch = ?
+			  WHERE singleton = 1`,
+		)
+			.bind(staleGeneratedAt, Date.parse(staleGeneratedAt))
+			.run();
+		const staleResponse = await SELF.fetch(
+			"http://example.com/api/jobs?pageSize=10",
+		);
+		expect(staleResponse.status).toBe(200);
+		const stale = (await staleResponse.json()) as {
+			jobs: Array<{ id: string }>;
+			catalog: { state: string; ageSeconds: number };
+		};
+		expect(stale.jobs).toHaveLength(2);
+		expect(stale.catalog.state).toBe("stale");
+		expect(stale.catalog.ageSeconds).toBeGreaterThan(2 * 60 * 60);
+
+		const detail = await SELF.fetch(
+			`http://example.com/api/jobs/${activeJobs[0]!.id}`,
+		);
+		expect(detail.status).toBe(200);
+		expect(await detail.json()).toMatchObject({
+			job: { id: activeJobs[0]!.id },
+			catalog: { state: "stale" },
+			features: { jobOutreachLinking: false },
+		});
+		await env.DB.prepare(
+			`UPDATE job_catalog_state
+			    SET generated_at = ?, generated_epoch = ?
+			  WHERE singleton = 1`,
+		)
+			.bind(original!.generated_at, original!.generated_epoch)
+			.run();
 	});
 
 	it("keeps future-boundary signatures replay-locked for their full validity", async () => {
@@ -850,6 +931,29 @@ describe.sequential("internship jobs platform", () => {
 	});
 
 	it("links only owned prospects to jobs and exposes authenticated outreach summaries", async () => {
+		const disabledDiscovery = await authenticatedFetch(
+			userA,
+			"/api/discovery",
+			{
+				method: "POST",
+				body: {
+					roles: ["Recruiter"],
+					industries: [],
+					companies: [],
+					locations: [],
+					keywords: [],
+					seniority: [],
+					objective: "",
+					count: 1,
+					jobId: activeJobs[0]!.id,
+				},
+			},
+		);
+		expect(disabledDiscovery.status).toBe(403);
+		expect(await disabledDiscovery.json()).toMatchObject({
+			error: "FEATURE_DISABLED",
+		});
+
 		const [prospectA] = await insertProspects(env as unknown as AppBindings, userA.user.id, [
 			testProspect("Owned Prospect", activeJobs[0]!.company),
 		]);
@@ -859,19 +963,42 @@ describe.sequential("internship jobs platform", () => {
 		expect(prospectA).toBeTruthy();
 		expect(prospectB).toBeTruthy();
 
-		const linked = await authenticatedFetch(
+		const disabledLink = await authenticatedFetch(
 			userA,
 			`/api/jobs/${activeJobs[0]!.id}/prospects/${prospectA!.id}`,
 			{ method: "POST" },
 		);
+		expect(disabledLink.status).toBe(403);
+		expect(await disabledLink.json()).toMatchObject({
+			error: "FEATURE_DISABLED",
+		});
+
+		const enabledEnv = {
+			...(env as unknown as AppBindings),
+			ENABLE_JOB_OUTREACH_LINKING: "true",
+		};
+		const linked = await authenticatedWorkerFetch(
+			userA,
+			`/api/jobs/${activeJobs[0]!.id}/prospects/${prospectA!.id}`,
+			{ method: "POST" },
+			enabledEnv,
+		);
 		expect(linked.status).toBe(200);
 
-		const crossUser = await authenticatedFetch(
+		const crossUser = await authenticatedWorkerFetch(
 			userA,
 			`/api/jobs/${activeJobs[0]!.id}/prospects/${prospectB!.id}`,
 			{ method: "POST" },
+			enabledEnv,
 		);
 		expect(crossUser.status).toBe(400);
+
+		const disabledUnlink = await authenticatedFetch(
+			userA,
+			`/api/jobs/${activeJobs[0]!.id}/prospects/${prospectA!.id}`,
+			{ method: "DELETE" },
+		);
+		expect(disabledUnlink.status).toBe(403);
 
 		const jobsA = (await (
 			await authenticatedFetch(userA, "/api/jobs?pageSize=10")
@@ -911,6 +1038,16 @@ describe.sequential("internship jobs platform", () => {
 			jobsB.jobs.find((job) => job.id === activeJobs[0]!.id)?.outreachSummary
 				.total,
 		).toBe(0);
+
+		const enabledJobs = await authenticatedWorkerFetch(
+			userA,
+			"/api/jobs?pageSize=10",
+			{},
+			enabledEnv,
+		);
+		expect(await enabledJobs.json()).toMatchObject({
+			features: { jobOutreachLinking: true },
+		});
 	});
 
 	it(
@@ -1094,6 +1231,36 @@ async function authenticatedFetch(
 		body?: unknown;
 	} = {},
 ): Promise<Response> {
+	return SELF.fetch(authenticatedRequest(auth, path, options));
+}
+
+async function authenticatedWorkerFetch(
+	auth: Awaited<ReturnType<typeof authenticatedTestUser>>,
+	path: string,
+	options: {
+		method?: string;
+		body?: unknown;
+	},
+	bindings: AppBindings,
+): Promise<Response> {
+	const context = createExecutionContext();
+	const response = await worker.fetch(
+		authenticatedRequest(auth, path, options),
+		bindings,
+		context,
+	);
+	await waitOnExecutionContext(context);
+	return response;
+}
+
+function authenticatedRequest(
+	auth: Awaited<ReturnType<typeof authenticatedTestUser>>,
+	path: string,
+	options: {
+		method?: string;
+		body?: unknown;
+	} = {},
+): Request {
 	const method = options.method || "GET";
 	const headers: Record<string, string> = {
 		Accept: "application/json",
@@ -1104,14 +1271,12 @@ async function authenticatedFetch(
 		headers["X-CSRF-Token"] = auth.csrf;
 	}
 	if (options.body !== undefined) headers["Content-Type"] = "application/json";
-	return SELF.fetch(
-		new Request(`http://example.com${path}`, {
-			method,
-			headers,
-			body:
-				options.body === undefined ? undefined : JSON.stringify(options.body),
-		}),
-	);
+	return new Request(`http://example.com${path}`, {
+		method,
+		headers,
+		body:
+			options.body === undefined ? undefined : JSON.stringify(options.body),
+	});
 }
 
 function testProspect(fullName: string, company: string) {

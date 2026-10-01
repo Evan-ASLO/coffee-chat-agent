@@ -34,6 +34,7 @@ export interface AppBindings {
 	MAX_SENDS_PER_DAY: string;
 	SESSION_DAYS: string;
 	JOBS_INGEST_SECRET: string;
+	ENABLE_JOB_OUTREACH_LINKING?: string;
 	GOOGLE_CLIENT_ID: string;
 	GOOGLE_CLIENT_SECRET: string;
 	MASTER_ENCRYPTION_KEY_V1: string;

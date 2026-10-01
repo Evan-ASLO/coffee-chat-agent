@@ -47,10 +47,11 @@ import {
 	importResume,
 	MAX_RESUME_BYTES,
 } from "./lib/resume";
-import { ClientInputError } from "./lib/errors";
+import { ClientInputError, PublicHttpError } from "./lib/errors";
 import {
 	JOB_STATES,
 	deleteJobState,
+	getCatalogFreshness,
 	getJob,
 	importLegacyJobState,
 	ingestJobSnapshot,
@@ -124,15 +125,29 @@ app.get("/api/jobs", async (c) => {
 	const user = await authenticatedUser(c);
 	if (user) c.set("user", user);
 	const query = jobListQuerySchema.parse(c.req.query());
-	return c.json(await listJobs(c.env, query, user?.id));
+	return c.json({
+		...(await listJobs(c.env, query, user?.id)),
+		features: {
+			jobOutreachLinking: jobOutreachLinkingEnabled(c.env),
+		},
+	});
 });
 
 app.get("/api/jobs/:id", async (c) => {
 	const user = await authenticatedUser(c);
 	if (user) c.set("user", user);
-	const job = await getJob(c.env, jobId.parse(c.req.param("id")), user?.id);
+	const [job, catalog] = await Promise.all([
+		getJob(c.env, jobId.parse(c.req.param("id")), user?.id),
+		getCatalogFreshness(c.env),
+	]);
 	if (!job) throw new ClientInputError("Job was not found.");
-	return c.json({ job });
+	return c.json({
+		job,
+		catalog,
+		features: {
+			jobOutreachLinking: jobOutreachLinkingEnabled(c.env),
+		},
+	});
 });
 
 app.get("/auth/google/login", (c) => beginGoogleOAuth(c, "login"));
@@ -294,6 +309,7 @@ app.post("/api/discovery", requireUser, async (c) => {
 	const { jobId: linkedJobId, ...submittedCriteria } = input;
 	let criteria = submittedCriteria;
 	if (linkedJobId) {
+		requireJobOutreachLinking(c.env);
 		const job = await getJob(c.env, linkedJobId, c.get("user")!.id);
 		if (!job) throw new ClientInputError("Job was not found.");
 		criteria = {
@@ -455,6 +471,7 @@ app.post(
 	requireUser,
 	async (c) => {
 		await protectMutation(c);
+		requireJobOutreachLinking(c.env);
 		const linkedJobId = jobId.parse(c.req.param("jobId"));
 		const prospectId = uuid.parse(c.req.param("prospectId"));
 		await linkProspectToJob(
@@ -472,6 +489,7 @@ app.delete(
 	requireUser,
 	async (c) => {
 		await protectMutation(c);
+		requireJobOutreachLinking(c.env);
 		await unlinkProspectFromJob(
 			c.env,
 			c.get("user")!.id,
@@ -613,4 +631,22 @@ function uniqueValues(values: string[]): string[] {
 	return Array.from(
 		new Set(values.map((value) => value.trim()).filter(Boolean)),
 	).slice(0, 20);
+}
+
+function jobOutreachLinkingEnabled(
+	env: AppEnvironment["Bindings"],
+): boolean {
+	return env.ENABLE_JOB_OUTREACH_LINKING?.trim().toLowerCase() === "true";
+}
+
+function requireJobOutreachLinking(
+	env: AppEnvironment["Bindings"],
+): void {
+	if (jobOutreachLinkingEnabled(env)) return;
+	throw new PublicHttpError(
+		"Job-linked outreach is disabled.",
+		403,
+		"FEATURE_DISABLED",
+		"Job-linked outreach is not enabled yet.",
+	);
 }

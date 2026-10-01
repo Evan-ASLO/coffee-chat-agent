@@ -11,7 +11,7 @@ npm run db:migrate:local
 npm run dev
 ```
 
-Configure the existing Google/encryption values plus `JOBS_INGEST_SECRET` in `.dev.vars`. Never commit `.dev.vars`. Apply migrations remotely only as a separately approved deployment step.
+Configure the existing Google/encryption values plus `JOBS_INGEST_SECRET` in `.dev.vars`. `ENABLE_JOB_OUTREACH_LINKING` defaults to false when absent; keep it false for preview unless deliberately testing the gated job-link flow. Never commit `.dev.vars`. Apply migrations remotely only as a separately approved deployment step.
 
 ## Job snapshot ingestion v1
 
@@ -82,13 +82,25 @@ See [`examples/job-snapshot-v1.json`](examples/job-snapshot-v1.json).
 
 ## Public and authenticated APIs
 
-- `GET /api/jobs`: public bounded search/filter/pagination; authenticated requests also receive their own state and outreach summary.
-- `GET /api/jobs/:id`: public active-job detail.
+- `GET /api/jobs`: public bounded search/filter/pagination plus safe catalog freshness (`never-imported`, `fresh`, or `stale`) and feature flags; authenticated requests also receive their own state and outreach summary.
+- `GET /api/jobs/:id`: public active-job detail with the same freshness and feature metadata.
 - `GET /api/job-states`: authenticated, bounded private tracking list.
 - `PUT /api/jobs/:id/state`: authenticated/CSRF-protected upsert for `SAVED`, `APPLIED`, `INTERVIEWING`, `REJECTED`, `OFFER`, or `ARCHIVED`.
 - `DELETE /api/jobs/:id/state`: authenticated/CSRF-protected removal.
 - `POST /api/job-states/import-legacy`: authenticated one-time import.
 - `POST|DELETE /api/jobs/:jobId/prospects/:prospectId`: authenticated ownership-checked job/prospect linkage.
+
+Catalog freshness becomes stale when the publisher's latest `generatedAt` is more than two hours old. The SPA warns publicly but keeps browsing available.
+
+### Job-linked outreach preview gate
+
+`ENABLE_JOB_OUTREACH_LINKING` is an explicit normal environment variable, not a secret. It is disabled when absent or set to any value other than `true`. While disabled:
+
+- job cards do not show **Find people at this company**;
+- discovery without a `jobId` remains available as the independent Coffee Chat workflow; and
+- discovery with a `jobId` plus direct job/prospect link or unlink mutations return `FEATURE_DISABLED`.
+
+Enable it only after the catalog satisfies [`docs/PARALLEL_RUN_CRITERIA.md`](docs/PARALLEL_RUN_CRITERIA.md). For a reviewed rollout, set `ENABLE_JOB_OUTREACH_LINKING` to `true` in the target Worker's environment configuration and redeploy; set it back to `false` (or remove it) to stop new linking without disabling public jobs or core Coffee Chat networking.
 
 Legacy import v1 is strict:
 
@@ -117,3 +129,7 @@ npm audit
 ```
 
 The Worker test suite covers ingestion authentication, future-boundary replay expiry, strict size/count/schema validation, active-catalog idempotency, A → B → A reactivation, stale replacement, public/private access, cross-user state isolation, status CRUD, zero-match/retry/idempotent legacy import, 500-reference batched matching, and job/prospect ownership.
+
+Production validation, parallel-run, cutover, OAuth, secret, rollback, and monitoring procedures are under [`docs/`](docs/).
+
+Resume uploads are encrypted and limited to 5 MB PDF/DOCX/TXT files, but no malware or file-safety scanner exists. That is acceptable only for the controlled private beta. Broad public launch requires the recorded decision in [`docs/VALIDATION_CHECKLIST.md`](docs/VALIDATION_CHECKLIST.md); do not claim scanning and do not send resumes to VirusTotal without an approved privacy design.

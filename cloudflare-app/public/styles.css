@@ -671,6 +671,19 @@ button:disabled {
 	background: var(--danger-soft);
 }
 
+.catalog-warning {
+	margin-bottom: 20px;
+}
+
+.catalog-warning strong,
+.catalog-warning span {
+	display: block;
+}
+
+.catalog-warning span {
+	margin-top: 4px;
+}
+
 .secret-row {
 	display: grid;
 	grid-template-columns: 220px 1fr auto;

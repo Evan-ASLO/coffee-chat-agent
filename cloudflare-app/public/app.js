@@ -10,6 +10,14 @@ const state = {
 	jobs: {
 		jobs: [],
 		pagination: { page: 1, pageSize: 24, total: 0, totalPages: 0 },
+		catalog: {
+			state: "never-imported",
+			generatedAt: null,
+			importedAt: null,
+			ageSeconds: null,
+			staleAfterSeconds: 7200,
+		},
+		features: { jobOutreachLinking: false },
 	},
 	trackedJobs: {
 		jobs: [],
@@ -127,15 +135,17 @@ function renderTab() {
 
 function renderJobs() {
 	const { jobs, pagination } = state.jobs;
+	const linkingEnabled = jobOutreachLinkingEnabled();
 	return `
 		<section class="hero-panel">
 			<div>
 				<p class="eyebrow">Public internship board</p>
 				<h2>Find your next opportunity</h2>
-				<p>Browse normalized postings without an account. Sign in to save roles, track applications, and connect each job to your outreach pipeline.</p>
+				<p>Browse normalized postings without an account. Sign in to save roles and track applications.${linkingEnabled ? " Job-linked outreach is available during this preview." : ""}</p>
 			</div>
 			${state.session?.authenticated ? "" : '<a class="button primary" href="/auth/google/login">Sign in to track progress</a>'}
 		</section>
+		${renderCatalogWarning()}
 		<section class="panel">
 			<form id="job-filter-form" class="job-filters">
 				<label class="job-search">Search
@@ -204,7 +214,8 @@ function renderApplications() {
 }
 
 function renderNetworking() {
-	const context = state.networkingJob
+	const linkingEnabled = jobOutreachLinkingEnabled();
+	const context = linkingEnabled && state.networkingJob
 		? `<section class="notice networking-context">
 				<div>
 					<strong>Finding people for ${escapeHtml(state.networkingJob.title)}</strong>
@@ -213,7 +224,10 @@ function renderNetworking() {
 				<button id="clear-networking-job">Clear job context</button>
 			</section>`
 		: "";
-	return `${context}${renderFind()}${renderApprove()}${renderOutreach()}`;
+	const previewNotice = linkingEnabled
+		? ""
+		: '<section class="notice warning">Job-linked outreach is paused until the internship catalog passes the preview stability criteria. Independent Coffee Chat search, drafting, and sending remain available.</section>';
+	return `${previewNotice}${context}${renderFind()}${renderApprove()}${renderOutreach()}`;
 }
 
 function renderFind() {
@@ -524,6 +538,12 @@ async function removeJobStatus(id) {
 }
 
 function beginJobNetworking(id) {
+	if (!jobOutreachLinkingEnabled()) {
+		return showToast(
+			"Job-linked outreach is not enabled yet. Use Networking for an independent search.",
+			true,
+		);
+	}
 	const job = findJob(id);
 	if (!job) return;
 	state.networkingJob = job;
@@ -549,7 +569,9 @@ async function findPeople(event) {
 				seniority: listValue("seniority"),
 				objective: value("objective"),
 				count: Number(value("count")),
-				jobId: state.networkingJob?.id,
+				jobId: jobOutreachLinkingEnabled()
+					? state.networkingJob?.id
+					: undefined,
 			},
 		});
 		await refresh("networking");
@@ -817,6 +839,9 @@ async function loadJobData() {
 		jobs: [],
 		pagination: { page: 1, pageSize: 100, total: 0, totalPages: 0 },
 	};
+	if (!jobOutreachLinkingEnabled()) {
+		state.networkingJob = null;
+	}
 	if (state.networkingJob) {
 		state.networkingJob =
 			findJob(state.networkingJob.id) || state.networkingJob;
@@ -873,6 +898,26 @@ async function api(path, options = {}) {
 	return data;
 }
 
+function renderCatalogWarning() {
+	const catalog = state.jobs.catalog;
+	if (!catalog || catalog.state === "fresh") return "";
+	if (catalog.state === "never-imported") {
+		return `<section class="notice warning catalog-warning">
+			<strong>Internship catalog has not refreshed yet.</strong>
+			<span>Browsing remains available, but there may be no current postings until the first signed snapshot is imported.</span>
+		</section>`;
+	}
+	const ageHours = Math.max(0, Number(catalog.ageSeconds || 0) / 3600);
+	return `<section class="notice warning catalog-warning">
+		<strong>Internship listings may be out of date.</strong>
+		<span>The latest snapshot was generated ${escapeHtml(formatDate(catalog.generatedAt))} (${ageHours.toFixed(1)} hours ago). You can continue browsing while the publisher is checked.</span>
+	</section>`;
+}
+
+function jobOutreachLinkingEnabled() {
+	return state.jobs.features?.jobOutreachLinking === true;
+}
+
 function jobCard(job) {
 	const status = job.userState?.status;
 	const posted = job.postedAt
@@ -912,7 +957,7 @@ function jobCard(job) {
 				state.session?.authenticated
 					? `${!status || status === "SAVED" ? `<button data-job-save="${job.id}">${status === "SAVED" ? "Unsave" : "Save"}</button>` : ""}
 						<button data-job-apply="${job.id}" ${APPLICATION_STATUSES.includes(status) ? "disabled" : ""}>Mark applied</button>
-						<button class="secondary" data-job-network="${job.id}">Find people at this company</button>
+						${jobOutreachLinkingEnabled() ? `<button class="secondary" data-job-network="${job.id}">Find people at this company</button>` : ""}
 						<label class="job-stage">Stage
 							<select data-job-status="${job.id}">
 								${jobStatusOptions(status)}
