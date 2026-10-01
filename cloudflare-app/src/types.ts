@@ -26,6 +26,7 @@ export interface AppBindings {
 	DB: D1Database;
 	ASSETS: Fetcher;
 	MAIL_QUEUE: Queue<QueueMessage>;
+	JOBS_INGEST_RATE_LIMITER: RateLimit;
 	APP_ORIGIN: string;
 	ACTIVE_KEY_VERSION: string;
 	MAX_DISCOVERY_RESULTS: string;

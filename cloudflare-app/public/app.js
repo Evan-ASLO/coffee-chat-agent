@@ -663,8 +663,14 @@ async function importLegacyState(event) {
 		});
 		await loadJobData();
 		render();
+		if (!result.completed) {
+			return showToast(
+				`No jobs matched yet. The import remains available to retry after the catalog refreshes.`,
+				true,
+			);
+		}
 		showToast(
-			`Imported ${result.imported} jobs. ${result.unmatched} could not be matched.`,
+			`${result.idempotent ? "Previously imported" : "Imported"} ${result.imported} jobs. ${result.unmatched} could not be matched.`,
 			result.unmatched > 0,
 		);
 	});

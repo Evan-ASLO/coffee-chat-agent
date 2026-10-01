@@ -45,6 +45,8 @@ import { sha256 } from "../src/lib/encoding";
 import { strToU8, zipSync } from "fflate";
 import { z } from "zod";
 
+let ingestRequestCounter = 0;
+
 beforeAll(async () => {
 	const statements = JSON.parse(
 		(env as typeof env & { MIGRATION_STATEMENTS: string })
@@ -333,6 +335,16 @@ describe("worker export", () => {
 describe.sequential("internship jobs platform", () => {
 	let generatedBase = Date.now() + 60_000;
 	let activeJobs: NormalizedJob[] = [];
+	let snapshotA: NormalizedJob[] = [];
+	let initialImportRunId = "";
+	let retryLegacyUser: Awaited<ReturnType<typeof authenticatedTestUser>>;
+	let retryLegacyPayload: {
+		schemaVersion: 1;
+		exportedAt: string;
+		source: "internship-tracker-toronto";
+		savedJobs: Array<{ url: string | null; company: string; title: string }>;
+		applications: [];
+	};
 	let userA: Awaited<ReturnType<typeof authenticatedTestUser>>;
 	let userB: Awaited<ReturnType<typeof authenticatedTestUser>>;
 
@@ -373,6 +385,33 @@ describe.sequential("internship jobs platform", () => {
 		expect(response.status).toBe(401);
 	});
 
+	it("rate limits ingest before reading or authenticating the body", async () => {
+		const limit = vi.fn().mockResolvedValue({ success: false });
+		const request = new Request<unknown, IncomingRequestCfProperties>(
+			"http://example.com/api/internal/jobs/snapshot",
+			{
+				method: "POST",
+				headers: {
+					"CF-Connecting-IP": "203.0.113.10",
+					"Content-Type": "application/json",
+				},
+				body: "not signed json",
+			},
+		);
+		const context = createExecutionContext();
+		const response = await worker.fetch(
+			request,
+			{
+				...(env as unknown as AppBindings),
+				JOBS_INGEST_RATE_LIMITER: { limit },
+			},
+			context,
+		);
+		await waitOnExecutionContext(context);
+		expect(response.status).toBe(429);
+		expect(limit).toHaveBeenCalledWith({ key: "203.0.113.10" });
+	});
+
 	it("rejects strict schema violations with a valid signature", async () => {
 		const job = await testJob("invalid-schema");
 		const payload = {
@@ -411,13 +450,67 @@ describe.sequential("internship jobs platform", () => {
 		expect(tooMany.status).toBe(400);
 	});
 
+	it("does not consume the legacy import lock when the catalog has no matches", async () => {
+		snapshotA = [await testJob("alpha"), await testJob("beta")];
+		retryLegacyUser = await authenticatedTestUser("legacy-retry-user");
+		retryLegacyPayload = {
+			schemaVersion: 1,
+			exportedAt: new Date().toISOString(),
+			source: "internship-tracker-toronto",
+			savedJobs: [
+				{
+					url: snapshotA[0]!.url,
+					company: snapshotA[0]!.company,
+					title: snapshotA[0]!.title,
+				},
+			],
+			applications: [],
+		};
+		const response = await authenticatedFetch(
+			retryLegacyUser,
+			"/api/job-states/import-legacy",
+			{ method: "POST", body: retryLegacyPayload },
+		);
+		expect(response.status).toBe(200);
+		expect(await response.json()).toMatchObject({
+			completed: false,
+			idempotent: false,
+			imported: 0,
+			matched: 0,
+			unmatched: 1,
+			unmatchedReferences: [
+				{
+					kind: "saved",
+					index: 0,
+					url: snapshotA[0]!.url,
+					company: snapshotA[0]!.company,
+					title: snapshotA[0]!.title,
+				},
+			],
+		});
+		const lock = await env.DB.prepare(
+			"SELECT COUNT(*) AS count FROM user_job_legacy_imports WHERE user_id = ?",
+		)
+			.bind(retryLegacyUser.user.id)
+			.first<{ count: number }>();
+		expect(lock?.count).toBe(0);
+	});
+
 	it("applies a snapshot, rejects exact replay, and accepts snapshot idempotency", async () => {
-		activeJobs = [await testJob("alpha"), await testJob("beta")];
+		activeJobs = snapshotA;
 		const body = await snapshotBody(activeJobs, generatedBase);
 		const timestamp = Math.floor(Date.now() / 1000);
 		const first = await signedIngest(body, timestamp);
 		expect(first.status).toBe(200);
-		expect(await first.json()).toMatchObject({
+		const firstResult = (await first.json()) as {
+			importRunId: string;
+			idempotent: boolean;
+			activeCount: number;
+			upsertedCount: number;
+			deactivatedCount: number;
+		};
+		initialImportRunId = firstResult.importRunId;
+		expect(firstResult).toMatchObject({
 			idempotent: false,
 			activeCount: 2,
 			upsertedCount: 2,
@@ -436,7 +529,60 @@ describe.sequential("internship jobs platform", () => {
 		});
 	});
 
-	it("stages replacement before deactivating missing jobs and rejects stale snapshots", async () => {
+	it("keeps future-boundary signatures replay-locked for their full validity", async () => {
+		const body = await snapshotBody(activeJobs, generatedBase);
+		const nowSeconds = Math.floor(Date.now() / 1000);
+		const futureTimestamp = nowSeconds + 300;
+		const signature = await ingestSignature(body, futureTimestamp);
+		const first = await signedIngest(body, futureTimestamp);
+		expect(first.status).toBe(200);
+		expect(await first.json()).toMatchObject({ idempotent: true });
+
+		const replayRow = await env.DB.prepare(
+			"SELECT expires_at FROM job_ingest_replays WHERE signature_hash = ?",
+		)
+			.bind(await sha256Hex(signature))
+			.first<{ expires_at: string }>();
+		expect(Date.parse(replayRow!.expires_at)).toBe(
+			(futureTimestamp + 301) * 1000,
+		);
+		const replay = await signedIngest(body, futureTimestamp);
+		expect(replay.status).toBe(409);
+
+		const beyondFutureBoundary = await signedIngest(body, nowSeconds + 301);
+		expect(beyondFutureBoundary.status).toBe(401);
+	});
+
+	it("completes a previously zero-match legacy import and makes retries idempotent", async () => {
+		const first = await authenticatedFetch(
+			retryLegacyUser,
+			"/api/job-states/import-legacy",
+			{ method: "POST", body: retryLegacyPayload },
+		);
+		expect(first.status).toBe(200);
+		expect(await first.json()).toMatchObject({
+			completed: true,
+			idempotent: false,
+			imported: 1,
+			matched: 1,
+			unmatched: 0,
+		});
+		const retry = await authenticatedFetch(
+			retryLegacyUser,
+			"/api/job-states/import-legacy",
+			{ method: "POST", body: retryLegacyPayload },
+		);
+		expect(retry.status).toBe(200);
+		expect(await retry.json()).toMatchObject({
+			completed: true,
+			idempotent: true,
+			imported: 1,
+			matched: 1,
+			unmatched: 0,
+		});
+	});
+
+	it("reactivates an A catalog after A to B to A and rejects stale snapshots", async () => {
 		generatedBase += 60_000;
 		const beta = activeJobs[1]!;
 		const gamma = await testJob("gamma");
@@ -470,6 +616,47 @@ describe.sequential("internship jobs platform", () => {
 			"http://example.com/api/jobs?pageSize=51",
 		);
 		expect(unbounded.status).toBe(400);
+
+		generatedBase += 60_000;
+		const recovery = await signedIngest(
+			await snapshotBody(snapshotA, generatedBase),
+		);
+		expect(recovery.status).toBe(200);
+		const recoveryResult = (await recovery.json()) as {
+			importRunId: string;
+			snapshotHash: string;
+			idempotent: boolean;
+			activeCount: number;
+			deactivatedCount: number;
+		};
+		expect(recoveryResult).toMatchObject({
+			snapshotHash: await snapshotHash(snapshotA),
+			idempotent: false,
+			activeCount: 2,
+			deactivatedCount: 1,
+		});
+		expect(recoveryResult.importRunId).not.toBe(initialImportRunId);
+		const recoveredRows = await env.DB.prepare(
+			"SELECT id, is_active FROM jobs WHERE id IN (?, ?, ?) ORDER BY id",
+		)
+			.bind(snapshotA[0]!.id, snapshotA[1]!.id, gamma.id)
+			.all<{ id: string; is_active: number }>();
+		expect(
+			Object.fromEntries(
+				recoveredRows.results.map((row) => [row.id, row.is_active]),
+			),
+		).toMatchObject({
+			[snapshotA[0]!.id]: 1,
+			[snapshotA[1]!.id]: 1,
+			[gamma.id]: 0,
+		});
+		const repeatedHashRuns = await env.DB.prepare(
+			"SELECT COUNT(*) AS count FROM job_import_runs WHERE snapshot_hash = ?",
+		)
+			.bind(await snapshotHash(snapshotA))
+			.first<{ count: number }>();
+		expect(repeatedHashRuns?.count).toBe(2);
+		activeJobs = snapshotA;
 
 		const staleJob = await testJob("stale");
 		const stale = await signedIngest(
@@ -571,38 +758,51 @@ describe.sequential("internship jobs platform", () => {
 	it("imports the exact one-time legacy payload by URL and company/title fallback", async () => {
 		const legacyUser = await authenticatedTestUser("legacy-jobs-user");
 		const [urlMatched, identityMatched] = activeJobs;
+		const payload = {
+			schemaVersion: 1,
+			exportedAt: new Date().toISOString(),
+			source: "internship-tracker-toronto",
+			savedJobs: [
+				{
+					url: `${urlMatched!.url}?utm_source=legacy`,
+					company: "Ignored URL company",
+					title: "Ignored URL title",
+				},
+			],
+			applications: [
+				{
+					url: null,
+					company: identityMatched!.company.toUpperCase(),
+					title: identityMatched!.title.toUpperCase(),
+					status: "interview",
+				},
+			],
+		};
+		const existingState = await authenticatedFetch(
+			legacyUser,
+			`/api/jobs/${urlMatched!.id}/state`,
+			{
+				method: "PUT",
+				body: { status: "OFFER", notes: "Preserve this server state" },
+			},
+		);
+		expect(existingState.status).toBe(200);
 		const response = await authenticatedFetch(
 			legacyUser,
 			"/api/job-states/import-legacy",
 			{
 				method: "POST",
-				body: {
-					schemaVersion: 1,
-					exportedAt: new Date().toISOString(),
-					source: "internship-tracker-toronto",
-					savedJobs: [
-						{
-							url: `${urlMatched!.url}?utm_source=legacy`,
-							company: "Ignored URL company",
-							title: "Ignored URL title",
-						},
-					],
-					applications: [
-						{
-							url: null,
-							company: identityMatched!.company.toUpperCase(),
-							title: identityMatched!.title.toUpperCase(),
-							status: "interview",
-						},
-					],
-				},
+				body: payload,
 			},
 		);
 		expect(response.status).toBe(200);
 		expect(await response.json()).toMatchObject({
-			imported: 2,
+			completed: true,
+			idempotent: false,
+			imported: 1,
 			matched: 2,
 			unmatched: 0,
+			skippedExisting: 1,
 		});
 
 		const imported = (await (
@@ -612,11 +812,25 @@ describe.sequential("internship jobs platform", () => {
 		};
 		expect(
 			imported.jobs.find((job) => job.id === urlMatched!.id)?.userState.status,
-		).toBe("SAVED");
+		).toBe("OFFER");
 		expect(
 			imported.jobs.find((job) => job.id === identityMatched!.id)?.userState
 				.status,
 		).toBe("INTERVIEWING");
+
+		const idempotent = await authenticatedFetch(
+			legacyUser,
+			"/api/job-states/import-legacy",
+			{ method: "POST", body: payload },
+		);
+		expect(idempotent.status).toBe(200);
+		expect(await idempotent.json()).toMatchObject({
+			completed: true,
+			idempotent: true,
+			imported: 1,
+			matched: 2,
+			skippedExisting: 1,
+		});
 
 		const repeated = await authenticatedFetch(
 			legacyUser,
@@ -698,6 +912,71 @@ describe.sequential("internship jobs platform", () => {
 				.total,
 		).toBe(0);
 	});
+
+	it(
+		"matches and imports the maximum 500 legacy references in batches",
+		async () => {
+			generatedBase += 60_000;
+			const bulkJobs = Array.from({ length: 500 }, (_, index) => ({
+				id: (10_000 + index).toString(16).padStart(64, "0"),
+				externalId: `bulk-${index}`,
+				source: "workday-bulk",
+				company: `Bulk Company ${index}`,
+				title: `Bulk Internship ${index}`,
+				location: "Toronto, ON",
+				region: "Canada",
+				categories: ["Internship"],
+				url: `https://jobs.example.com/bulk-${index}`,
+				postedAt: null,
+				postedText: null,
+				description: null,
+			})) satisfies NormalizedJob[];
+			const ingest = await signedIngest(
+				await snapshotBody(bulkJobs, generatedBase),
+			);
+			expect(ingest.status).toBe(200);
+			expect(await ingest.json()).toMatchObject({ activeCount: 500 });
+
+			const legacyUser = await authenticatedTestUser("legacy-max-user");
+			const response = await authenticatedFetch(
+				legacyUser,
+				"/api/job-states/import-legacy",
+				{
+					method: "POST",
+					body: {
+						schemaVersion: 1,
+						exportedAt: new Date().toISOString(),
+						source: "internship-tracker-toronto",
+						savedJobs: bulkJobs.map((job, index) =>
+							index < 250
+								? {
+										url: `${job.url}?utm_source=legacy`,
+										company: "Ignored",
+										title: "Ignored",
+									}
+								: {
+										url: null,
+										company: job.company.toUpperCase(),
+										title: job.title.toUpperCase(),
+									},
+						),
+						applications: [],
+					},
+				},
+			);
+			expect(response.status).toBe(200);
+			expect(await response.json()).toMatchObject({
+				completed: true,
+				idempotent: false,
+				imported: 500,
+				matched: 500,
+				unmatched: 0,
+				skippedExisting: 0,
+				unmatchedReferences: [],
+			});
+		},
+		20_000,
+	);
 });
 
 function encryptionEnv(): AppBindings {
@@ -717,10 +996,12 @@ function encryptionEnv(): AppBindings {
 }
 
 async function testJob(seed: string): Promise<NormalizedJob> {
+	const source = "workday";
+	const externalId = `jobs.example.com:${seed}`;
 	return {
-		id: await sha256Hex(`job:${seed}`),
-		externalId: `external-${seed}`,
-		source: "workday",
+		id: await sha256Hex(`${source}\n${externalId}`),
+		externalId,
+		source,
 		company: `${seed} Company`,
 		title: `${seed} Internship`,
 		location: "Toronto, ON",
@@ -749,20 +1030,28 @@ async function signedIngest(
 	body: string,
 	timestamp = Math.floor(Date.now() / 1000),
 ): Promise<Response> {
-	const signature = await hmacSha256Hex(
-		(env as unknown as AppBindings).JOBS_INGEST_SECRET,
-		`${timestamp}.${body}`,
-	);
+	const signature = await ingestSignature(body, timestamp);
 	return SELF.fetch(
 		new Request("http://example.com/api/internal/jobs/snapshot", {
 			method: "POST",
 			headers: {
 				"Content-Type": "application/json",
+				"CF-Connecting-IP": `198.51.100.${(ingestRequestCounter++ % 200) + 1}`,
 				"X-Ingest-Timestamp": String(timestamp),
 				"X-Ingest-Signature": signature,
 			},
 			body,
 		}),
+	);
+}
+
+async function ingestSignature(
+	body: string,
+	timestamp: number,
+): Promise<string> {
+	return hmacSha256Hex(
+		(env as unknown as AppBindings).JOBS_INGEST_SECRET,
+		`${timestamp}.${body}`,
 	);
 }
 

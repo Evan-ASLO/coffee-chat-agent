@@ -3,7 +3,7 @@ PRAGMA foreign_keys = ON;
 CREATE TABLE job_import_runs (
   id TEXT PRIMARY KEY,
   schema_version INTEGER NOT NULL CHECK(schema_version = 1),
-  snapshot_hash TEXT NOT NULL UNIQUE CHECK(length(snapshot_hash) = 64),
+  snapshot_hash TEXT NOT NULL CHECK(length(snapshot_hash) = 64),
   content_hash TEXT NOT NULL CHECK(length(content_hash) = 64),
   generated_at TEXT NOT NULL,
   generated_epoch INTEGER NOT NULL,
@@ -24,6 +24,8 @@ CREATE INDEX job_import_runs_generated_idx
   ON job_import_runs(generated_at DESC);
 CREATE INDEX job_import_runs_status_idx
   ON job_import_runs(status, received_at DESC);
+CREATE UNIQUE INDEX job_import_runs_snapshot_generated_unique
+  ON job_import_runs(snapshot_hash, generated_epoch);
 
 CREATE TABLE job_ingest_replays (
   signature_hash TEXT PRIMARY KEY CHECK(length(signature_hash) = 64),
@@ -137,7 +139,11 @@ CREATE TABLE user_job_legacy_imports (
   imported_at TEXT NOT NULL,
   saved_count INTEGER NOT NULL,
   application_count INTEGER NOT NULL,
-  request_hash TEXT NOT NULL CHECK(length(request_hash) = 64)
+  request_hash TEXT NOT NULL CHECK(length(request_hash) = 64),
+  matched_count INTEGER NOT NULL,
+  imported_count INTEGER NOT NULL,
+  skipped_existing_count INTEGER NOT NULL,
+  unmatched_json TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE UNIQUE INDEX prospects_user_id_id_unique

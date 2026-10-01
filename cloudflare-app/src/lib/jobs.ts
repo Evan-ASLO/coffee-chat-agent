@@ -198,9 +198,20 @@ interface VerifiedSnapshot {
 interface ExistingImportRun {
 	id: string;
 	status: string;
+	generated_epoch: number;
 	job_count: number;
 	upserted_count: number;
 	deactivated_count: number;
+}
+
+interface CatalogImportState {
+	latest_import_run_id: string | null;
+	snapshot_hash: string | null;
+	generated_epoch: number | null;
+	run_status: string | null;
+	job_count: number | null;
+	upserted_count: number | null;
+	deactivated_count: number | null;
 }
 
 export interface JobIngestResult {
@@ -210,6 +221,41 @@ export interface JobIngestResult {
 	activeCount: number;
 	upsertedCount: number;
 	deactivatedCount: number;
+}
+
+export interface LegacyUnmatchedReference {
+	kind: "saved" | "application";
+	index: number;
+	url: string | null;
+	company: string;
+	title: string;
+	status?: "applied" | "interview" | "offer" | "rejected";
+}
+
+export interface LegacyJobImportResult {
+	completed: boolean;
+	idempotent: boolean;
+	imported: number;
+	matched: number;
+	unmatched: number;
+	skippedExisting: number;
+	unmatchedReferences: LegacyUnmatchedReference[];
+}
+
+interface LegacyReference extends LegacyUnmatchedReference {
+	key: string;
+	canonicalUrl: string | null;
+	identityKey: string;
+	companyNormalized: string;
+	titleNormalized: string;
+}
+
+interface LegacyImportRow {
+	request_hash: string;
+	matched_count: number;
+	imported_count: number;
+	skipped_existing_count: number;
+	unmatched_json: string;
 }
 
 export async function verifyJobSnapshotRequest(
@@ -273,6 +319,9 @@ export async function verifyJobSnapshotRequest(
 
 	const now = new Date();
 	const signatureHash = await sha256Hex(signature);
+	const replayExpiresAt = new Date(
+		(timestampSeconds + INGEST_REPLAY_WINDOW_SECONDS + 1) * 1000,
+	).toISOString();
 	const replayResults = await env.DB.batch([
 		env.DB.prepare("DELETE FROM job_ingest_replays WHERE expires_at < ?").bind(
 			now.toISOString(),
@@ -284,9 +333,7 @@ export async function verifyJobSnapshotRequest(
 		).bind(
 			signatureHash,
 			now.toISOString(),
-			new Date(
-				now.getTime() + INGEST_REPLAY_WINDOW_SECONDS * 1000,
-			).toISOString(),
+			replayExpiresAt,
 		),
 	]);
 	if (replayResults[1]?.meta.changes !== 1) {
@@ -300,19 +347,42 @@ export async function ingestJobSnapshot(
 	verified: VerifiedSnapshot,
 ): Promise<JobIngestResult> {
 	const { payload, contentHash } = verified;
-	const existing = await env.DB.prepare(
-		`SELECT id, status, job_count, upserted_count, deactivated_count
-		   FROM job_import_runs WHERE snapshot_hash = ?`,
-	)
-		.bind(payload.snapshotHash)
-		.first<ExistingImportRun>();
+	const generatedEpoch = Date.parse(payload.generatedAt);
+	const catalog = await getCatalogImportState(env);
+	if (
+		catalog.generated_epoch !== null &&
+		generatedEpoch < catalog.generated_epoch
+	) {
+		throw new ConflictError(
+			"A newer job snapshot is already active.",
+		);
+	}
+	if (
+		catalog.generated_epoch !== null &&
+		generatedEpoch === catalog.generated_epoch
+	) {
+		if (
+			catalog.snapshot_hash === payload.snapshotHash &&
+			catalog.run_status === "APPLIED"
+		) {
+			return activeCatalogResult(payload.snapshotHash, catalog);
+		}
+		throw new ConflictError(
+			"A different snapshot with this generatedAt is already active.",
+		);
+	}
+
+	const existing = await findImportRun(
+		env,
+		payload.snapshotHash,
+		generatedEpoch,
+	);
 	if (existing) {
-		return existingImportResult(payload.snapshotHash, existing);
+		return resolveExistingImportRun(env, payload.snapshotHash, existing);
 	}
 
 	const runId = crypto.randomUUID();
 	const receivedAt = new Date().toISOString();
-	const generatedEpoch = Date.parse(payload.generatedAt);
 	try {
 		await env.DB.prepare(
 			`INSERT INTO job_import_runs(
@@ -331,13 +401,14 @@ export async function ingestJobSnapshot(
 			)
 			.run();
 	} catch (error) {
-		const raced = await env.DB.prepare(
-			`SELECT id, status, job_count, upserted_count, deactivated_count
-			   FROM job_import_runs WHERE snapshot_hash = ?`,
-		)
-			.bind(payload.snapshotHash)
-			.first<ExistingImportRun>();
-		if (raced) return existingImportResult(payload.snapshotHash, raced);
+		const raced = await findImportRun(
+			env,
+			payload.snapshotHash,
+			generatedEpoch,
+		);
+		if (raced) {
+			return resolveExistingImportRun(env, payload.snapshotHash, raced);
+		}
 		throw error;
 	}
 
@@ -701,71 +772,52 @@ export async function importLegacyJobState(
 	env: AppBindings,
 	userId: string,
 	payload: LegacyJobImport,
-): Promise<{
-	imported: number;
-	matched: number;
-	unmatched: number;
-	skippedExisting: number;
-}> {
-	const existing = await env.DB.prepare(
-		"SELECT user_id FROM user_job_legacy_imports WHERE user_id = ?",
-	)
-		.bind(userId)
-		.first<{ user_id: string }>();
+): Promise<LegacyJobImportResult> {
+	const requestHash = await sha256Hex(canonicalJson(payload));
+	const existing = await getLegacyImport(env, userId);
 	if (existing) {
+		if (existing.request_hash === requestHash) {
+			return legacyImportResultFromRow(existing, true);
+		}
 		throw new ConflictError("Legacy job state has already been imported.");
 	}
 
+	const references = legacyReferences(payload);
+	const matches = await resolveLegacyReferences(env, references);
 	const resolved = new Map<string, JobState>();
-	let unmatched = 0;
-	for (const reference of payload.savedJobs) {
-		const jobId = await resolveLegacyJob(env, reference);
+	const unmatchedReferences: LegacyUnmatchedReference[] = [];
+	for (const reference of references) {
+		const jobId = matches.get(reference.key);
 		if (!jobId) {
-			unmatched += 1;
+			unmatchedReferences.push(toUnmatchedReference(reference));
 			continue;
 		}
-		if (!resolved.has(jobId)) resolved.set(jobId, "SAVED");
+		if (reference.kind === "saved") {
+			if (!resolved.has(jobId)) resolved.set(jobId, "SAVED");
+		} else {
+			resolved.set(jobId, applicationStatus(reference.status!));
+		}
 	}
-	const applicationStatuses: Record<
-		LegacyJobImport["applications"][number]["status"],
-		JobState
-	> = {
-		applied: "APPLIED",
-		interview: "INTERVIEWING",
-		offer: "OFFER",
-		rejected: "REJECTED",
-	};
-	for (const reference of payload.applications) {
-		const jobId = await resolveLegacyJob(env, reference);
-		if (!jobId) {
-			unmatched += 1;
-			continue;
-		}
-		resolved.set(jobId, applicationStatuses[reference.status]);
+	if (!resolved.size) {
+		return {
+			completed: false,
+			idempotent: false,
+			imported: 0,
+			matched: 0,
+			unmatched: unmatchedReferences.length,
+			skippedExisting: 0,
+			unmatchedReferences,
+		};
 	}
 
 	const importedAt = new Date().toISOString();
 	const serializedStates = JSON.stringify(
 		Array.from(resolved, ([jobId, status]) => ({ jobId, status })),
 	);
-	const requestHash = await sha256Hex(canonicalJson(payload));
+	const unmatchedJson = JSON.stringify(unmatchedReferences);
 	let results: D1Result<unknown>[];
 	try {
 		results = await env.DB.batch([
-			env.DB.prepare(
-				`INSERT INTO user_job_legacy_imports(
-				   user_id, schema_version, source, exported_at, imported_at,
-				   saved_count, application_count, request_hash
-				 ) VALUES (?, 1, ?, ?, ?, ?, ?, ?)`,
-			).bind(
-				userId,
-				payload.source,
-				payload.exportedAt,
-				importedAt,
-				payload.savedJobs.length,
-				payload.applications.length,
-				requestHash,
-			),
 			env.DB.prepare(
 				`INSERT INTO user_job_states(
 				   user_id, job_id, status, notes, created_at, updated_at
@@ -776,24 +828,44 @@ export async function importLegacyJobState(
 				  WHERE 1
 				 ON CONFLICT(user_id, job_id) DO NOTHING`,
 			).bind(userId, importedAt, importedAt, serializedStates),
+			env.DB.prepare(
+				`INSERT INTO user_job_legacy_imports(
+				   user_id, schema_version, source, exported_at, imported_at,
+				   saved_count, application_count, request_hash, matched_count,
+				   imported_count, skipped_existing_count, unmatched_json
+				 ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, changes(), ? - changes(), ?)`,
+			).bind(
+				userId,
+				payload.source,
+				payload.exportedAt,
+				importedAt,
+				payload.savedJobs.length,
+				payload.applications.length,
+				requestHash,
+				resolved.size,
+				resolved.size,
+				unmatchedJson,
+			),
 		]);
 	} catch (error) {
-		const raced = await env.DB.prepare(
-			"SELECT user_id FROM user_job_legacy_imports WHERE user_id = ?",
-		)
-			.bind(userId)
-			.first<{ user_id: string }>();
+		const raced = await getLegacyImport(env, userId);
 		if (raced) {
+			if (raced.request_hash === requestHash) {
+				return legacyImportResultFromRow(raced, true);
+			}
 			throw new ConflictError("Legacy job state has already been imported.");
 		}
 		throw error;
 	}
-	const imported = Number(results[1]?.meta.changes || 0);
+	const imported = Number(results[0]?.meta.changes || 0);
 	return {
+		completed: true,
+		idempotent: false,
 		imported,
 		matched: resolved.size,
-		unmatched,
+		unmatched: unmatchedReferences.length,
 		skippedExisting: resolved.size - imported,
+		unmatchedReferences,
 	};
 }
 
@@ -1018,20 +1090,78 @@ function jobSelection(userId?: string): {
 	};
 }
 
-function existingImportResult(
+async function getCatalogImportState(
+	env: AppBindings,
+): Promise<CatalogImportState> {
+	const state = await env.DB.prepare(
+		`SELECT s.latest_import_run_id, s.snapshot_hash, s.generated_epoch,
+		        r.status AS run_status, r.job_count, r.upserted_count,
+		        r.deactivated_count
+		   FROM job_catalog_state s
+		   LEFT JOIN job_import_runs r ON r.id = s.latest_import_run_id
+		  WHERE s.singleton = 1`,
+	).first<CatalogImportState>();
+	return {
+		latest_import_run_id: state?.latest_import_run_id ?? null,
+		snapshot_hash: state?.snapshot_hash ?? null,
+		generated_epoch: state?.generated_epoch ?? null,
+		run_status: state?.run_status ?? null,
+		job_count: state?.job_count ?? null,
+		upserted_count: state?.upserted_count ?? null,
+		deactivated_count: state?.deactivated_count ?? null,
+	};
+}
+
+async function findImportRun(
+	env: AppBindings,
+	snapshotHashValue: string,
+	generatedEpoch: number,
+): Promise<ExistingImportRun | null> {
+	return env.DB.prepare(
+		`SELECT id, status, generated_epoch, job_count, upserted_count,
+		        deactivated_count
+		   FROM job_import_runs
+		  WHERE snapshot_hash = ? AND generated_epoch = ?`,
+	)
+		.bind(snapshotHashValue, generatedEpoch)
+		.first<ExistingImportRun>();
+}
+
+async function resolveExistingImportRun(
+	env: AppBindings,
 	snapshotHashValue: string,
 	existing: ExistingImportRun,
-): JobIngestResult {
-	if (existing.status !== "APPLIED") {
+): Promise<JobIngestResult> {
+	const catalog = await getCatalogImportState(env);
+	if (
+		catalog.latest_import_run_id === existing.id &&
+		catalog.snapshot_hash === snapshotHashValue &&
+		catalog.run_status === "APPLIED"
+	) {
+		return activeCatalogResult(snapshotHashValue, catalog);
+	}
+	if (existing.status === "STAGING") {
 		throw new ConflictError("This snapshot is already being processed.");
 	}
+	throw new ConflictError(
+		"This exact snapshot is historical and is not the active catalog.",
+	);
+}
+
+function activeCatalogResult(
+	snapshotHashValue: string,
+	catalog: CatalogImportState,
+): JobIngestResult {
+	if (!catalog.latest_import_run_id || catalog.run_status !== "APPLIED") {
+		throw new ConflictError("The active job catalog is not ready.");
+	}
 	return {
-		importRunId: existing.id,
+		importRunId: catalog.latest_import_run_id,
 		snapshotHash: snapshotHashValue,
 		idempotent: true,
-		activeCount: existing.job_count,
-		upsertedCount: existing.upserted_count,
-		deactivatedCount: existing.deactivated_count,
+		activeCount: Number(catalog.job_count || 0),
+		upsertedCount: Number(catalog.upserted_count || 0),
+		deactivatedCount: Number(catalog.deactivated_count || 0),
 	};
 }
 
@@ -1083,33 +1213,200 @@ function mapJob(row: JobRow): JobRecord {
 	};
 }
 
-async function resolveLegacyJob(
+async function getLegacyImport(
 	env: AppBindings,
-	reference: { url: string | null; company: string; title: string },
-): Promise<string | null> {
-	if (reference.url) {
-		const byUrl = await env.DB.prepare(
-			`SELECT id FROM jobs
-			  WHERE canonical_url = ?
-			  ORDER BY is_active DESC, last_seen_at DESC, id
-			  LIMIT 1`,
-		)
-			.bind(canonicalizeJobUrl(reference.url))
-			.first<{ id: string }>();
-		if (byUrl) return byUrl.id;
-	}
-	const byIdentity = await env.DB.prepare(
-		`SELECT id FROM jobs
-		  WHERE company_normalized = ? AND title_normalized = ?
-		  ORDER BY is_active DESC, last_seen_at DESC, id
-		  LIMIT 1`,
+	userId: string,
+): Promise<LegacyImportRow | null> {
+	return env.DB.prepare(
+		`SELECT request_hash, matched_count, imported_count,
+		        skipped_existing_count, unmatched_json
+		   FROM user_job_legacy_imports WHERE user_id = ?`,
 	)
-		.bind(
-			normalizeIdentity(reference.company),
-			normalizeIdentity(reference.title),
+		.bind(userId)
+		.first<LegacyImportRow>();
+}
+
+function legacyImportResultFromRow(
+	row: LegacyImportRow,
+	idempotent: boolean,
+): LegacyJobImportResult {
+	let unmatchedReferences: LegacyUnmatchedReference[] = [];
+	try {
+		const parsed = JSON.parse(row.unmatched_json);
+		if (Array.isArray(parsed)) {
+			unmatchedReferences = parsed.filter(isLegacyUnmatchedReference);
+		}
+	} catch {
+		unmatchedReferences = [];
+	}
+	return {
+		completed: true,
+		idempotent,
+		imported: row.imported_count,
+		matched: row.matched_count,
+		unmatched: unmatchedReferences.length,
+		skippedExisting: row.skipped_existing_count,
+		unmatchedReferences,
+	};
+}
+
+function legacyReferences(payload: LegacyJobImport): LegacyReference[] {
+	const saved = payload.savedJobs.map((reference, index) =>
+		makeLegacyReference("saved", index, reference),
+	);
+	const applications = payload.applications.map((reference, index) =>
+		makeLegacyReference("application", index, reference),
+	);
+	return [...saved, ...applications];
+}
+
+function makeLegacyReference(
+	kind: "saved" | "application",
+	index: number,
+	reference: LegacyJobImport["savedJobs"][number] |
+		LegacyJobImport["applications"][number],
+): LegacyReference {
+	const companyNormalized = normalizeIdentity(reference.company);
+	const titleNormalized = normalizeIdentity(reference.title);
+	return {
+		kind,
+		index,
+		url: reference.url,
+		company: reference.company,
+		title: reference.title,
+		...("status" in reference ? { status: reference.status } : {}),
+		key: `${kind}:${index}`,
+		canonicalUrl: reference.url ? canonicalizeJobUrl(reference.url) : null,
+		identityKey: `${companyNormalized}\u0000${titleNormalized}`,
+		companyNormalized,
+		titleNormalized,
+	};
+}
+
+async function resolveLegacyReferences(
+	env: AppBindings,
+	references: LegacyReference[],
+): Promise<Map<string, string>> {
+	const matches = new Map<string, string>();
+	const urls = Array.from(
+		new Set(
+			references
+				.map((reference) => reference.canonicalUrl)
+				.filter((value): value is string => Boolean(value)),
+		),
+	);
+	const jobsByUrl = new Map<string, string>();
+	for (const urlChunk of chunkValues(urls, 80)) {
+		const result = await env.DB.prepare(
+			`SELECT canonical_url, id FROM jobs
+			  WHERE canonical_url IN (${urlChunk.map(() => "?").join(", ")})
+			  ORDER BY is_active DESC, last_seen_at DESC, id`,
 		)
-		.first<{ id: string }>();
-	return byIdentity?.id ?? null;
+			.bind(...urlChunk)
+			.all<{ canonical_url: string; id: string }>();
+		for (const row of result.results) {
+			if (!jobsByUrl.has(row.canonical_url)) {
+				jobsByUrl.set(row.canonical_url, row.id);
+			}
+		}
+	}
+	for (const reference of references) {
+		if (!reference.canonicalUrl) continue;
+		const jobId = jobsByUrl.get(reference.canonicalUrl);
+		if (jobId) matches.set(reference.key, jobId);
+	}
+
+	const identities = new Map<
+		string,
+		{ companyNormalized: string; titleNormalized: string }
+	>();
+	for (const reference of references) {
+		if (matches.has(reference.key)) continue;
+		identities.set(reference.identityKey, {
+			companyNormalized: reference.companyNormalized,
+			titleNormalized: reference.titleNormalized,
+		});
+	}
+	const jobsByIdentity = new Map<string, string>();
+	for (const identityChunk of chunkValues([...identities.entries()], 40)) {
+		const clauses = identityChunk.map(
+			() => "(company_normalized = ? AND title_normalized = ?)",
+		);
+		const bindings = identityChunk.flatMap(([, identity]) => [
+			identity.companyNormalized,
+			identity.titleNormalized,
+		]);
+		const result = await env.DB.prepare(
+			`SELECT company_normalized, title_normalized, id FROM jobs
+			  WHERE ${clauses.join(" OR ")}
+			  ORDER BY is_active DESC, last_seen_at DESC, id`,
+		)
+			.bind(...bindings)
+			.all<{
+				company_normalized: string;
+				title_normalized: string;
+				id: string;
+			}>();
+		for (const row of result.results) {
+			const identityKey =
+				`${row.company_normalized}\u0000${row.title_normalized}`;
+			if (!jobsByIdentity.has(identityKey)) {
+				jobsByIdentity.set(identityKey, row.id);
+			}
+		}
+	}
+	for (const reference of references) {
+		if (matches.has(reference.key)) continue;
+		const jobId = jobsByIdentity.get(reference.identityKey);
+		if (jobId) matches.set(reference.key, jobId);
+	}
+	return matches;
+}
+
+function toUnmatchedReference(
+	reference: LegacyReference,
+): LegacyUnmatchedReference {
+	return {
+		kind: reference.kind,
+		index: reference.index,
+		url: reference.url,
+		company: reference.company,
+		title: reference.title,
+		...(reference.status ? { status: reference.status } : {}),
+	};
+}
+
+function applicationStatus(
+	status: "applied" | "interview" | "offer" | "rejected",
+): JobState {
+	return {
+		applied: "APPLIED",
+		interview: "INTERVIEWING",
+		offer: "OFFER",
+		rejected: "REJECTED",
+	}[status] as JobState;
+}
+
+function isLegacyUnmatchedReference(
+	value: unknown,
+): value is LegacyUnmatchedReference {
+	if (!value || typeof value !== "object") return false;
+	const reference = value as Partial<LegacyUnmatchedReference>;
+	return (
+		(reference.kind === "saved" || reference.kind === "application") &&
+		typeof reference.index === "number" &&
+		(reference.url === null || typeof reference.url === "string") &&
+		typeof reference.company === "string" &&
+		typeof reference.title === "string"
+	);
+}
+
+function chunkValues<T>(values: T[], size: number): T[][] {
+	const chunks: T[][] = [];
+	for (let index = 0; index < values.length; index += size) {
+		chunks.push(values.slice(index, index + size));
+	}
+	return chunks;
 }
 
 function addExactFilter(

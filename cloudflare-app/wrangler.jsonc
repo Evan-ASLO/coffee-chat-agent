@@ -44,6 +44,16 @@
 			"migrations_dir": "migrations"
 		}
 	],
+	"ratelimits": [
+		{
+			"name": "JOBS_INGEST_RATE_LIMITER",
+			"namespace_id": "4281972601",
+			"simple": {
+				"limit": 10,
+				"period": 60
+			}
+		}
+	],
 	"queues": {
 		"producers": [
 			{

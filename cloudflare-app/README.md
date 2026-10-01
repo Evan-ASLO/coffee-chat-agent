@@ -53,11 +53,17 @@ Objects are strict: unknown keys are rejected. Jobs must be sorted by `id` befor
 
 Job IDs are order-independent:
 
-- with a reliable source ID: `sha256("${source}\n${externalId}")`
+- with a reliable host/tenant-scoped source ID: `sha256("${source}\n${externalId}")`
 - otherwise: `sha256("${source}\n${canonicalUrl}")`
 - only when a URL is unavailable: hash normalized source, company, title, and location
 
-The Worker verifies the canonical snapshot hash, stages every row, then atomically activates/upserts the snapshot and marks missing jobs inactive. A repeated snapshot hash returns the original applied counts. A different snapshot with an older or equal `generatedAt` is rejected.
+The Worker verifies the canonical snapshot hash, stages every row, then atomically activates/upserts the snapshot and marks missing jobs inactive. An exact retry (`snapshotHash` plus `generatedAt`) is idempotent only when that applied run is still the active catalog. The same content at a later `generatedAt` creates a new run and can safely reactivate jobs after an A → B → A catalog sequence. A snapshot older than the active catalog, or different content with the same `generatedAt`, is rejected.
+
+### Production pre-body rate guard
+
+HMAC validation necessarily reads the signed body. The Worker therefore uses the Cloudflare-native `JOBS_INGEST_RATE_LIMITER` binding before reading or hashing the request body. It allows 10 requests per 60 seconds for each Cloudflare-provided `CF-Connecting-IP` key. The binding is declared in `wrangler.jsonc`, so it also covers the current `workers.dev` deployment without requiring a custom-domain WAF rule.
+
+The guard deliberately does not use D1 or a client-supplied forwarding header: doing so would spend database writes before authentication or create a spoofable security control. If the publisher has stable egress, add a Cloudflare allowlist/WAF rule as an additional deployment control.
 
 Successful response:
 
@@ -101,7 +107,7 @@ Legacy import v1 is strict:
 }
 ```
 
-Matching uses canonical URL first and normalized company/title second. Existing server state is not overwritten by the one-time import.
+Matching uses canonical URL first and normalized company/title second, and is batched within D1 parameter limits. A zero-match request returns `completed: false` with only the caller's unmatched references and does not consume the one-time lock, so it can be retried after the catalog is populated. Once at least one job matches, the request hash and result are stored: an exact retry is idempotent, while a different import is rejected. Existing server-side job states are preserved.
 
 ## Validation
 
@@ -110,4 +116,4 @@ npm run check
 npm audit
 ```
 
-The Worker test suite covers ingestion authentication, replay rejection, strict schema validation, snapshot idempotency/stale replacement, public/private access, cross-user state isolation, status CRUD, legacy import, and job/prospect ownership.
+The Worker test suite covers ingestion authentication, future-boundary replay expiry, strict size/count/schema validation, active-catalog idempotency, A → B → A reactivation, stale replacement, public/private access, cross-user state isolation, status CRUD, zero-match/retry/idempotent legacy import, 500-reference batched matching, and job/prospect ownership.

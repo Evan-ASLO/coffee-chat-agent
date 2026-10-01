@@ -99,6 +99,13 @@ app.get("/api/health", (c) =>
 );
 
 app.post("/api/internal/jobs/snapshot", async (c) => {
+	const clientKey = c.req.header("CF-Connecting-IP") || "unknown";
+	const rateLimit = await c.env.JOBS_INGEST_RATE_LIMITER.limit({
+		key: clientKey.slice(0, 128),
+	});
+	if (!rateLimit.success) {
+		throw new Error("Job ingest rate limit exceeded.");
+	}
 	const verified = await verifyJobSnapshotRequest(c.env, c.req.raw);
 	const result = await ingestJobSnapshot(c.env, verified);
 	logEvent("info", "job_snapshot_ingested", {
@@ -433,10 +440,12 @@ app.post("/api/job-states/import-legacy", requireUser, async (c) => {
 	);
 	await audit(c.env, {
 		userId: c.get("user")!.id,
-		action: "LEGACY_JOB_STATE_IMPORTED",
+		action: result.completed
+			? "LEGACY_JOB_STATE_IMPORTED"
+			: "LEGACY_JOB_STATE_UNMATCHED",
 		entityType: "job_state",
 		requestId: c.get("requestId"),
-		metadata: result,
+		metadata: { ...result },
 	});
 	return c.json(result);
 });
