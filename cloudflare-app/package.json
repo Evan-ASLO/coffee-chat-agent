@@ -1,0 +1,33 @@
+{
+	"name": "coffee-chat-agent-cloudflare",
+	"version": "0.1.0",
+	"private": true,
+	"scripts": {
+		"deploy": "wrangler deploy",
+		"dev": "wrangler dev",
+		"start": "wrangler dev",
+		"typecheck": "tsc --noEmit",
+		"test": "vitest run",
+		"check": "npm run typecheck && npm test",
+		"cf-typegen": "wrangler types",
+		"db:migrate:local": "wrangler d1 migrations apply coffee-chat-agent --local",
+		"db:migrate:remote": "wrangler d1 migrations apply coffee-chat-agent --remote"
+	},
+	"dependencies": {
+		"fflate": "^0.8.3",
+		"hono": "4.13.8",
+		"jose": "6.2.0",
+		"zod": "4.6.5"
+	},
+	"devDependencies": {
+		"@cloudflare/vitest-plugin": "1.2.3",
+		"@types/node": "26.6.2",
+		"typescript": "5.9.3",
+		"vitest": "4.1.11",
+		"wrangler": "4.136.3"
+	},
+	"overrides": {
+		"sharp": "0.35.4",
+		"undici": "7.29.1"
+	}
+}

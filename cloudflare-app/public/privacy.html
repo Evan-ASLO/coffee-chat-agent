@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta
+			name="description"
+			content="Privacy Policy for Coffee Chat Agent."
+		/>
+		<title>Privacy Policy | Coffee Chat Agent</title>
+		<link rel="stylesheet" href="/styles.css?v=20260929-3" />
+	</head>
+	<body>
+		<main class="legal-shell">
+			<header class="legal-header">
+				<a class="brand legal-brand" href="/">
+					<span class="brand-mark" aria-hidden="true">CC</span>
+					<span>
+						<strong>Coffee Chat Agent</strong>
+						<small>Privacy Policy</small>
+					</span>
+				</a>
+				<nav class="legal-nav" aria-label="Legal pages">
+					<a href="/">App</a>
+					<a aria-current="page" href="/privacy.html">Privacy</a>
+					<a href="/terms.html">Terms</a>
+				</nav>
+			</header>
+
+			<article class="legal-card">
+				<p class="eyebrow">Effective September 29, 2026</p>
+				<h1>Privacy Policy</h1>
+				<p class="legal-lede">
+					Coffee Chat Agent helps users find public professional profiles,
+					prepare personalized outreach, send user-approved emails, maintain a
+					Google Sheets CRM, and detect replies. This policy explains what data
+					the application handles and how it is protected.
+				</p>
+
+				<h2>Information the application handles</h2>
+				<ul>
+					<li>
+						<strong>Google account information:</strong> your Google account
+						identifier, email address, name, and profile image when available.
+					</li>
+					<li>
+						<strong>Gmail data:</strong> authorization to send messages you
+						explicitly approve and limited access needed to identify replies to
+						outreach sent through the application. The application may store
+						Gmail message or thread identifiers, reply timestamps, sender
+						addresses, and short reply snippets.
+					</li>
+					<li>
+						<strong>Google Sheets and Drive data:</strong> authorization to
+						create and update the Coffee Chat Agent CRM spreadsheet in your
+						Google account.
+					</li>
+					<li>
+						<strong>Outreach information:</strong> search criteria, public
+						professional-profile results, email addresses, drafts, approval
+						statuses, sending history, and the personal context you choose to
+						provide for drafting.
+					</li>
+					<li>
+						<strong>Provider credentials:</strong> API keys you choose to add
+						for services such as Tavily, Hunter, Gemini, OpenAI, or Anthropic.
+					</li>
+					<li>
+						<strong>Resume data:</strong> a resume file you choose to upload
+						and the factual profile information extracted from it for your
+						review.
+					</li>
+					<li>
+						<strong>Security and operational records:</strong> session,
+						rate-limit, request, and audit records used to operate and secure
+						the service. Secrets and message bodies are not intentionally
+						written to application logs.
+					</li>
+				</ul>
+
+				<h2>How information is used</h2>
+				<p>Information is used only to provide the features you request:</p>
+				<ul>
+					<li>authenticate you and keep each user's workspace separate;</li>
+					<li>find public professional-profile results;</li>
+					<li>enrich contact information and generate drafts;</li>
+					<li>
+						analyze an uploaded resume, populate profile suggestions, and attach
+						the resume only when you select that option for a specific email;
+					</li>
+					<li>send only the exact emails you approve;</li>
+					<li>create and update your CRM spreadsheet;</li>
+					<li>detect replies and update outreach status; and</li>
+					<li>prevent abuse, duplicate sends, and unauthorized access.</li>
+				</ul>
+
+				<h2>Google API data</h2>
+				<p>
+					Coffee Chat Agent's use and transfer of information received from
+					Google APIs adheres to the
+					<a
+						href="https://developers.google.com/terms/api-services-user-data-policy"
+						target="_blank"
+						rel="noopener"
+					>Google API Services User Data Policy</a>,
+					including the Limited Use requirements. Google user data is not used
+					for advertising, sold, or used to train general-purpose AI models by
+					Coffee Chat Agent.
+				</p>
+
+				<h2>Third-party services</h2>
+				<p>
+					The application uses Cloudflare to host the service and store
+					application data. When you activate a feature, the minimum necessary
+					information is sent to the relevant provider: Google for authentication,
+					Gmail, Drive, and Sheets; Tavily for public-web discovery; Hunter for
+					email enrichment; and your selected AI provider for drafting or resume
+					analysis. PDF resume analysis uses the user's configured Gemini
+					credential. Those providers process information under their own terms
+					and privacy policies.
+				</p>
+
+				<h2>Storage and security</h2>
+				<ul>
+					<li>Traffic is encrypted in transit using HTTPS.</li>
+					<li>
+						User API keys and Google refresh tokens are encrypted using
+						AES-256-GCM before being stored in Cloudflare D1.
+					</li>
+					<li>
+						Resume files are encrypted using AES-256-GCM before being stored in
+						segmented Cloudflare D1 records.
+					</li>
+					<li>
+						The master encryption key is stored separately as a Cloudflare
+						Worker secret.
+					</li>
+					<li>
+						Credential encryption is bound to the user, credential type, and
+						provider.
+					</li>
+					<li>
+						Plaintext credentials are not returned to the browser after they
+						are saved.
+					</li>
+					<li>
+						Session tokens are stored server-side as cryptographic hashes, and
+						security controls include secure cookies, CSRF protection,
+						same-origin checks, rate limits, and restrictive browser headers.
+					</li>
+				</ul>
+				<p>
+					No online service can guarantee absolute security. Users should protect
+					their Google and provider accounts with strong passwords and
+					multi-factor authentication.
+				</p>
+
+				<h2>Retention and deletion</h2>
+				<p>
+					Data is retained while needed to provide the service and maintain the
+					user's outreach history. Provider API keys and uploaded resumes can be
+					deleted in the application's Settings page. Google access can be revoked through
+					<a
+						href="https://myaccount.google.com/permissions"
+						target="_blank"
+						rel="noopener"
+					>Google Account permissions</a>.
+					To request deletion of your account data, encrypted credentials, Google
+					token, prospects, drafts, and audit records, email
+					<a href="mailto:evanastonlowe@gmail.com">evanastonlowe@gmail.com</a>
+					from the Google account associated with the workspace. Verified
+					deletion requests will be completed within 30 days unless retention is
+					required by law or for security purposes.
+				</p>
+
+				<h2>Sharing and sale of data</h2>
+				<p>
+					Personal information and Google user data are not sold. Information is
+					shared only with service providers needed to perform a feature you
+					request, when required by law, or when necessary to protect users and
+					the service.
+				</p>
+
+				<h2>Children's privacy</h2>
+				<p>
+					The service is not directed to children under 13, and it is not
+					intended to knowingly collect personal information from children.
+				</p>
+
+				<h2>Changes and contact</h2>
+				<p>
+					This policy may be updated as the service changes. Material revisions
+					will be reflected by the effective date above. Questions and privacy
+					requests can be sent to
+					<a href="mailto:evanastonlowe@gmail.com">evanastonlowe@gmail.com</a>.
+				</p>
+			</article>
+		</main>
+	</body>
+</html>

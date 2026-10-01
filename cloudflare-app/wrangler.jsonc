@@ -1,0 +1,69 @@
+/**
+ * For more details on how to configure Wrangler, refer to:
+ * https://developers.cloudflare.com/workers/wrangler/configuration/
+ */
+{
+	"$schema": "node_modules/wrangler/config-schema.json",
+	"name": "coffee-chat-agent",
+	"main": "src/index.ts",
+	"compatibility_date": "2026-09-28",
+	"workers_dev": true,
+	"preview_urls": false,
+	"compatibility_flags": [
+		"global_fetch_strictly_public",
+		"nodejs_compat"
+	],
+	"assets": {
+		"directory": "./public",
+		"binding": "ASSETS",
+		"not_found_handling": "single-page-application",
+		"run_worker_first": [
+			"/api/*",
+			"/auth/*",
+			"/logout"
+		]
+	},
+	"observability": {
+		"enabled": true,
+		"head_sampling_rate": 1
+	},
+	"upload_source_maps": true,
+	"vars": {
+		"APP_ORIGIN": "https://coffee-chat-agent.evanastonlowe.workers.dev",
+		"ACTIVE_KEY_VERSION": "1",
+		"MAX_DISCOVERY_RESULTS": "20",
+		"MAX_DRAFTS_PER_HOUR": "30",
+		"MAX_SENDS_PER_DAY": "50",
+		"SESSION_DAYS": "30"
+	},
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "coffee-chat-agent",
+			"database_id": "26471479-dd8c-4fdb-a1f0-490f5a00ed20",
+			"migrations_dir": "migrations"
+		}
+	],
+	"queues": {
+		"producers": [
+			{
+				"binding": "MAIL_QUEUE",
+				"queue": "coffee-chat-agent-mail"
+			}
+		],
+		"consumers": [
+			{
+				"queue": "coffee-chat-agent-mail",
+				"max_batch_size": 10,
+				"max_batch_timeout": 5,
+				"max_retries": 3,
+				"dead_letter_queue": "coffee-chat-agent-mail-dlq"
+			}
+		]
+	},
+	"triggers": {
+		"crons": [
+			"*/15 * * * *"
+		]
+	}
+}

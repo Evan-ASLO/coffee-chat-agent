@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta
+			name="description"
+			content="Approval-first coffee chat outreach with per-user encrypted credentials."
+		/>
+		<title>Coffee Chat Agent</title>
+		<link rel="stylesheet" href="/styles.css?v=20260929-4" />
+		<script src="/app.js?v=20260929-4" defer></script>
+	</head>
+	<body>
+		<div id="app" class="shell" aria-live="polite">
+			<section class="center-card">
+				<div class="spinner" aria-hidden="true"></div>
+				<p>Loading your secure workspace…</p>
+			</section>
+		</div>
+		<div id="toast" class="toast" role="status"></div>
+		<dialog id="draft-dialog">
+			<form method="dialog" class="dialog-card" id="draft-form">
+				<div class="dialog-head">
+					<div>
+						<p class="eyebrow">Second approval gate</p>
+						<h2 id="draft-name">Review draft</h2>
+					</div>
+					<button class="icon-button" value="cancel" aria-label="Close dialog">×</button>
+				</div>
+				<input id="draft-id" type="hidden" />
+				<input id="draft-version" type="hidden" />
+				<label>
+					Recipient email
+					<input id="draft-email" type="email" autocomplete="off" />
+				</label>
+				<label>
+					Subject
+					<input id="draft-subject" maxlength="200" />
+				</label>
+				<label>
+					Body
+					<textarea id="draft-body" rows="12"></textarea>
+				</label>
+				<label id="resume-attachment-row" class="check-row" hidden>
+					<input id="attach-resume" type="checkbox" />
+					<span id="resume-attachment-label">Attach resume</span>
+				</label>
+				<p id="draft-audit" class="notice"></p>
+				<div class="actions">
+					<button type="button" class="secondary" id="save-draft">Save changes</button>
+					<button type="button" class="primary" id="send-draft">Approve and send</button>
+				</div>
+			</form>
+		</dialog>
+	</body>
+</html>
