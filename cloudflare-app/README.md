@@ -1,6 +1,6 @@
-# Career Journey Cloudflare app
+# Internship & Coffee Chat Cloudflare app
 
-This directory is the deployed Cloudflare Worker, D1 schema, queue consumer, tests, and no-build SPA for the unified Career Journey product: internship search, application tracking, approval-first networking, account-scoped analytics, and settings. The root Google Apps Script fallback is intentionally separate.
+This directory is the deployed Cloudflare Worker, D1 schema, queue consumer, tests, and no-build SPA for the unified Internship & Coffee Chat product: internship search, application tracking, approval-first networking, account-scoped analytics, settings, and the Home page's interactive Career Journey feature. The root Google Apps Script fallback is intentionally separate.
 
 ## Local development
 

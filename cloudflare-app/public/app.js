@@ -120,10 +120,10 @@ function render() {
 			<button class="mobile-nav-toggle" id="mobile-nav-toggle" aria-expanded="${state.mobileNavOpen}" aria-controls="primary-navigation">
 				${icon("menu")}<span class="sr-only">Toggle navigation</span>
 			</button>
-			<button class="brand brand-button" data-nav="${authenticated ? "home" : "jobs"}" aria-label="Career Journey home">
-				<span class="brand-mark" aria-hidden="true">CJ</span>
+			<button class="brand brand-button" data-nav="${authenticated ? "home" : "jobs"}" aria-label="Internship & Coffee Chat home">
+				<span class="brand-mark" aria-hidden="true">CC</span>
 				<span>
-					<strong>Career Journey</strong>
+					<strong>Internship & Coffee Chat</strong>
 					<small>Toronto career workspace</small>
 				</span>
 			</button>
@@ -195,9 +195,9 @@ function renderBetaLanding() {
 	app.innerHTML = `
 		<section class="beta-landing">
 			<div class="beta-landing-brand">
-				<div class="brand-mark">CJ</div>
+				<div class="brand-mark">CC</div>
 				<div>
-					<strong>Career Journey</strong>
+					<strong>Internship & Coffee Chat</strong>
 					<span>Private Toronto beta</span>
 				</div>
 			</div>
@@ -205,7 +205,7 @@ function renderBetaLanding() {
 				<div class="beta-landing-copy">
 					<p class="eyebrow">One calm career workspace</p>
 					<h1>Move from opportunity to conversation to offer.</h1>
-					<p>Career Journey brings internship search, application tracking, and approval-first professional outreach into one secure private-beta workspace.</p>
+					<p>Internship & Coffee Chat brings internship search, application tracking, and approval-first professional outreach into one secure private-beta workspace.</p>
 				${
 					requested
 						? '<p class="notice">Thanks. If this Google account can be considered for the beta, the request has been recorded. This confirmation is intentionally the same for every account.</p>'
@@ -267,42 +267,46 @@ function renderHome() {
 	return `
 		<section class="home-hero">
 			<div class="home-hero-copy">
-				<p class="eyebrow">Your Toronto career journey</p>
+				<p class="eyebrow">Career Journey</p>
 				<h1>${firstName ? `Welcome back, ${escapeHtml(firstName)}.` : "Welcome back."}</h1>
 				<p>Build momentum across opportunities, applications, and relationships. Every object on the desk reflects your current workspace data.</p>
 				<div class="actions hero-actions">
 					<button class="primary" data-nav="jobs">Explore jobs</button>
 					<button class="button-on-hero" data-nav="networking">Grow your network</button>
 				</div>
+				${renderStats()}
 			</div>
-			<div class="hero-orbit hero-orbit-one" aria-hidden="true"></div>
-			<div class="hero-orbit hero-orbit-two" aria-hidden="true"></div>
-		</section>
-		${renderStats()}
-		<section class="journey-layout">
-			<article class="journey-card">
-				<div class="section-heading journey-heading">
+			<article class="home-scene-panel">
+				<div class="home-scene-heading">
 					<div>
-						<p class="eyebrow">Interactive workspace</p>
+						<p class="eyebrow">Interactive Toronto workspace</p>
 						<h2>Your career desk</h2>
-						<p>Hover or tap an object, or use the mirrored controls below.</p>
+						<p>Hover or tap an object to focus its real workspace data.</p>
 					</div>
-					<button id="journey-reset" class="icon-text-button">${icon("reset")} Reset view</button>
+					<button id="journey-reset" class="icon-text-button">${icon("reset")} Reset</button>
 				</div>
 				<div id="journey-canvas" class="journey-canvas" aria-busy="true">
 					${renderJourneyFallback(metrics)}
 				</div>
-				<div class="journey-controls" aria-label="Career journey objects">
-					${journeyControl("networking", "Coffee cup", "Networking", "cup")}
-					${journeyControl("applications", "Laptop", "Applications", "laptop")}
-					${journeyControl("saved", "Notebook", "Saved roles", "notebook")}
-					${journeyControl("progress", "Plant", "Overall progress", "plant")}
-					${journeyControl("journey", "Path", "Milestones", "path")}
-				</div>
 			</article>
-			<section class="journey-detail" id="journey-detail" aria-live="polite" aria-label="Selected career journey detail">
-				${renderJourneyDetail(detail)}
-			</section>
+			<div class="hero-orbit hero-orbit-one" aria-hidden="true"></div>
+			<div class="hero-orbit hero-orbit-two" aria-hidden="true"></div>
+		</section>
+		<section class="journey-dock" aria-label="Career Journey controls">
+			<div>
+				<p class="eyebrow">Explore the scene</p>
+				<p>Canvas interactions are mirrored here for keyboard and touch.</p>
+			</div>
+			<div class="journey-controls" aria-label="Career Journey objects">
+				${journeyControl("networking", "Coffee cup", "Networking", "cup")}
+				${journeyControl("applications", "Laptop", "Applications", "laptop")}
+				${journeyControl("saved", "Notebook", "Saved roles", "notebook")}
+				${journeyControl("progress", "Plant", "Overall progress", "plant")}
+				${journeyControl("journey", "Path", "Milestones", "path")}
+			</div>
+		</section>
+		<section class="journey-detail" id="journey-detail" aria-live="polite" aria-label="Selected Career Journey detail">
+			${renderJourneyDetail(detail)}
 		</section>
 		<section class="home-grid">
 			${renderHomeNextStep(metrics)}
@@ -320,7 +324,7 @@ function renderJourneyFallback(metrics) {
 			<span class="fallback-notebook"><b>${metrics.saved}</b></span>
 			<span class="fallback-plant plant-level-${metrics.plantLevel}"></span>
 		</div>
-		<p><strong>Career desk overview</strong><span>The accessible controls below show the same live data when 3D graphics are unavailable or motion is reduced.</span></p>
+		<p><strong>Career Journey fallback</strong><span>The accessible controls below show the same live data when 3D graphics are unavailable or motion is reduced.</span></p>
 	</div>`;
 }
 
@@ -332,9 +336,11 @@ function journeyControl(area, objectLabel, productLabel, iconName) {
 
 function renderJourneyDetail(detail) {
 	return `<div class="journey-detail-inner">
-		<p class="eyebrow">Live workspace data</p>
-		<h2>${escapeHtml(detail.title)}</h2>
-		<p>${escapeHtml(detail.description)}</p>
+		<div class="journey-detail-copy">
+			<p class="eyebrow">Live workspace data</p>
+			<h2>${escapeHtml(detail.title)}</h2>
+			<p>${escapeHtml(detail.description)}</p>
+		</div>
 		<div class="journey-detail-stats">
 			${detail.stats
 				.map(
@@ -2360,11 +2366,11 @@ function companyTone(company) {
 }
 
 function userInitials(user) {
-	const source = String(user?.name || user?.email || "CJ");
+	const source = String(user?.name || user?.email || "CC");
 	const words = source.trim().split(/\s+/).filter(Boolean);
 	return (words.length > 1
 		? `${words[0][0]}${words[words.length - 1][0]}`
-		: words[0]?.slice(0, 2) || "CJ"
+		: words[0]?.slice(0, 2) || "CC"
 	).toUpperCase();
 }
 

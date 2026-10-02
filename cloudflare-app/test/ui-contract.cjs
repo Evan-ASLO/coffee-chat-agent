@@ -46,6 +46,27 @@ test("loads the attribution renderer before the SPA", () => {
 	assert.ok(app > analytics);
 });
 
+test("preserves Internship & Coffee Chat as the product brand", () => {
+	const index = fs.readFileSync(path.join(root, "public", "index.html"), "utf8");
+	const app = fs.readFileSync(path.join(root, "public", "app.js"), "utf8");
+	const privacy = fs.readFileSync(
+		path.join(root, "public", "privacy.html"),
+		"utf8",
+	);
+	const terms = fs.readFileSync(path.join(root, "public", "terms.html"), "utf8");
+	assert.match(index, /<title>Internship &(?:amp;)? Coffee Chat \| Career platform<\/title>/);
+	assert.match(
+		index,
+		/content="Internship &(?:amp;)? Coffee Chat helps you explore jobs/,
+	);
+	assert.match(app, /<strong>Internship & Coffee Chat<\/strong>/);
+	assert.match(app, /aria-label="Internship & Coffee Chat home"/);
+	assert.match(app, /<span class="brand-mark" aria-hidden="true">CC<\/span>/);
+	assert.match(app, /<p class="eyebrow">Career Journey<\/p>/);
+	assert.match(privacy, /Privacy Policy \| Internship &(?:amp;)? Coffee Chat/);
+	assert.match(terms, /Terms of Service \| Internship &(?:amp;)? Coffee Chat/);
+});
+
 test("renders responsive structured job filter controls", () => {
 	const app = fs.readFileSync(path.join(root, "public", "app.js"), "utf8");
 	const styles = fs.readFileSync(
@@ -225,6 +246,12 @@ test("self-hosts pinned Three.js with fallback, lifecycle, and mirrored controls
 	assert.match(scene, /geometry\?\.dispose/);
 	assert.match(app, /renderJourneyFallback/);
 	assert.match(
+		app,
+		/function renderHome\([\s\S]*<section class="home-hero">[\s\S]*id="journey-canvas"[\s\S]*<section class="journey-dock"/,
+	);
+	assert.doesNotMatch(app, /class="journey-layout"/);
+	assert.doesNotMatch(app, /class="journey-card"/);
+	assert.match(
 		fs.readFileSync(path.join(root, "public", "styles.css"), "utf8"),
 		/\.journey-fallback\[hidden\]\s*\{[^}]*display:\s*none/s,
 	);
@@ -243,6 +270,7 @@ test("self-hosts pinned Three.js with fallback, lifecycle, and mirrored controls
 
 test("keeps beta access and legal links on the redesigned landing", () => {
 	const app = fs.readFileSync(path.join(root, "public", "app.js"), "utf8");
+	assert.match(app, /<strong>Internship & Coffee Chat<\/strong>/);
 	assert.match(app, /Request access/);
 	assert.match(app, /\/auth\/google\/request/);
 	assert.match(app, /Privacy Policy/);

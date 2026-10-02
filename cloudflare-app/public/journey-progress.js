@@ -135,7 +135,7 @@
 				actionLabel: "Open Analytics",
 			},
 			journey: {
-				title: "Career journey",
+				title: "Career Journey",
 				description:
 					"The desk path reflects the stages you have actually reached: Saved, Applied, Interview, and Offer.",
 				stats: metrics.milestones.map((milestone) => [
