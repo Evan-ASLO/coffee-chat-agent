@@ -2424,6 +2424,152 @@ describe.sequential("internship jobs platform", () => {
 	});
 });
 
+describe("account-scoped analytics", () => {
+	it("returns bounded honest metrics for only the authenticated user", async () => {
+		const bindings = env as unknown as AppBindings;
+		const userA = await authenticatedTestUser("analytics-a");
+		const userB = await authenticatedTestUser("analytics-b");
+		const runId = crypto.randomUUID();
+		const now = new Date().toISOString();
+		const company = `Analytics Company ${crypto.randomUUID()}`;
+		const firstJobId = await sha256Hex(`analytics\n${crypto.randomUUID()}`);
+		const secondJobId = await sha256Hex(`analytics\n${crypto.randomUUID()}`);
+		await bindings.DB.prepare(
+			`INSERT INTO job_import_runs(
+			   id, schema_version, snapshot_hash, content_hash, generated_at,
+			   generated_epoch, received_at, applied_at, status, job_count
+			 ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, 'APPLIED', 2)`,
+		)
+			.bind(
+				runId,
+				firstJobId,
+				secondJobId,
+				now,
+				Date.now(),
+				now,
+				now,
+			)
+			.run();
+		for (const [id, title] of [
+			[firstJobId, "Analytics Internship One"],
+			[secondJobId, "Analytics Internship Two"],
+		] as const) {
+			await bindings.DB.prepare(
+				`INSERT INTO jobs(
+				   id, source, company, company_normalized, title,
+				   title_normalized, location, region, categories_json, url,
+				   canonical_url, is_active, first_seen_at, last_seen_at,
+				   latest_import_run_id, created_at, updated_at
+				 ) VALUES (?, 'workday', ?, ?, ?, ?, 'Toronto, ON', 'Canada',
+				           '["Internship"]', ?, ?, 1, ?, ?, ?, ?, ?)`,
+			)
+				.bind(
+					id,
+					company,
+					company.toLowerCase(),
+					title,
+					title.toLowerCase(),
+					`https://jobs.example.com/${id}`,
+					`https://jobs.example.com/${id}`,
+					now,
+					now,
+					runId,
+					now,
+					now,
+				)
+				.run();
+		}
+
+		expect(
+			(
+				await authenticatedFetch(userA, `/api/jobs/${firstJobId}/state`, {
+					method: "PUT",
+					body: { status: "INTERVIEWING", notes: "Panel interview" },
+				})
+			).status,
+		).toBe(200);
+		expect(
+			(
+				await authenticatedFetch(userA, `/api/jobs/${secondJobId}/state`, {
+					method: "PUT",
+					body: { status: "OFFER", notes: "" },
+				})
+			).status,
+		).toBe(200);
+		expect(
+			(
+				await authenticatedFetch(userB, `/api/jobs/${firstJobId}/state`, {
+					method: "PUT",
+					body: { status: "APPLIED", notes: "" },
+				})
+			).status,
+		).toBe(200);
+
+		const prospects = await insertProspects(bindings, userA.user.id, [
+			testProspect("Analytics Draft", company),
+			testProspect("Analytics Sent", company),
+			testProspect("Analytics Reply", company),
+		]);
+		await bindings.DB.batch([
+			bindings.DB.prepare(
+				"UPDATE prospects SET status = 'DRAFT_READY', updated_at = ? WHERE id = ? AND user_id = ?",
+			).bind(now, prospects[0]!.id, userA.user.id),
+			bindings.DB.prepare(
+				"UPDATE prospects SET status = 'SENT', sent_at = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+			).bind(now, now, prospects[1]!.id, userA.user.id),
+			bindings.DB.prepare(
+				"UPDATE prospects SET status = 'REPLIED', sent_at = ?, last_reply_at = ?, updated_at = ? WHERE id = ? AND user_id = ?",
+			).bind(now, now, now, prospects[2]!.id, userA.user.id),
+		]);
+
+		const unauthenticated = await SELF.fetch("http://example.com/api/analytics");
+		expect(unauthenticated.status).toBe(401);
+
+		const responseA = await authenticatedFetch(userA, "/api/analytics");
+		expect(responseA.status).toBe(200);
+		const analyticsA = await responseA.json<{
+			applications: Record<string, number>;
+			networking: Record<string, number>;
+			topCompanies: Array<{ company: string; count: number }>;
+			activity: { days: Array<{ date: string; count: number }> };
+			recentActivity: Array<{ action: string; context: string }>;
+		}>();
+		expect(analyticsA.applications).toMatchObject({
+			total: 2,
+			inProgress: 1,
+			interviewing: 1,
+			offers: 1,
+			applied: 0,
+		});
+		expect(analyticsA.networking).toMatchObject({
+			tracked: 3,
+			drafts: 1,
+			sent: 2,
+			replied: 1,
+		});
+		expect(analyticsA.topCompanies).toContainEqual({ company, count: 2 });
+		expect(analyticsA.activity.days).toHaveLength(28);
+		expect(
+			analyticsA.recentActivity.some(
+				(entry) =>
+					entry.action === "JOB_STATE_UPDATED" &&
+					entry.context.includes(company),
+			),
+		).toBe(true);
+
+		const analyticsB = await (
+			await authenticatedFetch(userB, "/api/analytics")
+		).json<{ applications: Record<string, number>; networking: Record<string, number> }>();
+		expect(analyticsB.applications).toMatchObject({
+			total: 1,
+			applied: 1,
+			interviewing: 0,
+			offers: 0,
+		});
+		expect(analyticsB.networking.tracked).toBe(0);
+	});
+});
+
 function encryptionEnv(): AppBindings {
 	const key = Uint8Array.from({ length: 32 }, (_, index) => index + 1);
 	let binary = "";
