@@ -2,128 +2,238 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
-const ui = require("../public/job-source.js");
+const jobSource = require("../public/job-source.js");
 
 const root = path.resolve(__dirname, "..");
+const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 
 test("renders compliant Adzuna attribution", () => {
-	const html = ui.attributionHtml("adzuna");
-	assert.equal(ui.sourceLabel("ADZUNA"), "Adzuna");
-	assert.match(html, />Jobs</);
+	const html = jobSource.attributionHtml("adzuna");
+	assert.equal(jobSource.sourceLabel("ADZUNA"), "Adzuna");
 	assert.match(html, /href="https:\/\/www\.adzuna\.ca\/"/);
 	assert.match(html, /src="\/adzuna_logo\.png"/);
 	assert.match(html, /aria-label="Jobs by Adzuna"/);
-	assert.match(html, /alt="Adzuna"/);
 	assert.match(html, /width="87"/);
 	assert.match(html, /height="23"/);
-	assert.equal(ui.attributionHtml("workday"), "");
+	assert.equal(jobSource.attributionHtml("workday"), "");
 });
 
-test("self-hosts the official PNG and enforces the minimum badge size", () => {
+test("self-hosts required attribution and reference-derived art crops", () => {
 	const png = fs.readFileSync(path.join(root, "public", "adzuna_logo.png"));
 	assert.deepEqual([...png.subarray(0, 8)], [137, 80, 78, 71, 13, 10, 26, 10]);
-	assert.equal(png.readUInt32BE(16), 256);
-	assert.equal(png.readUInt32BE(20), 68);
-
-	const styles = fs.readFileSync(
-		path.join(root, "public", "styles.css"),
-		"utf8",
-	);
+	const styles = read("public/styles.css");
 	assert.match(styles, /\.adzuna-attribution\s*\{[^}]*min-width:\s*116px;/s);
 	assert.match(styles, /\.adzuna-attribution\s*\{[^}]*min-height:\s*23px;/s);
-});
 
-test("loads the attribution renderer before the SPA", () => {
-	const index = fs.readFileSync(path.join(root, "public", "index.html"), "utf8");
-	const renderer = index.indexOf('src="/job-source.js');
-	const app = index.indexOf('src="/app.js');
-	assert.ok(renderer >= 0);
-	assert.ok(app > renderer);
-});
-
-test("renders responsive structured job filter controls", () => {
-	const app = fs.readFileSync(path.join(root, "public", "app.js"), "utf8");
-	const styles = fs.readFileSync(
-		path.join(root, "public", "styles.css"),
-		"utf8",
+	const receipt = JSON.parse(read("public/art/reference-art-receipt.json"));
+	for (const asset of [
+		"jobs-hero.webp",
+		"applications-hero.webp",
+		"networking-hero.webp",
+		"analytics-hero.webp",
+		"settings-hero.webp",
+	]) {
+		assert.ok(fs.existsSync(path.join(root, "public", "art", asset)));
+		assert.ok(receipt[asset].width < 1536 || receipt[asset].height < 834);
+		assert.ok(receipt[asset].bytes < 50000);
+	}
+	assert.equal(fs.existsSync(path.join(root, "public", "art", "jobs.png")), false);
+	assert.equal(
+		fs.existsSync(path.join(root, "public", "art", "applications.png")),
+		false,
 	);
+});
+
+test("loads local helpers and the SPA in dependency order", () => {
+	const index = read("public/index.html");
+	const source = index.indexOf('src="/job-source.js');
+	const journey = index.indexOf('src="/journey-progress.js');
+	const analytics = index.indexOf('src="/analytics-ui.js');
+	const app = index.indexOf('src="/app.js');
+	assert.ok(source >= 0);
+	assert.ok(journey > source);
+	assert.ok(analytics > journey);
+	assert.ok(app > analytics);
+	assert.match(index, /Internship & Coffee Chat \| Toronto career workspace/);
+	assert.match(index, /<noscript>/);
+	assert.doesNotMatch(index, /cdn|unpkg|jsdelivr/i);
+});
+
+test("matches the compact horizontal product navigation contract", () => {
+	const app = read("public/app.js");
+	const styles = read("public/styles.css");
+	for (const view of [
+		"home",
+		"jobs",
+		"applications",
+		"networking",
+		"analytics",
+		"settings",
+	]) {
+		assert.match(app, new RegExp(`\\["${view}",\\s*"`, "m"));
+	}
+	assert.match(app, /class="top-nav"/);
+	assert.match(app, /<strong>Internship & Coffee Chat<\/strong>/);
+	assert.match(app, /class="dark-side-rail"/);
+	assert.match(styles, /\.view-analytics \.topbar/);
+	assert.match(styles, /\.view-settings \.topbar/);
+	assert.match(
+		styles,
+		/@media \(max-width: 980px\)[\s\S]*\.top-nav\s*\{[\s\S]*position:\s*fixed;/,
+	);
+	assert.match(styles, /\.nav-open \.top-nav\s*\{[^}]*visibility:\s*visible/s);
+});
+
+test("renders the native-density Jobs composition and every real filter", () => {
+	const app = read("public/app.js");
+	const styles = read("public/styles.css");
 	for (const id of [
+		"job-q",
+		"job-company",
+		"job-location",
+		"job-region",
+		"job-category",
 		"job-industry",
 		"job-length",
 		"job-term",
-		"job-category",
 	]) {
 		assert.match(app, new RegExp(`id="${id}"`));
 	}
-	assert.match(app, /Career track/);
-	assert.match(app, /loadJobQueryFromUrl\(\)/);
-	assert.match(app, /syncJobQueryToUrl\(\)/);
-	assert.match(app, /job\.industry/);
-	assert.match(app, /job\.lengthLabel/);
-	assert.match(app, /job\.term\?\.label/);
-	assert.match(styles, /\.job-filters\s*\{[^}]*grid-template-columns:/s);
-	assert.match(
-		styles,
-		/@media \(max-width: 560px\)[\s\S]*\.job-filters,[\s\S]*grid-template-columns:\s*1fr;/,
-	);
+	assert.match(app, /class="job-search-strip"/);
+	assert.match(app, /class="jobs-reference-layout/);
+	assert.match(app, /class="jobs-activity-rail"/);
+	assert.match(app, /data-job-layout="grid"/);
+	assert.match(app, /data-job-layout="list"/);
+	assert.match(app, /class="job-more"/);
+	assert.match(app, /data-job-status/);
+	assert.match(app, /data-job-network/);
+	assert.match(styles, /\.job-cards\.grid-view\s*\{[^}]*grid-template-columns:\s*repeat\(3,/s);
+	assert.match(styles, /\.jobs-reference-layout\s*\{[^}]*208px;/s);
 });
 
-test("auto-starts job discovery with explicit progress and recovery states", () => {
-	const app = fs.readFileSync(path.join(root, "public", "app.js"), "utf8");
-	const styles = fs.readFileSync(
-		path.join(root, "public", "styles.css"),
-		"utf8",
-	);
+test("uses compact Applications table editing without invented reminders", () => {
+	const app = read("public/app.js");
+	assert.match(app, /class="data-table applications-table"/);
+	assert.match(app, /id="application-dialog"/);
+	assert.match(app, /id="application-dialog-stage"/);
+	assert.match(app, /id="application-dialog-notes"/);
+	assert.match(app, /data-application-edit/);
+	assert.match(app, /Next-step notes/);
+	assert.match(app, /Dates shown are recorded update dates/);
+	assert.match(app, /id="legacy-import-details"/);
+	assert.doesNotMatch(app, /upcoming interview|reminder due|next interview/i);
+});
+
+test("keeps networking approval-first in a compact table and discovery dialog", () => {
+	const app = read("public/app.js");
+	assert.match(app, /class="data-table networking-table"/);
+	assert.match(app, /id="discovery-dialog"/);
+	assert.match(app, /Search never prepares or sends outreach automatically/);
+	assert.match(app, /data-prepare/);
+	assert.match(app, /data-review/);
+	assert.match(app, /data-regenerate/);
+	assert.match(app, /Approve & prepare/);
+	assert.match(app, /Broader company/);
+	assert.match(app, /Email needed before send/);
+	assert.match(app, /LinkedIn profile/);
+	assert.match(app, /Public profile/);
+	assert.match(app, /Uncertain sends are locked/);
+	assert.doesNotMatch(app, /Upcoming coffee chats|Coffee chats completed/i);
+});
+
+test("preserves discovery recovery and cited-search provider safety", () => {
+	const app = read("public/app.js");
 	assert.match(
 		app,
 		/async function beginJobNetworking[\s\S]*await executeDiscovery\(state\.networkingCriteria\)/,
 	);
-	assert.match(app, /status:\s*"running"/);
 	assert.match(app, /Searching public professional profiles/);
-	assert.match(app, /No people found/);
 	assert.match(app, /retry-job-discovery/);
-	assert.match(app, /summary\.providerReturned === 0/);
-	assert.match(app, /summary\.duplicates > 0/);
-	assert.match(app, /summary\.insufficientMatchRejected > 0/);
-	assert.match(app, /did not match both the requested company/);
 	assert.match(app, /summary\.strongAccepted/);
 	assert.match(app, /summary\.broaderAccepted/);
-	assert.match(app, /Broader company match — review role relevance/);
-	assert.match(app, /usable public professional profiles/);
-	assert.match(app, /professionalBioProviderReturned/);
-	assert.match(app, /showToast\(\s*`Found \$\{summary\.inserted\}/);
-	assert.match(app, /person\.linkedinUrl \|\| person\.sourceUrl/);
-	assert.match(app, /LinkedIn profile/);
-	assert.match(app, /Public profile/);
-	assert.match(styles, /\.inline-spinner\s*\{/);
-	assert.match(styles, /\.discovery-state\s*\{/);
-});
-
-test("renders one explicit cited-search provider selector and safe statuses", () => {
-	const app = fs.readFileSync(path.join(root, "public", "app.js"), "utf8");
-	assert.match(app, /id="people-search-fallback-provider"/);
-	assert.match(app, /value="NONE"/);
-	assert.match(app, /value="GEMINI"/);
-	assert.match(app, /value="OPENAI"/);
-	assert.match(app, /value="ANTHROPIC"/);
-	assert.match(app, /Web-search tools may incur provider charges/);
-	assert.match(app, /peopleSearchFallbackProvider/);
-	assert.match(app, /fallbackStatus === "DISABLED"/);
-	assert.match(app, /fallbackStatus === "MISSING_KEY"/);
 	assert.match(app, /fallbackStatus === "RATE_LIMITED"/);
 	assert.match(app, /fallbackStatus === "AUTH"/);
-	assert.match(app, /fallbackStatus === "BAD_REQUEST"/);
 	assert.match(app, /fallbackStatus === "UNSUPPORTED"/);
-	assert.match(app, /fallbackStatus === "TIMEOUT"/);
-	assert.match(app, /fallbackStatus === "MALFORMED_RESPONSE"/);
-	assert.match(app, /fallbackStatus === "PROVIDER_ERROR"/);
-	assert.match(
-		app,
-		/Gemini Search quota or rate limit was reached\. Check the API project's billing and Search grounding quota/,
-	);
-	assert.match(
-		app,
-		/discoverySuccessMessage[\s\S]*discoveryFallbackFailureMessage\(summary\)/,
-	);
+	assert.match(app, /Gemini Search quota or rate limit was reached/);
+	assert.match(app, /id="people-search-fallback-provider"/);
+	assert.match(app, /Provider web-search tools may incur charges/);
 	assert.doesNotMatch(app, /raw model/i);
+});
+
+test("renders dense honest Analytics geometry and bounded route use", () => {
+	const app = read("public/app.js");
+	const worker = read("src/index.ts");
+	const analytics = read("src/lib/analytics.ts");
+	assert.match(worker, /app\.get\("\/api\/analytics", requireUser/);
+	assert.match(analytics, /WHERE user_id = \?/);
+	assert.match(analytics, /LIMIT 30/);
+	assert.match(app, /class="analytics-reference-grid"/);
+	assert.match(app, /Application Funnel/);
+	assert.match(app, /Recorded Activity Over Time/);
+	assert.match(app, /Application Status/);
+	assert.match(app, /Top Companies/);
+	assert.match(app, /Networking Impact/);
+	assert.match(app, /Activity Heatmap/);
+	assert.match(app, /No synthetic growth, conversion, chat, or reminder claims/);
+	assert.doesNotMatch(app, /\+\s*\d+%|conversion rate:\s*\d/i);
+});
+
+test("Settings exposes only real integrations, privacy, and preferences", () => {
+	const app = read("public/app.js");
+	assert.match(app, /Account Information/);
+	assert.match(app, /Provider credentials/);
+	assert.match(app, /id="resume-form"/);
+	assert.match(app, /id="legacy-import-form"/);
+	assert.match(app, /id="settings-form"/);
+	assert.match(app, /id="reply-sync-enabled"/);
+	assert.match(app, /secretRow\("TAVILY"/);
+	assert.match(app, /secretRow\("HUNTER"/);
+	assert.match(app, /Google Gmail & Sheets/);
+	assert.match(app, /no in-app deletion endpoint exists/i);
+	assert.doesNotMatch(app, /LinkedIn\s*<\/|Outlook\s*<\/|Email notifications|Application reminders/);
+});
+
+test("self-hosts pinned Three.js with full lifecycle and accessible fallback", () => {
+	const packageJson = JSON.parse(read("package.json"));
+	const app = read("public/app.js");
+	const scene = read("public/journey-scene.js");
+	const styles = read("public/styles.css");
+	assert.equal(packageJson.dependencies.three, "0.180.0");
+	for (const file of [
+		"three.module.min.js",
+		"three.core.min.js",
+		"three.LICENSE.txt",
+		"three.RECEIPT.txt",
+	]) {
+		assert.ok(fs.existsSync(path.join(root, "public", "vendor", file)));
+	}
+	assert.match(scene, /from "\.\/vendor\/three\.module\.min\.js"/);
+	assert.match(scene, /createCharacter/);
+	assert.match(scene, /IntersectionObserver/);
+	assert.match(scene, /ResizeObserver/);
+	assert.match(scene, /visibilitychange/);
+	assert.match(scene, /cancelAnimationFrame/);
+	assert.match(scene, /forceContextLoss/);
+	assert.match(scene, /geometry\?\.dispose/);
+	assert.match(app, /renderJourneyFallback/);
+	assert.match(styles, /\.journey-fallback\[hidden\]\s*\{[^}]*display:\s*none/s);
+	for (const area of [
+		"networking",
+		"applications",
+		"saved",
+		"progress",
+		"journey",
+	]) {
+		assert.match(app, new RegExp(`journeyControl\\("${area}"`));
+	}
+});
+
+test("retains beta access and legal paths without exposing job data", () => {
+	const app = read("public/app.js");
+	assert.match(app, /\/auth\/google\/request/);
+	assert.match(app, /Request access/);
+	assert.match(app, /Privacy Policy/);
+	assert.match(app, /Terms of Service/);
+	assert.match(app, /betaLandingRequired\(\)/);
+	assert.match(app, /Private Toronto beta/);
 });

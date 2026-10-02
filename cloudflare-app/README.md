@@ -1,17 +1,31 @@
 # Internship & Coffee Chat Cloudflare app
 
-This directory is the deployed Cloudflare Worker, D1 schema, queue consumer, tests, and no-build SPA for the combined internship-tracking and coffee-chat product. The root Google Apps Script fallback is intentionally separate.
+This directory is the deployed Cloudflare Worker, D1 schema, queue consumer, tests, and no-build SPA for the combined internship-tracking and coffee-chat product. The interface uses compact, page-specific layouts and clean decorative crops derived from user-provided Toronto workspace references; every control and data value remains live HTML. The root Google Apps Script fallback is intentionally separate.
 
 ## Local development
 
 ```powershell
 Copy-Item .dev.vars.example .dev.vars
 npm install
+npm run vendor:three
 npm run db:migrate:local
 npm run dev
 ```
 
 Configure the existing Google/encryption values plus `JOBS_INGEST_SECRET` in `.dev.vars`. `BETA_ACCESS_MODE` defaults to `OPEN` when absent for backward compatibility. `ENABLE_JOB_OUTREACH_LINKING` defaults to false when absent; keep it false for preview unless deliberately testing the gated job-link flow. Never commit `.dev.vars`. Apply migrations remotely only as a separately approved deployment step.
+
+## No-build client, reference art, and Career Journey
+
+- The SPA remains plain HTML, CSS, and browser JavaScript served by the Worker assets binding.
+- Clean, optimized WebP crops under `public/art/` contain only decorative office/skyline/desk regions from the user's supplied references. Full uploaded screenshots, baked controls, example metrics, profile details, and owner information are not committed.
+- `public/art/reference-art-receipt.json` records the source filename and crop rectangle for each committed derivative.
+- Three.js is pinned exactly in `package.json` and copied from the official npm package by `npm run vendor:three`; its self-hosted module/core files, MIT license, and receipt live under `public/vendor/`.
+- The Home Career Journey scene loads only on Home, mirrors pointer interactions with keyboard/touch controls, lowers quality on mobile, respects reduced motion, pauses offscreen/when hidden, and disposes all renderer resources and listeners on navigation.
+- The styled HTML fallback remains available when WebGL is unsupported.
+
+## Account-scoped analytics
+
+`GET /api/analytics` is authenticated and ownership-scoped. It uses bounded queries over existing job state, prospect, job, and audit tables to return current application/networking counts, top companies, a 28-day recorded-activity series, and recent activity. It requires no migration and does not fabricate growth, conversion, coffee-chat, reminder, or future-event data.
 
 ## Approved-email beta
 
@@ -118,6 +132,7 @@ Job cards normalize source names for display without exposing publisher credenti
 - `GET /api/jobs`: public bounded search/filter/pagination plus safe catalog freshness (`never-imported`, `fresh`, or `stale`) and feature flags; authenticated requests also receive their own state and outreach summary.
 - `GET /api/jobs/:id`: public active-job detail with the same freshness and feature metadata.
 - `GET /api/job-states`: authenticated, bounded private tracking list.
+- `GET /api/analytics`: authenticated, bounded current-status and audit-backed activity summary for the signed-in user.
 - `PUT /api/jobs/:id/state`: authenticated/CSRF-protected upsert for `SAVED`, `APPLIED`, `INTERVIEWING`, `REJECTED`, `OFFER`, or `ARCHIVED`.
 - `DELETE /api/jobs/:id/state`: authenticated/CSRF-protected removal.
 - `POST /api/job-states/import-legacy`: authenticated one-time import.

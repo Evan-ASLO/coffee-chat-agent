@@ -1,0 +1,122 @@
+{
+  "jobs-hero.webp": {
+    "source": "jobs.png",
+    "crop": [
+      680,
+      88,
+      1536,
+      304
+    ],
+    "width": 856,
+    "height": 216,
+    "bytes": 20790
+  },
+  "jobs-rail.webp": {
+    "source": "jobs.png",
+    "crop": [
+      1295,
+      392,
+      1524,
+      577
+    ],
+    "width": 229,
+    "height": 185,
+    "bytes": 5976
+  },
+  "applications-hero.webp": {
+    "source": "applications.png",
+    "crop": [
+      500,
+      82,
+      1536,
+      351
+    ],
+    "width": 1036,
+    "height": 269,
+    "bytes": 39070
+  },
+  "applications-desk.webp": {
+    "source": "applications.png",
+    "crop": [
+      350,
+      908,
+      1165,
+      1024
+    ],
+    "width": 815,
+    "height": 116,
+    "bytes": 8946
+  },
+  "networking-hero.webp": {
+    "source": "networking.png",
+    "crop": [
+      500,
+      74,
+      1536,
+      321
+    ],
+    "width": 1036,
+    "height": 247,
+    "bytes": 39774
+  },
+  "networking-desk.webp": {
+    "source": "networking.png",
+    "crop": [
+      285,
+      908,
+      1162,
+      1024
+    ],
+    "width": 877,
+    "height": 116,
+    "bytes": 14120
+  },
+  "analytics-hero.webp": {
+    "source": "analytics.png",
+    "crop": [
+      650,
+      72,
+      1834,
+      289
+    ],
+    "width": 1184,
+    "height": 217,
+    "bytes": 36920
+  },
+  "settings-hero.webp": {
+    "source": "settings.png",
+    "crop": [
+      730,
+      84,
+      1885,
+      269
+    ],
+    "width": 1155,
+    "height": 185,
+    "bytes": 30010
+  },
+  "settings-notebook.webp": {
+    "source": "settings.png",
+    "crop": [
+      1605,
+      632,
+      1885,
+      834
+    ],
+    "width": 280,
+    "height": 202,
+    "bytes": 8450
+  },
+  "analytics-side.webp": {
+    "source": "analytics.png",
+    "crop": [
+      1702,
+      286,
+      1834,
+      858
+    ],
+    "width": 132,
+    "height": 572,
+    "bytes": 14364
+  }
+}
