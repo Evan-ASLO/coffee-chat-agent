@@ -79,7 +79,6 @@ import {
 	listBetaAccessAdmin,
 	revokeBetaEmail,
 } from "./lib/beta";
-import { getUserAnalytics } from "./lib/analytics";
 
 const app = new Hono<AppEnvironment>();
 
@@ -211,10 +210,6 @@ app.get("/api/session", async (c) => {
 		prospects,
 		resume,
 	});
-});
-
-app.get("/api/analytics", requireUser, async (c) => {
-	return c.json(await getUserAnalytics(c.env, c.get("user")!.id));
 });
 
 app.get("/api/beta/admin/access", requireUser, async (c) => {

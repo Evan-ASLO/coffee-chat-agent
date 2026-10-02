@@ -4,19 +4,9 @@ const APPLICATION_STATUSES = [
 	"OFFER",
 	"REJECTED",
 ];
-const PRIMARY_VIEWS = [
-	"home",
-	"jobs",
-	"applications",
-	"networking",
-	"analytics",
-	"settings",
-];
 
 const state = {
 	session: null,
-	analytics: null,
-	analyticsError: "",
 	jobs: {
 		jobs: [],
 		pagination: { page: 1, pageSize: 24, total: 0, totalPages: 0 },
@@ -47,15 +37,7 @@ const state = {
 		page: 1,
 		pageSize: 24,
 	},
-	tab: "home",
-	jobMode: "all",
-	jobLayout: "grid",
-	applicationFilter: "ALL",
-	applicationSearch: "",
-	railCollapsed: false,
-	mobileNavOpen: false,
-	journeyFocus: "journey",
-	renderToken: 0,
+	tab: "jobs",
 	networkingJob: null,
 	networkingCriteria: null,
 	networkingSearch: {
@@ -69,8 +51,6 @@ const state = {
 const app = document.getElementById("app");
 const toast = document.getElementById("toast");
 const dialog = document.getElementById("draft-dialog");
-let journeyController = null;
-let journeyModulePromise = null;
 
 document.addEventListener("DOMContentLoaded", load);
 document.getElementById("save-draft").addEventListener("click", saveDraft);
@@ -80,13 +60,8 @@ async function load() {
 	try {
 		loadJobQueryFromUrl();
 		state.session = await api("/api/session");
-		state.tab = state.session?.authenticated ? initialView() : "jobs";
 		if (!betaLandingRequired()) {
-			await Promise.all([
-				loadJobData(),
-				loadBetaAdminData(),
-				loadAnalyticsData(),
-			]);
+			await Promise.all([loadJobData(), loadBetaAdminData()]);
 		}
 		render();
 	} catch (error) {
@@ -95,8 +70,6 @@ async function load() {
 }
 
 function render() {
-	destroyJourneyScene();
-	state.renderToken += 1;
 	const authenticated = Boolean(state.session?.authenticated);
 	if (betaLandingRequired()) {
 		renderBetaLanding();
@@ -104,89 +77,48 @@ function render() {
 	}
 	const user = state.session?.user;
 	const credentials = state.session?.credentials;
-	const navItems = authenticated
-		? [
-				["home", "Home", "home"],
-				["jobs", "Jobs", "briefcase"],
-				["applications", "Applications", "layers"],
-				["networking", "Networking", "people"],
-				["analytics", "Analytics", "chart"],
-				["settings", "Settings", "settings"],
-			]
-		: [["jobs", "Jobs", "briefcase"]];
 	app.innerHTML = `
-		<a class="skip-link" href="#main-content">Skip to main content</a>
 		<header class="topbar">
-			<button class="mobile-nav-toggle" id="mobile-nav-toggle" aria-expanded="${state.mobileNavOpen}" aria-controls="primary-navigation">
-				${icon("menu")}<span class="sr-only">Toggle navigation</span>
-			</button>
-			<button class="brand brand-button" data-nav="${authenticated ? "home" : "jobs"}" aria-label="Internship & Coffee Chat home">
-				<span class="brand-mark" aria-hidden="true">CC</span>
-				<span>
-					<strong>Internship & Coffee Chat</strong>
-					<small>Toronto career workspace</small>
-				</span>
-			</button>
+			<div class="brand">
+				<div class="brand-mark">CC</div>
+				<div>
+					<h1>Internship & Coffee Chat</h1>
+					<p>Find roles, track applications, and reach the people behind them.</p>
+				</div>
+			</div>
 			<div class="top-actions">
 				${
 					authenticated
-						? `${credentials.GOOGLE.configured ? "" : '<a class="button button-on-dark" href="/auth/google/connect">Connect Google</a>'}
-							<span class="user-pill"><span class="user-avatar" aria-hidden="true">${escapeHtml(userInitials(user))}</span><span><strong>${escapeHtml(user.name || user.email)}</strong><small>${escapeHtml(user.email)}</small></span></span>
-							<button id="logout" class="button-on-dark">Sign out</button>`
+						? `<span>${escapeHtml(user.email)}</span>
+							${credentials.GOOGLE.configured ? "" : '<a class="button" href="/auth/google/connect">Connect Gmail & Sheets</a>'}
+							<button id="logout">Sign out</button>`
 						: '<a class="button primary" href="/auth/google/login">Sign in with Google</a>'
 				}
 			</div>
 		</header>
-		<div class="workspace-shell ${state.railCollapsed ? "rail-collapsed" : ""} ${state.mobileNavOpen ? "nav-open" : ""}">
-			<aside class="sidebar" id="primary-navigation" aria-label="Workspace navigation">
-				<nav class="primary-nav" aria-label="Primary">
-					${navItems
-						.map(
-							([id, label, iconName]) => `<button data-nav="${id}" class="${state.tab === id ? "active" : ""}" ${state.tab === id ? 'aria-current="page"' : ""}>
-								${icon(iconName)}<span>${label}</span>
-							</button>`,
-						)
-						.join("")}
-				</nav>
-				${
-					authenticated
-						? `<div class="sidebar-progress">
-								<p class="eyebrow">Your workspace</p>
-								<strong>${state.analytics?.applications?.inProgress || 0} in-progress ${Number(state.analytics?.applications?.inProgress || 0) === 1 ? "application" : "applications"}</strong>
-								<span>${state.analytics?.networking?.drafts || 0} outreach ${Number(state.analytics?.networking?.drafts || 0) === 1 ? "draft" : "drafts"} ready</span>
-							</div>
-							<button id="rail-toggle" class="rail-toggle">${icon(state.railCollapsed ? "chevron-right" : "chevron-left")}<span>${state.railCollapsed ? "Expand" : "Collapse"} navigation</span></button>`
-						: ""
-				}
-			</aside>
-			<button class="nav-scrim" id="nav-scrim" aria-label="Close navigation"></button>
-			<div class="content-shell">
-				<main id="main-content" tabindex="-1">${renderTab()}</main>
-				${legalLinks()}
-			</div>
-		</div>`;
+		<nav class="tabs ${authenticated ? "tabs-authenticated" : "tabs-public"} ${state.session?.isBetaAdmin ? "tabs-admin" : ""}" aria-label="Primary">
+			${tabButton("jobs", "Jobs")}
+			${
+				authenticated
+					? `${tabButton("saved", "Saved")}
+						${tabButton("applications", "Applications")}
+						${tabButton("networking", "Networking")}
+						${tabButton("settings", "Settings")}
+						${state.session.isBetaAdmin ? tabButton("beta-access", "Beta access") : ""}`
+					: ""
+			}
+		</nav>
+		${authenticated ? renderStats() : ""}
+		<main>${renderTab()}</main>
+		${legalLinks()}`;
 	document.getElementById("logout")?.addEventListener("click", logout);
-	document.querySelectorAll("[data-nav]").forEach((button) =>
+	document.querySelectorAll("[data-tab]").forEach((button) =>
 		button.addEventListener("click", () => {
-			navigate(button.dataset.nav);
+			state.tab = button.dataset.tab;
+			render();
 		}),
 	);
-	document.getElementById("mobile-nav-toggle")?.addEventListener("click", () => {
-		state.mobileNavOpen = !state.mobileNavOpen;
-		render();
-	});
-	document.getElementById("nav-scrim")?.addEventListener("click", () => {
-		state.mobileNavOpen = false;
-		render();
-	});
-	document.getElementById("rail-toggle")?.addEventListener("click", () => {
-		state.railCollapsed = !state.railCollapsed;
-		render();
-	});
 	wireTab();
-	if (authenticated && state.tab === "home") {
-		mountJourneyScene(state.renderToken);
-	}
 }
 
 function renderBetaLanding() {
@@ -198,51 +130,47 @@ function renderBetaLanding() {
 				<div class="brand-mark">CC</div>
 				<div>
 					<strong>Internship & Coffee Chat</strong>
-					<span>Private Toronto beta</span>
+					<span>Private beta</span>
 				</div>
 			</div>
-			<div class="beta-landing-grid">
-				<div class="beta-landing-copy">
-					<p class="eyebrow">One calm career workspace</p>
-					<h1>Move from opportunity to conversation to offer.</h1>
-					<p>Internship & Coffee Chat brings internship search, application tracking, and approval-first professional outreach into one secure private-beta workspace.</p>
+			<div class="beta-landing-copy">
+				<p class="eyebrow">Approved-email beta</p>
+				<h1>Find internships and build thoughtful professional connections.</h1>
+				<p>The combined internship tracker and approval-first Coffee Chat workspace is currently open to a small private-beta group while catalog reliability, privacy, and operations are validated.</p>
 				${
 					requested
 						? '<p class="notice">Thanks. If this Google account can be considered for the beta, the request has been recorded. This confirmation is intentionally the same for every account.</p>'
 						: ""
 				}
-					<div class="actions beta-actions">
-						<a class="button primary" href="/auth/google/login">Sign in with Google</a>
-						<a class="button" href="/auth/google/request">Request access</a>
-					</div>
-					<p class="beta-privacy">Request access verifies your Google email and records only the minimum information needed to review the request. It does not create a normal app account or session unless approved.</p>
+				<div class="actions beta-actions">
+					<a class="button primary" href="/auth/google/login">Sign in with Google</a>
+					<a class="button" href="/auth/google/request">Request access</a>
 				</div>
-				<div class="landing-illustration" aria-hidden="true">
-					<div class="landing-skyline"></div>
-					<div class="landing-desk">
-						<span class="landing-cup"></span>
-						<span class="landing-laptop"></span>
-						<span class="landing-notebook"></span>
-						<span class="landing-plant"></span>
-					</div>
-				</div>
+				<p class="beta-privacy">Request access verifies your Google email and records only the minimum information needed to review the request. It does not create a normal app account or session unless approved.</p>
 			</div>
 			${legalLinks()}
 		</section>`;
 }
 
 function renderStats() {
-	const metrics = journeyMetrics();
-	return `<section class="stats" aria-label="Career workspace summary">
-		${stat(state.jobs.pagination.total, "Open roles", "briefcase")}
-		${stat(metrics.saved, "Saved roles", "bookmark")}
-		${stat(metrics.activeApplications, "Active applications", "layers")}
-		${stat(metrics.peopleTracked, "People tracked", "people")}
+	const prospects = state.session.prospects;
+	const tracked = state.trackedJobs.jobs;
+	const saved = tracked.filter((job) => job.userState?.status === "SAVED").length;
+	const activeApplications = tracked.filter((job) =>
+		["APPLIED", "INTERVIEWING", "OFFER"].includes(job.userState?.status),
+	).length;
+	return `<section class="stats">
+		${stat(state.jobs.pagination.total, "Open internships")}
+		${stat(saved, "Saved roles")}
+		${stat(activeApplications, "Active applications")}
+		${stat(prospects.length, "People tracked")}
 	</section>`;
 }
 
 function renderTab() {
-	if (state.tab === "home" && state.session?.authenticated) return renderHome();
+	if (state.tab === "saved" && state.session?.authenticated) {
+		return renderSaved();
+	}
 	if (state.tab === "applications" && state.session?.authenticated) {
 		return renderApplications();
 	}
@@ -252,270 +180,103 @@ function renderTab() {
 	if (state.tab === "settings" && state.session?.authenticated) {
 		return renderSettings();
 	}
-	if (state.tab === "analytics" && state.session?.authenticated) {
-		return renderAnalytics();
+	if (
+		state.tab === "beta-access" &&
+		state.session?.authenticated &&
+		state.session.isBetaAdmin
+	) {
+		return renderBetaAccessAdmin();
 	}
 	return renderJobs();
 }
 
-function renderHome() {
-	const metrics = journeyMetrics();
-	const detail = window.CareerJourney.detailFor(state.journeyFocus, metrics);
-	const firstName = String(state.session.user.name || "")
-		.trim()
-		.split(/\s+/)[0];
-	return `
-		<section class="home-hero">
-			<div class="home-hero-copy">
-				<p class="eyebrow">Career Journey</p>
-				<h1>${firstName ? `Welcome back, ${escapeHtml(firstName)}.` : "Welcome back."}</h1>
-				<p>Build momentum across opportunities, applications, and relationships. Every object on the desk reflects your current workspace data.</p>
-				<div class="actions hero-actions">
-					<button class="primary" data-nav="jobs">Explore jobs</button>
-					<button class="button-on-hero" data-nav="networking">Grow your network</button>
-				</div>
-				${renderStats()}
-			</div>
-			<article class="home-scene-panel">
-				<div class="home-scene-heading">
-					<div>
-						<p class="eyebrow">Interactive Toronto workspace</p>
-						<h2>Your career desk</h2>
-						<p>Hover or tap an object to focus its real workspace data.</p>
-					</div>
-					<button id="journey-reset" class="icon-text-button">${icon("reset")} Reset</button>
-				</div>
-				<div id="journey-canvas" class="journey-canvas" aria-busy="true">
-					${renderJourneyFallback(metrics)}
-				</div>
-			</article>
-			<div class="hero-orbit hero-orbit-one" aria-hidden="true"></div>
-			<div class="hero-orbit hero-orbit-two" aria-hidden="true"></div>
-		</section>
-		<section class="journey-dock" aria-label="Career Journey controls">
-			<div>
-				<p class="eyebrow">Explore the scene</p>
-				<p>Canvas interactions are mirrored here for keyboard and touch.</p>
-			</div>
-			<div class="journey-controls" aria-label="Career Journey objects">
-				${journeyControl("networking", "Coffee cup", "Networking", "cup")}
-				${journeyControl("applications", "Laptop", "Applications", "laptop")}
-				${journeyControl("saved", "Notebook", "Saved roles", "notebook")}
-				${journeyControl("progress", "Plant", "Overall progress", "plant")}
-				${journeyControl("journey", "Path", "Milestones", "path")}
-			</div>
-		</section>
-		<section class="journey-detail" id="journey-detail" aria-live="polite" aria-label="Selected Career Journey detail">
-			${renderJourneyDetail(detail)}
-		</section>
-		<section class="home-grid">
-			${renderHomeNextStep(metrics)}
-			${renderRecentActivity(5)}
-		</section>`;
-}
-
-function renderJourneyFallback(metrics) {
-	return `<div class="journey-fallback" id="journey-fallback">
-		<div class="fallback-skyline" aria-hidden="true"></div>
-		<div class="fallback-desk" aria-hidden="true">
-			<span class="fallback-path path-level-${metrics.pathLevel}"></span>
-			<span class="fallback-cup"></span>
-			<span class="fallback-laptop ${metrics.activeApplications ? "active" : ""}"></span>
-			<span class="fallback-notebook"><b>${metrics.saved}</b></span>
-			<span class="fallback-plant plant-level-${metrics.plantLevel}"></span>
-		</div>
-		<p><strong>Career Journey fallback</strong><span>The accessible controls below show the same live data when 3D graphics are unavailable or motion is reduced.</span></p>
-	</div>`;
-}
-
-function journeyControl(area, objectLabel, productLabel, iconName) {
-	return `<button data-journey-target="${area}" class="${state.journeyFocus === area ? "active" : ""}">
-		${icon(iconName)}<span><small>${objectLabel}</small><strong>${productLabel}</strong></span>
-	</button>`;
-}
-
-function renderJourneyDetail(detail) {
-	return `<div class="journey-detail-inner">
-		<div class="journey-detail-copy">
-			<p class="eyebrow">Live workspace data</p>
-			<h2>${escapeHtml(detail.title)}</h2>
-			<p>${escapeHtml(detail.description)}</p>
-		</div>
-		<div class="journey-detail-stats">
-			${detail.stats
-				.map(
-					([entry, label]) =>
-						`<div><strong>${Number(entry || 0)}</strong><span>${escapeHtml(label)}</span></div>`,
-				)
-				.join("")}
-		</div>
-		<button class="primary" data-journey-action="${detail.actionView}" ${detail.actionMode ? `data-journey-mode="${detail.actionMode}"` : ""}>${escapeHtml(detail.actionLabel)}</button>
-	</div>`;
-}
-
-function renderHomeNextStep(metrics) {
-	let title = "Explore opportunities";
-	let copy = "Start with the live job catalog and save roles worth a closer look.";
-	let view = "jobs";
-	let mode = "all";
-	if (metrics.drafts > 0) {
-		title = "Review outreach drafts";
-		copy = `${metrics.drafts} ${metrics.drafts === 1 ? "draft is" : "drafts are"} waiting for your explicit approval.`;
-		view = "networking";
-	} else if (metrics.saved > 0 && metrics.totalApplications === 0) {
-		title = "Turn a saved role into an application";
-		copy = `${metrics.saved} saved ${metrics.saved === 1 ? "role is" : "roles are"} ready for review.`;
-		mode = "saved";
-	} else if (metrics.activeApplications > 0 && metrics.peopleTracked === 0) {
-		title = "Add people context";
-		copy =
-			"Your application pipeline is active. Use job-linked or independent discovery to find relevant public professional profiles.";
-		view = "networking";
-	} else if (metrics.activeApplications > 0 || metrics.peopleTracked > 0) {
-		title = "Review your momentum";
-		copy =
-			"Use Analytics to see your current application distribution and recorded workspace activity.";
-		view = "analytics";
-	}
-	return `<article class="feature-card next-step-card">
-		<span class="feature-icon">${icon("compass")}</span>
-		<p class="eyebrow">Useful next step</p>
-		<h2>${escapeHtml(title)}</h2>
-		<p>${escapeHtml(copy)}</p>
-		<button class="secondary" data-home-next="${view}" data-home-mode="${mode}">Continue</button>
-	</article>`;
-}
-
 function renderJobs() {
-	const catalogJobs = state.jobs.jobs;
-	const savedJobs = state.trackedJobs.jobs.filter(
-		(job) => job.userState?.status === "SAVED",
-	);
-	const jobs = state.jobMode === "saved" ? savedJobs : catalogJobs;
-	const pagination =
-		state.jobMode === "saved"
-			? {
-					page: 1,
-					pageSize: savedJobs.length,
-					total: savedJobs.length,
-					totalPages: savedJobs.length ? 1 : 0,
-				}
-			: state.jobs.pagination;
+	const { jobs, pagination } = state.jobs;
 	const linkingEnabled = jobOutreachLinkingEnabled();
 	return `
-		<section class="page-hero jobs-hero">
+		<section class="hero-panel">
 			<div>
-				<p class="eyebrow">Curated opportunity board</p>
-				<h1>Find work that moves you forward.</h1>
-				<p>Search current normalized postings, build a shortlist, and move roles into your application pipeline.${linkingEnabled ? " Job-linked networking is available for signed-in users." : ""}</p>
+				<p class="eyebrow">Public internship board</p>
+				<h2>Find your next opportunity</h2>
+				<p>Browse normalized postings without an account. Sign in to save roles and track applications.${linkingEnabled ? " Job-linked outreach is available during this preview." : ""}</p>
 			</div>
 			${state.session?.authenticated ? "" : '<a class="button primary" href="/auth/google/login">Sign in to track progress</a>'}
 		</section>
 		${renderCatalogWarning()}
-		<div class="view-switcher" role="group" aria-label="Job collection">
-			<button data-job-mode="all" class="${state.jobMode === "all" ? "active" : ""}">All jobs <span>${state.jobs.pagination.total}</span></button>
-			${
-				state.session?.authenticated
-					? `<button data-job-mode="saved" class="${state.jobMode === "saved" ? "active" : ""}">Saved <span>${savedJobs.length}</span></button>`
-					: ""
-			}
-		</div>
-		<div class="jobs-layout ${state.jobMode === "saved" ? "saved-layout" : ""}">
-			${
-				state.jobMode === "all"
-					? `<aside class="filter-panel" aria-label="Job filters">
-							<div class="filter-panel-heading">
-								<div>${icon("filter")}<span><strong>Filters</strong><small>Refine current roles</small></span></div>
-								<button type="button" id="clear-job-filters" class="text-button">Clear all</button>
-							</div>
-							<form id="job-filter-form" class="job-filters">
-								<label class="job-search">Search
-									<input id="job-q" value="${escapeAttr(state.jobQuery.q)}" placeholder="Title, company, location, or keyword" />
-								</label>
-								<label>Company<input id="job-company" value="${escapeAttr(state.jobQuery.company)}" /></label>
-								<label>Location<input id="job-location" value="${escapeAttr(state.jobQuery.location)}" /></label>
-								<label>Region<input id="job-region" value="${escapeAttr(state.jobQuery.region)}" /></label>
-								<label>Career track<input id="job-category" value="${escapeAttr(state.jobQuery.category)}" /></label>
-								<label>Industry<select id="job-industry">${facetOptions(state.jobs.facets?.industries, state.jobQuery.industry, "All industries")}</select></label>
-								<label>Length<select id="job-length">${facetOptions(state.jobs.facets?.lengths, state.jobQuery.length, "All lengths")}</select></label>
-								<label>Term<select id="job-term">${facetOptions(state.jobs.facets?.terms, state.jobQuery.term, "All terms")}</select></label>
-								<button class="primary full-width">Apply filters</button>
-							</form>
-						</aside>`
-					: ""
-			}
-			<section class="panel job-results">
-				<div class="results-toolbar">
-					<div>
-						<p class="eyebrow">${state.jobMode === "saved" ? "Your shortlist" : "Live catalog"}</p>
-						<h2>${pagination.total} ${state.jobMode === "saved" ? "saved" : "open"} ${pagination.total === 1 ? "role" : "roles"}</h2>
-						<p>${state.jobMode === "saved" ? "Compare promising roles, then mark one as applied when you submit." : "Source, term, duration, industry, and application controls stay attached to every role."}</p>
-					</div>
-					<div class="layout-toggle" role="group" aria-label="Job result layout">
-						<button data-job-layout="grid" class="${state.jobLayout === "grid" ? "active" : ""}" aria-label="Grid view">${icon("grid")}</button>
-						<button data-job-layout="list" class="${state.jobLayout === "list" ? "active" : ""}" aria-label="List view">${icon("list")}</button>
-					</div>
+		<section class="panel">
+			<form id="job-filter-form" class="job-filters">
+				<label class="job-search">Search
+					<input id="job-q" value="${escapeAttr(state.jobQuery.q)}" placeholder="Title, company, location, or keyword" />
+				</label>
+				<label>Company
+					<input id="job-company" value="${escapeAttr(state.jobQuery.company)}" />
+				</label>
+				<label>Location
+					<input id="job-location" value="${escapeAttr(state.jobQuery.location)}" />
+				</label>
+				<label>Region
+					<input id="job-region" value="${escapeAttr(state.jobQuery.region)}" />
+				</label>
+				<label>Career track
+					<input id="job-category" value="${escapeAttr(state.jobQuery.category)}" />
+				</label>
+				<label>Industry
+					<select id="job-industry">${facetOptions(state.jobs.facets?.industries, state.jobQuery.industry, "All industries")}</select>
+				</label>
+				<label>Length
+					<select id="job-length">${facetOptions(state.jobs.facets?.lengths, state.jobQuery.length, "All lengths")}</select>
+				</label>
+				<label>Term
+					<select id="job-term">${facetOptions(state.jobs.facets?.terms, state.jobQuery.term, "All terms")}</select>
+				</label>
+				<div class="actions job-filter-actions">
+					<button type="button" id="clear-job-filters">Clear</button>
+					<button class="primary">Search jobs</button>
 				</div>
-				${jobs.length ? `<div class="job-cards ${state.jobLayout === "list" ? "list-view" : "grid-view"}">${jobs.map(jobCard).join("")}</div>` : empty(state.jobMode === "saved" ? "Save a role from the live catalog to build your shortlist." : "No active jobs match these filters.")}
-				${state.jobMode === "all" ? renderPagination(pagination) : ""}
-			</section>
-		</div>`;
+			</form>
+		</section>
+		<section class="panel">
+			<div class="panel-head">
+				<div>
+					<h2>${pagination.total} open ${pagination.total === 1 ? "role" : "roles"}</h2>
+					<p>Postings are refreshed by the Internship Tracker publisher. Closed or missing roles are automatically removed from public browsing.</p>
+				</div>
+			</div>
+			${jobs.length ? `<div class="cards job-cards">${jobs.map(jobCard).join("")}</div>` : empty("No active jobs match these filters.")}
+			${renderPagination(pagination)}
+		</section>`;
+}
+
+function renderSaved() {
+	const jobs = state.trackedJobs.jobs.filter(
+		(job) => job.userState?.status === "SAVED",
+	);
+	return `<section class="panel">
+		<div class="panel-head">
+			<div>
+				<p class="eyebrow">Shortlist</p>
+				<h2>Saved jobs</h2>
+				<p>Keep promising roles here, then move them into Applications when you apply.</p>
+			</div>
+		</div>
+		${jobs.length ? `<div class="cards job-cards">${jobs.map(jobCard).join("")}</div>` : empty("Save a role from Jobs to build your shortlist.")}
+	</section>`;
 }
 
 function renderApplications() {
-	const allJobs = state.trackedJobs.jobs.filter((job) =>
+	const jobs = state.trackedJobs.jobs.filter((job) =>
 		[...APPLICATION_STATUSES, "ARCHIVED"].includes(job.userState?.status),
 	);
-	const search = state.applicationSearch.toLowerCase();
-	const jobs = allJobs.filter((job) => {
-		const statusMatches =
-			state.applicationFilter === "ALL" ||
-			job.userState?.status === state.applicationFilter;
-		const textMatches =
-			!search ||
-			[job.title, job.company, job.location, job.region]
-				.join(" ")
-				.toLowerCase()
-				.includes(search);
-		return statusMatches && textMatches;
-	});
-	const applications = state.analytics?.applications || {
-		total: allJobs.length,
-		inProgress: allJobs.filter((job) =>
-			["APPLIED", "INTERVIEWING"].includes(job.userState?.status),
-		).length,
-		interviewing: allJobs.filter(
-			(job) => job.userState?.status === "INTERVIEWING",
-		).length,
-		offers: allJobs.filter((job) => job.userState?.status === "OFFER").length,
-	};
-	return `
-		${pageHeader("Application pipeline", "Applications", "Track the current stage and private notes for every real application. No invented dates or reminders.", "")}
-		<section class="stats application-stats">
-			${stat(applications.total, "Total applications", "layers")}
-			${stat(applications.inProgress, "In progress", "progress")}
-			${stat(applications.interviewing, "Interviews", "calendar")}
-			${stat(applications.offers, "Offers", "spark")}
-		</section>
-		<section class="panel applications-panel">
-			<h2 class="sr-only">Tracked applications</h2>
-			<div class="application-toolbar">
-				<div class="stage-filters" role="group" aria-label="Application stage">
-					${applicationFilterButton("ALL", "All", allJobs.length)}
-					${applicationFilterButton("APPLIED", "Applied")}
-					${applicationFilterButton("INTERVIEWING", "Interviewing")}
-					${applicationFilterButton("OFFER", "Offers")}
-					${applicationFilterButton("REJECTED", "Rejected")}
-					${applicationFilterButton("ARCHIVED", "Archived")}
-				</div>
-				<form id="application-search-form" class="inline-search">
-					<label class="sr-only" for="application-search">Search applications</label>
-					${icon("search")}
-					<input id="application-search" value="${escapeAttr(state.applicationSearch)}" placeholder="Search company or role" />
-				</form>
+	return `<section class="panel">
+		<div class="panel-head">
+			<div>
+				<p class="eyebrow">Application pipeline</p>
+				<h2>Applications</h2>
+				<p>Update each role as it moves from submitted to interview, offer, or rejection.</p>
 			</div>
-			${jobs.length ? `<div class="application-list">${jobs.map(applicationCard).join("")}</div>` : empty(allJobs.length ? "No applications match this stage and search." : "Mark a job as Applied to start your application pipeline.")}
-		</section>`;
+		</div>
+		${jobs.length ? `<div class="cards job-cards">${jobs.map(jobCard).join("")}</div>` : empty("Mark a job as Applied to start your application pipeline.")}
+	</section>`;
 }
 
 function renderNetworking() {
@@ -533,31 +294,7 @@ function renderNetworking() {
 	const previewNotice = linkingEnabled
 		? ""
 		: '<section class="notice warning">Job-linked outreach is paused until the internship catalog passes the preview stability criteria. Independent Coffee Chat search, drafting, and sending remain available.</section>';
-	const networking = state.analytics?.networking || {
-		tracked: state.session.prospects.length,
-		drafts: state.session.prospects.filter(
-			(person) => person.status === "DRAFT_READY",
-		).length,
-		sent: state.session.prospects.filter((person) =>
-			["SENDING", "SENT", "REPLIED"].includes(person.status),
-		).length,
-		replied: state.session.prospects.filter(
-			(person) => person.status === "REPLIED",
-		).length,
-	};
-	return `
-		${pageHeader("Relationship building", "Networking", "Discover relevant public professional profiles, approve each person, review every draft, and send only when you are ready.", "")}
-		<section class="stats networking-stats">
-			${stat(networking.tracked, "People tracked", "people")}
-			${stat(networking.drafts, "Drafts ready", "edit")}
-			${stat(networking.sent, "Sent", "send")}
-			${stat(networking.replied, "Replies", "reply")}
-		</section>
-		${previewNotice}${context}${renderNetworkingSearchState()}
-		<div class="workflow-strip" aria-label="Networking workflow">
-			<span class="active"><b>1</b> Discover</span><span><b>2</b> Approve</span><span><b>3</b> Review draft</span><span><b>4</b> Send</span><span><b>5</b> Reply</span>
-		</div>
-		${renderFind()}${renderApprove()}${renderOutreach()}`;
+	return `${previewNotice}${context}${renderNetworkingSearchState()}${renderFind()}${renderApprove()}${renderOutreach()}`;
 }
 
 function renderFind() {
@@ -672,210 +409,106 @@ function renderOutreach() {
 		</section>`;
 }
 
-function renderAnalytics() {
-	if (!state.analytics) {
-		return `
-			${pageHeader("Workspace signals", "Analytics", "Counts and activity are calculated only from your current application, networking, and audit records.", "")}
-			<section class="panel">
-				${state.analyticsError ? `<p class="notice danger">${escapeHtml(state.analyticsError)}</p>` : '<div class="skeleton-stack" aria-label="Loading analytics"><span></span><span></span><span></span></div>'}
-			</section>`;
-	}
-	const { applications, networking, topCompanies, activity } = state.analytics;
-	return `
-		${pageHeader("Workspace signals", "Analytics", "A factual view of your current pipeline and recorded activity. No synthetic growth rates or conversion claims.", "")}
-		<section class="stats analytics-stats">
-			${stat(applications.saved, "Saved roles", "bookmark")}
-			${stat(applications.inProgress, "In progress", "progress")}
-			${stat(applications.interviewing, "Interviews", "calendar")}
-			${stat(applications.offers, "Offers", "spark")}
-		</section>
-		<div class="analytics-grid">
-			<section class="panel analytics-card analytics-card-wide">
-				<div class="panel-head">
-					<div>
-						<p class="eyebrow">Current status</p>
-						<h2>Application journey</h2>
-						<p>Each bar is the current count in that stage, not a conversion rate.</p>
-					</div>
-				</div>
-				${window.CareerAnalyticsUi.renderApplicationFunnel(applications)}
-			</section>
-			<section class="panel analytics-card">
-				<div class="panel-head"><div><p class="eyebrow">Concentration</p><h2>Top companies</h2><p>Current non-archived tracked roles.</p></div></div>
-				${window.CareerAnalyticsUi.renderTopCompanies(topCompanies)}
-			</section>
-			<section class="panel analytics-card">
-				<div class="panel-head"><div><p class="eyebrow">Outreach workflow</p><h2>Networking</h2><p>Real prospects and message states in your account.</p></div></div>
-				<div class="analytics-count-grid">
-					<div><strong>${networking.tracked}</strong><span>Tracked</span></div>
-					<div><strong>${networking.discovered}</strong><span>To review</span></div>
-					<div><strong>${networking.drafts}</strong><span>Drafts</span></div>
-					<div><strong>${networking.sent}</strong><span>Sent</span></div>
-					<div><strong>${networking.replied}</strong><span>Replies</span></div>
-					<div><strong>${networking.errors}</strong><span>Errors</span></div>
-				</div>
-			</section>
-			<section class="panel analytics-card analytics-card-wide">
-				<div class="panel-head"><div><p class="eyebrow">Last 28 days</p><h2>Recorded activity</h2><p>Audit events generated by actions in this workspace.</p></div></div>
-				${window.CareerAnalyticsUi.renderActivityHeatmap(activity)}
-			</section>
-		</div>
-		${renderRecentActivity(12)}`;
-}
-
-function renderRecentActivity(limit) {
-	const entries = state.analytics?.recentActivity?.slice(0, limit) || [];
-	return `<section class="panel activity-panel">
-		<div class="panel-head">
-			<div>
-				<p class="eyebrow">Audit-backed</p>
-				<h2>Recent activity</h2>
-				<p>Only recorded account actions are shown.</p>
-			</div>
-		</div>
-		${
-			entries.length
-				? `<ol class="activity-list">${entries
-						.map(
-							(entry) => `<li>
-								<span class="activity-marker" aria-hidden="true">${icon(activityIcon(entry.action))}</span>
-								<div><strong>${escapeHtml(entry.label)}</strong>${entry.context ? `<span>${escapeHtml(entry.context)}</span>` : ""}</div>
-								<time datetime="${escapeAttr(entry.createdAt)}">${formatDate(entry.createdAt)}</time>
-							</li>`,
-						)
-						.join("")}</ol>`
-				: empty("No recorded activity yet.")
-		}
-	</section>`;
-}
-
 function renderSettings() {
 	const { settings, credentials, resume } = state.session;
 	return `
-		${pageHeader("Workspace preferences", "Settings", "Manage the real services and private data already connected to your career workspace.", "")}
-		<div class="settings-grid">
-			<section class="panel settings-card">
-				<div class="settings-card-icon">${icon("google")}</div>
-				<div class="panel-head">
-					<div>
-						<p class="eyebrow">Google workspace</p>
-						<h2>Gmail & Sheets</h2>
-						<p>Google access is used only for approved sends, reply sync, and your private CRM Sheet.</p>
-					</div>
+		<section class="panel">
+			<div class="panel-head">
+				<div>
+					<h2>Private workspace</h2>
+					<p>Keys are submitted once, encrypted with AES-256-GCM, and stored in D1. Only masked hints return to the browser.</p>
 				</div>
-				${
-					credentials.GOOGLE.configured
-						? `<p class="notice">Google is connected. ${settings.spreadsheetId ? `<a href="https://docs.google.com/spreadsheets/d/${escapeAttr(settings.spreadsheetId)}" target="_blank" rel="noopener">Open CRM Sheet</a>` : '<button id="init-workspace" class="secondary">Create CRM Sheet</button>'}</p>`
-						: '<p class="notice warning"><a href="/auth/google/connect">Connect Gmail & Sheets</a> before creating the workspace or sending.</p>'
-				}
-			</section>
-			<section class="panel settings-card">
-				<div class="settings-card-icon">${icon("document")}</div>
-				<div class="panel-head">
-					<div>
-						<p class="eyebrow">Private document</p>
-						<h2>Resume</h2>
-						<p>Upload a PDF, DOCX, or TXT file up to 5 MB. It is encrypted before storage.</p>
-					</div>
+			</div>
+			${
+				credentials.GOOGLE.configured
+					? `<p class="notice">Google is connected. ${settings.spreadsheetId ? `<a href="https://docs.google.com/spreadsheets/d/${escapeAttr(settings.spreadsheetId)}" target="_blank" rel="noopener">Open CRM Sheet</a>` : '<button id="init-workspace" class="secondary">Create CRM Sheet</button>'}</p>`
+					: '<p class="notice warning"><a href="/auth/google/connect">Connect Gmail & Sheets</a> before creating the workspace or sending.</p>'
+			}
+		</section>
+		<section class="panel">
+			<div class="panel-head">
+				<div>
+					<h2>Import Internship Tracker progress</h2>
+					<p>Paste one version 1 export from the legacy browser tracker. The import runs once and matches jobs by canonical URL, then company and title.</p>
 				</div>
-				<form id="resume-form" class="resume-row">
-					<label>Resume file
-						<input id="resume-file" type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" required />
-					</label>
-					<div class="actions">
-						<button class="primary">Upload & analyze</button>
-						<button id="delete-resume" class="danger" type="button" ${resume.configured ? "" : "disabled"}>Delete</button>
-					</div>
-				</form>
-				${
-					resume.configured
-						? `<p class="notice resume-status"><strong>${escapeHtml(resume.fileName)}</strong> · ${formatFileSize(resume.sizeBytes)} · uploaded ${formatDate(resume.uploadedAt)}</p>`
-						: '<p class="notice warning resume-status">No resume is stored. PDF analysis requires a configured Gemini key; DOCX and TXT can use any configured AI provider.</p>'
-				}
-			</section>
-			<section class="panel settings-card settings-card-wide">
-				<div class="panel-head">
-					<div>
-						<p class="eyebrow">Drafting context</p>
-						<h2>Profile and drafting</h2>
-						<p>Only factual context you save here is available to the drafting workflow.</p>
-					</div>
+			</div>
+			<form id="legacy-import-form">
+				<label>Legacy export JSON
+					<textarea id="legacy-import-json" rows="8" placeholder='{"schemaVersion":1,"exportedAt":"2026-10-01T12:00:00.000Z","source":"internship-tracker-toronto","savedJobs":[],"applications":[]}'></textarea>
+				</label>
+				<div class="actions">
+					<button class="primary">Import once</button>
 				</div>
-				<form id="settings-form" class="grid grid-3">
-					<label>Your name<input id="sender-name" value="${escapeAttr(settings.senderName)}" /></label>
-					<label>Email enrichment
-						<select id="enrichment-provider">
-							<option value="HUNTER" ${selected(settings.enrichmentProvider, "HUNTER")}>Hunter</option>
-							<option value="NONE" ${selected(settings.enrichmentProvider, "NONE")}>Manual email entry</option>
-						</select>
-					</label>
-					<label>Draft provider<select id="draft-provider">${providerOptions(settings.draftProvider)}</select></label>
-					<label>Gemini model<input id="gemini-model" value="${escapeAttr(settings.geminiModel)}" /></label>
-					<label>OpenAI model<input id="openai-model" value="${escapeAttr(settings.openAiModel)}" /></label>
-					<label>Anthropic model<input id="anthropic-model" value="${escapeAttr(settings.anthropicModel)}" /></label>
-					<label class="full">Cited people-search fallback
-						<select id="people-search-fallback-provider">
-							<option value="NONE" ${selected(settings.peopleSearchFallbackProvider, "NONE")}>Disabled</option>
-							<option value="GEMINI" ${selected(settings.peopleSearchFallbackProvider, "GEMINI")}>Gemini Google Search</option>
-							<option value="OPENAI" ${selected(settings.peopleSearchFallbackProvider, "OPENAI")}>OpenAI Web Search</option>
-							<option value="ANTHROPIC" ${selected(settings.peopleSearchFallbackProvider, "ANTHROPIC")}>Anthropic Web Search</option>
-						</select>
-						<small>Runs only after Tavily returns too few usable profiles. It uses your encrypted key and configured model for one selected provider. Provider search tools may incur charges.</small>
-					</label>
-					<label>Email word limit<input id="word-limit" type="number" min="60" max="250" value="${settings.emailWordLimit}" /></label>
-					<label class="full">Outreach goal<textarea id="outreach-goal" rows="3">${escapeHtml(settings.outreachGoal)}</textarea></label>
-					<label class="full">Background summary<textarea id="background" rows="4">${escapeHtml(contextValue("Background summary"))}</textarea></label>
-					<label class="full">Current goal<textarea id="current-goal" rows="3">${escapeHtml(contextValue("Current goal"))}</textarea></label>
-					<label class="full">Experience to reference<textarea id="experience" rows="4">${escapeHtml(contextValue("Experience to reference"))}</textarea></label>
-					<div class="actions full"><button class="primary">Save profile settings</button></div>
-				</form>
-			</section>
-			<section class="panel settings-card settings-card-wide">
-				<div class="panel-head">
-					<div>
-						<p class="eyebrow">Encrypted at rest</p>
-						<h2>Provider credentials</h2>
-						<p>Keys are submitted once and stored with AES-256-GCM. Only masked hints return to this page.</p>
-					</div>
+			</form>
+		</section>
+		<section class="panel">
+			<div class="panel-head">
+				<div>
+					<h2>Resume</h2>
+					<p>Upload a PDF, DOCX, or TXT resume up to 5 MB. The file is encrypted before storage. AI suggestions fill the profile form for your review and are not saved until you click Save settings.</p>
 				</div>
-				${secretRow("TAVILY", "Tavily", credentials.TAVILY)}
-				${secretRow("HUNTER", "Hunter", credentials.HUNTER)}
-				${secretRow("GEMINI", "Gemini", credentials.GEMINI)}
-				${secretRow("OPENAI", "OpenAI", credentials.OPENAI)}
-				${secretRow("ANTHROPIC", "Anthropic", credentials.ANTHROPIC)}
-			</section>
-			<section class="panel settings-card">
-				<div class="panel-head">
-					<div>
-						<p class="eyebrow">One-time migration</p>
-						<h2>Legacy tracker import</h2>
-						<p>Paste one version 1 export. Matching uses canonical URL, then company and title.</p>
-					</div>
+			</div>
+			<form id="resume-form" class="resume-row">
+				<label>Resume file
+					<input id="resume-file" type="file" accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain" required />
+				</label>
+				<div class="actions">
+					<button class="primary">Upload & analyze</button>
+					<button id="delete-resume" class="danger" type="button" ${resume.configured ? "" : "disabled"}>Delete resume</button>
 				</div>
-				<form id="legacy-import-form">
-					<label>Legacy export JSON
-						<textarea id="legacy-import-json" rows="8" placeholder='{"schemaVersion":1,"exportedAt":"2026-10-01T12:00:00.000Z","source":"internship-tracker-toronto","savedJobs":[],"applications":[]}'></textarea>
-					</label>
-					<div class="actions"><button class="primary">Import once</button></div>
-				</form>
-			</section>
-			<section class="panel settings-card">
-				<div class="panel-head">
-					<div>
-						<p class="eyebrow">Account & privacy</p>
-						<h2>Your controls</h2>
-						<p>Review the service policies, revoke Google permissions, or sign out of this browser.</p>
-					</div>
+			</form>
+			${
+				resume.configured
+					? `<p class="notice resume-status"><strong>${escapeHtml(resume.fileName)}</strong> · ${formatFileSize(resume.sizeBytes)} · uploaded ${formatDate(resume.uploadedAt)}</p>`
+					: '<p class="notice warning resume-status">No resume is stored. PDF analysis requires a configured Gemini key; DOCX and TXT can use any configured AI provider.</p>'
+			}
+		</section>
+		<section class="panel">
+			<div class="panel-head"><div><h2>Profile and drafting</h2></div></div>
+			<form id="settings-form" class="grid grid-3">
+				<label>Your name<input id="sender-name" value="${escapeAttr(settings.senderName)}" /></label>
+				<label>Email enrichment
+					<select id="enrichment-provider">
+						<option value="HUNTER" ${selected(settings.enrichmentProvider, "HUNTER")}>Hunter</option>
+						<option value="NONE" ${selected(settings.enrichmentProvider, "NONE")}>Manual email entry</option>
+					</select>
+				</label>
+				<label>Draft provider
+					<select id="draft-provider">${providerOptions(settings.draftProvider)}</select>
+				</label>
+				<label>Gemini model<input id="gemini-model" value="${escapeAttr(settings.geminiModel)}" /></label>
+				<label>OpenAI model<input id="openai-model" value="${escapeAttr(settings.openAiModel)}" /></label>
+				<label>Anthropic model<input id="anthropic-model" value="${escapeAttr(settings.anthropicModel)}" /></label>
+				<label class="full">Cited people-search fallback
+					<select id="people-search-fallback-provider">
+						<option value="NONE" ${selected(settings.peopleSearchFallbackProvider, "NONE")}>Disabled</option>
+						<option value="GEMINI" ${selected(settings.peopleSearchFallbackProvider, "GEMINI")}>Gemini Google Search</option>
+						<option value="OPENAI" ${selected(settings.peopleSearchFallbackProvider, "OPENAI")}>OpenAI Web Search</option>
+						<option value="ANTHROPIC" ${selected(settings.peopleSearchFallbackProvider, "ANTHROPIC")}>Anthropic Web Search</option>
+					</select>
+					<small>Runs only when Tavily cannot find enough usable people. It uses your encrypted key and configured model for the selected provider. Web-search tools may incur provider charges, and model/account support varies.</small>
+				</label>
+				<label>Email word limit<input id="word-limit" type="number" min="60" max="250" value="${settings.emailWordLimit}" /></label>
+				<label class="full">Outreach goal<textarea id="outreach-goal" rows="3">${escapeHtml(settings.outreachGoal)}</textarea></label>
+				<label class="full">Background summary<textarea id="background" rows="4">${escapeHtml(contextValue("Background summary"))}</textarea></label>
+				<label class="full">Current goal<textarea id="current-goal" rows="3">${escapeHtml(contextValue("Current goal"))}</textarea></label>
+				<label class="full">Experience to reference<textarea id="experience" rows="4">${escapeHtml(contextValue("Experience to reference"))}</textarea></label>
+				<div class="actions full"><button class="primary">Save settings</button></div>
+			</form>
+		</section>
+		<section class="panel">
+			<div class="panel-head">
+				<div>
+					<h2>Encrypted credentials</h2>
+					<p>Leave a field blank to preserve its current encrypted value.</p>
 				</div>
-				<div class="settings-links">
-					<a href="/privacy.html">${icon("shield")} Privacy Policy</a>
-					<a href="/terms.html">${icon("document")} Terms of Service</a>
-					<a href="https://myaccount.google.com/permissions" target="_blank" rel="noopener">${icon("external")} Google permissions</a>
-					<button id="settings-logout">${icon("logout")} Sign out</button>
-				</div>
-			</section>
-		</div>
-		${state.session.isBetaAdmin ? `<details class="admin-disclosure"><summary>${icon("shield")} <span><strong>Beta access administration</strong><small>Owner-only allowlist controls</small></span>${icon("chevron-down")}</summary>${renderBetaAccessAdmin()}</details>` : ""}`;
+			</div>
+			${secretRow("TAVILY", "Tavily", credentials.TAVILY)}
+			${secretRow("HUNTER", "Hunter", credentials.HUNTER)}
+			${secretRow("GEMINI", "Gemini", credentials.GEMINI)}
+			${secretRow("OPENAI", "OpenAI", credentials.OPENAI)}
+			${secretRow("ANTHROPIC", "Anthropic", credentials.ANTHROPIC)}
+		</section>`;
 }
 
 function renderBetaAccessAdmin() {
@@ -885,8 +518,7 @@ function renderBetaAccessAdmin() {
 	const approved = data.access.filter((item) => item.status === "APPROVED");
 	const revoked = data.access.filter((item) => item.status === "REVOKED");
 	return `
-		<div class="admin-settings">
-		<section class="panel admin-panel">
+		<section class="panel">
 			<div class="panel-head">
 				<div>
 					<p class="eyebrow">Owner controls</p>
@@ -919,8 +551,7 @@ function renderBetaAccessAdmin() {
 						</div>`
 					: empty("No revoked or denied entries.")
 			}
-		</section>
-		</div>`;
+		</section>`;
 }
 
 function betaRequestCard(request) {
@@ -961,60 +592,6 @@ function betaAccessCard(access) {
 function wireTab() {
 	document.getElementById("job-filter-form")?.addEventListener("submit", filterJobs);
 	document.getElementById("clear-job-filters")?.addEventListener("click", clearJobFilters);
-	document.querySelectorAll("[data-job-mode]").forEach((button) =>
-		button.addEventListener("click", () => {
-			state.jobMode = button.dataset.jobMode;
-			render();
-		}),
-	);
-	document.querySelectorAll("[data-job-layout]").forEach((button) =>
-		button.addEventListener("click", () => {
-			state.jobLayout = button.dataset.jobLayout;
-			render();
-		}),
-	);
-	document.querySelectorAll("[data-application-filter]").forEach((button) =>
-		button.addEventListener("click", () => {
-			state.applicationFilter = button.dataset.applicationFilter;
-			render();
-		}),
-	);
-	document
-		.getElementById("application-search-form")
-		?.addEventListener("submit", (event) => {
-			event.preventDefault();
-			state.applicationSearch = value("application-search");
-			render();
-		});
-	document.querySelectorAll("[data-save-job-notes]").forEach((button) =>
-		button.addEventListener("click", () =>
-			saveJobNotes(button.dataset.saveJobNotes),
-		),
-	);
-	document.querySelectorAll("[data-journey-target]").forEach((button) =>
-		button.addEventListener("click", () =>
-			openJourneyDetail(button.dataset.journeyTarget, true),
-		),
-	);
-	document.getElementById("journey-reset")?.addEventListener("click", () => {
-		state.journeyFocus = "journey";
-		journeyController?.reset();
-		openJourneyDetail("journey", false);
-	});
-	document.querySelectorAll("[data-journey-action]").forEach((button) =>
-		button.addEventListener("click", () => {
-			if (button.dataset.journeyMode) {
-				state.jobMode = button.dataset.journeyMode;
-			}
-			navigate(button.dataset.journeyAction);
-		}),
-	);
-	document.querySelectorAll("[data-home-next]").forEach((button) =>
-		button.addEventListener("click", () => {
-			if (button.dataset.homeMode) state.jobMode = button.dataset.homeMode;
-			navigate(button.dataset.homeNext);
-		}),
-	);
 	document.querySelectorAll("[data-page]").forEach((button) =>
 		button.addEventListener("click", () => changeJobPage(Number(button.dataset.page))),
 	);
@@ -1039,7 +616,6 @@ function wireTab() {
 	document.getElementById("resume-form")?.addEventListener("submit", uploadResume);
 	document.getElementById("delete-resume")?.addEventListener("click", removeResume);
 	document.getElementById("init-workspace")?.addEventListener("click", initWorkspace);
-	document.getElementById("settings-logout")?.addEventListener("click", logout);
 	document.getElementById("clear-networking-job")?.addEventListener("click", () => {
 		state.networkingJob = null;
 		state.networkingCriteria = null;
@@ -1050,7 +626,8 @@ function wireTab() {
 		executeDiscovery(readDiscoveryCriteria());
 	});
 	document.getElementById("complete-profile")?.addEventListener("click", () => {
-		navigate("settings");
+		state.tab = "settings";
+		render();
 		document.getElementById("background")?.focus();
 	});
 	document.querySelectorAll("[data-prepare]").forEach((button) =>
@@ -1182,7 +759,7 @@ async function changeJobPage(page) {
 	await run("Loading jobs…", async () => {
 		state.jobs = await fetchJobs();
 		render();
-		window.scrollTo({ top: 0, behavior: preferredScrollBehavior() });
+		window.scrollTo({ top: 0, behavior: "smooth" });
 	});
 }
 
@@ -1205,7 +782,7 @@ async function setJobStatus(id, status) {
 			method: "PUT",
 			body: { status, notes: findJob(id)?.userState?.notes || "" },
 		});
-		await Promise.all([loadJobData(), loadAnalyticsData()]);
+		await loadJobData();
 		render();
 	});
 }
@@ -1213,22 +790,7 @@ async function setJobStatus(id, status) {
 async function removeJobStatus(id) {
 	await run("Removing job from your tracker…", async () => {
 		await api(`/api/jobs/${id}/state`, { method: "DELETE" });
-		await Promise.all([loadJobData(), loadAnalyticsData()]);
-		render();
-	});
-}
-
-async function saveJobNotes(id) {
-	const job = findJob(id);
-	const status = job?.userState?.status;
-	if (!job || !status) return;
-	const notes = document.getElementById(`job-notes-${id}`)?.value?.trim() || "";
-	await run("Saving application notes…", async () => {
-		await api(`/api/jobs/${id}/state`, {
-			method: "PUT",
-			body: { status, notes },
-		});
-		await Promise.all([loadJobData(), loadAnalyticsData()]);
+		await loadJobData();
 		render();
 	});
 }
@@ -1247,7 +809,6 @@ async function beginJobNetworking(id) {
 	state.networkingCriteria = structuredClone(job.discoveryCriteria);
 	state.networkingSearch = { status: "idle", message: "", summary: null };
 	state.tab = "networking";
-	syncViewToUrl();
 	await executeDiscovery(state.networkingCriteria);
 }
 
@@ -1273,7 +834,7 @@ async function executeDiscovery(criteria) {
 	state.tab = "networking";
 	render();
 	document.getElementById("find-people-panel")?.scrollIntoView({
-		behavior: preferredScrollBehavior(),
+		behavior: "smooth",
 		block: "start",
 	});
 	try {
@@ -1282,11 +843,7 @@ async function executeDiscovery(criteria) {
 			body: state.networkingCriteria,
 		});
 		state.session = await api("/api/session");
-		await Promise.all([
-			loadJobData(),
-			loadBetaAdminData(),
-			loadAnalyticsData(),
-		]);
+		await Promise.all([loadJobData(), loadBetaAdminData()]);
 		const summary = result.summary || {
 			providerReturned: 0,
 			accepted: 0,
@@ -1319,7 +876,7 @@ async function executeDiscovery(criteria) {
 				`Found ${summary.inserted} new ${summary.inserted === 1 ? "person" : "people"} to review.`,
 			);
 			document.getElementById("approve-panel")?.scrollIntoView({
-				behavior: preferredScrollBehavior(),
+				behavior: "smooth",
 				block: "start",
 			});
 			return;
@@ -1331,7 +888,7 @@ async function executeDiscovery(criteria) {
 		};
 		render();
 		document.getElementById("find-people-panel")?.scrollIntoView({
-			behavior: preferredScrollBehavior(),
+			behavior: "smooth",
 			block: "start",
 		});
 	} catch (error) {
@@ -1572,7 +1129,7 @@ async function importLegacyState(event) {
 			method: "POST",
 			body: payload,
 		});
-		await Promise.all([loadJobData(), loadAnalyticsData()]);
+		await loadJobData();
 		render();
 		if (!result.completed) {
 			return showToast(
@@ -1604,7 +1161,6 @@ async function uploadResume(event) {
 			body: formData,
 		});
 		state.session.resume = result.resume;
-		await loadAnalyticsData();
 		render();
 		fillResumeSuggestions(result.suggestions);
 		showToast(
@@ -1720,14 +1276,9 @@ async function refresh(tab = state.tab) {
 	state.session = await api("/api/session");
 	state.tab = state.session.authenticated ? tab : "jobs";
 	if (!betaLandingRequired()) {
-		await Promise.all([
-			loadJobData(),
-			loadBetaAdminData(),
-			loadAnalyticsData(),
-		]);
+		await Promise.all([loadJobData(), loadBetaAdminData()]);
 	} else {
 		state.betaAdmin = null;
-		state.analytics = null;
 	}
 	render();
 }
@@ -1824,148 +1375,11 @@ async function loadBetaAdminData() {
 	state.betaAdmin = await api("/api/beta/admin/access");
 }
 
-async function loadAnalyticsData() {
-	if (!state.session?.authenticated) {
-		state.analytics = null;
-		state.analyticsError = "";
-		return;
-	}
-	try {
-		state.analytics = await api("/api/analytics");
-		state.analyticsError = "";
-	} catch (error) {
-		state.analytics = null;
-		state.analyticsError =
-			error instanceof Error
-				? error.message
-				: "Analytics could not be loaded.";
-	}
-}
-
 function betaLandingRequired() {
 	return (
 		!state.session?.authenticated &&
 		state.session?.betaAccessMode === "ALLOWLIST"
 	);
-}
-
-function initialView() {
-	const requested = location.hash.replace(/^#/, "");
-	if (PRIMARY_VIEWS.includes(requested)) return requested;
-	const hasJobQuery = [
-		"q",
-		"company",
-		"location",
-		"region",
-		"category",
-		"industry",
-		"length",
-		"term",
-		"page",
-	].some((key) => new URLSearchParams(location.search).has(key));
-	return hasJobQuery ? "jobs" : "home";
-}
-
-function navigate(view) {
-	const allowed =
-		state.session?.authenticated && PRIMARY_VIEWS.includes(view)
-			? view
-			: "jobs";
-	state.tab = allowed;
-	state.mobileNavOpen = false;
-	syncViewToUrl();
-	render();
-	requestAnimationFrame(() => {
-		document.getElementById("main-content")?.focus({ preventScroll: true });
-		window.scrollTo({ top: 0, behavior: "auto" });
-	});
-}
-
-function syncViewToUrl() {
-	const url = new URL(location.href);
-	url.hash = state.tab === "home" ? "" : state.tab;
-	history.replaceState(null, "", url);
-}
-
-function journeyMetrics() {
-	return window.CareerJourney.deriveJourneyMetrics({
-		trackedJobs: state.trackedJobs.jobs,
-		prospects: state.session?.prospects || [],
-	});
-}
-
-async function mountJourneyScene(renderToken) {
-	const container = document.getElementById("journey-canvas");
-	if (!container) return;
-	try {
-		journeyModulePromise ||= import("/journey-scene.js?v=20261001-1");
-		const module = await journeyModulePromise;
-		if (
-			renderToken !== state.renderToken ||
-			state.tab !== "home" ||
-			container !== document.getElementById("journey-canvas")
-		) {
-			return;
-		}
-		journeyController = module.createJourneyScene({
-			container,
-			metrics: journeyMetrics(),
-			onFocus: (area) => openJourneyDetail(area, false),
-			onHover: highlightJourneyControl,
-			onReady: () => {
-				container.setAttribute("aria-busy", "false");
-				const fallback = document.getElementById("journey-fallback");
-				if (fallback) fallback.hidden = true;
-			},
-			onError: () => {
-				container.setAttribute("aria-busy", "false");
-				container.classList.add("webgl-fallback");
-			},
-		});
-		if (state.journeyFocus !== "journey") {
-			journeyController.focus(state.journeyFocus);
-		}
-	} catch {
-		if (renderToken !== state.renderToken) return;
-		container.setAttribute("aria-busy", "false");
-		container.classList.add("webgl-fallback");
-	}
-}
-
-function destroyJourneyScene() {
-	journeyController?.dispose();
-	journeyController = null;
-}
-
-function openJourneyDetail(area, focusScene) {
-	if (!window.CareerJourney.AREAS.includes(area)) return;
-	state.journeyFocus = area;
-	const detail = window.CareerJourney.detailFor(area, journeyMetrics());
-	const container = document.getElementById("journey-detail");
-	if (container) {
-		container.innerHTML = renderJourneyDetail(detail);
-		wireJourneyAction();
-	}
-	document.querySelectorAll("[data-journey-target]").forEach((button) => {
-		button.classList.toggle("active", button.dataset.journeyTarget === area);
-	});
-	if (focusScene) journeyController?.focus(area);
-}
-
-function wireJourneyAction() {
-	const button = document.querySelector("[data-journey-action]");
-	button?.addEventListener("click", () => {
-		if (button.dataset.journeyMode) {
-			state.jobMode = button.dataset.journeyMode;
-		}
-		navigate(button.dataset.journeyAction);
-	});
-}
-
-function highlightJourneyControl(area) {
-	document.querySelectorAll("[data-journey-target]").forEach((button) => {
-		button.classList.toggle("hovered", button.dataset.journeyTarget === area);
-	});
 }
 
 async function run(message, callback) {
@@ -2035,31 +1449,29 @@ function jobCard(job) {
 		: job.postedText || "Posting date unavailable";
 	const outreach = job.outreachSummary;
 	return `<article class="card job-card ${job.active ? "" : "inactive-job"}">
-		<div class="job-card-heading">
-			<div class="company-tile company-tone-${companyTone(job.company)}" aria-hidden="true">${escapeHtml(companyInitials(job.company))}</div>
-			<div class="job-card-title">
+		<div class="card-head">
+			<div>
 				<p class="job-company">${escapeHtml(job.company)}</p>
 				<h3>${escapeHtml(job.title)}</h3>
-				<p>${icon("pin")}${escapeHtml([job.location, job.region].filter(Boolean).join(" · ") || "Location not listed")}</p>
+				<p>${escapeHtml([job.location, job.region].filter(Boolean).join(" · ") || "Location not listed")}</p>
 			</div>
 			${status ? `<span class="status status-${status.toLowerCase()}">${formatStatus(status)}</span>` : ""}
 		</div>
-		<div class="job-meta">
-			<span>${icon("source")}${escapeHtml(sourceLabel)}</span>
-			<span>${icon("calendar")}${escapeHtml(posted)}</span>
-		</div>
-		<div class="chips job-tags">
+		<div class="chips">
+			<span class="chip">${escapeHtml(sourceLabel)}</span>
+			<span class="chip">${escapeHtml(posted)}</span>
 			${job.industry && job.industry !== "Other" ? `<span class="chip">${escapeHtml(job.industry)}</span>` : ""}
 			${job.lengthLabel ? `<span class="chip">${escapeHtml(job.lengthLabel)}</span>` : ""}
 			${job.term?.label ? `<span class="chip">${escapeHtml(job.term.label)}</span>` : ""}
 			${job.categories.slice(0, 2).map((category) => `<span class="chip">${escapeHtml(category)}</span>`).join("")}
 			${job.active ? "" : '<span class="chip chip-warning">No longer active</span>'}
 		</div>
-		${job.description ? `<p class="job-description">${escapeHtml(truncate(job.description, state.jobLayout === "list" ? 220 : 300))}</p>` : ""}
+		${sourceAttribution}
+		${job.description ? `<p>${escapeHtml(truncate(job.description, 300))}</p>` : ""}
 		${
 			state.session?.authenticated && outreach
 				? `<div class="outreach-summary">
-						<strong>${icon("people")} Outreach</strong>
+						<strong>Outreach</strong>
 						<span>${outreach.total} linked</span>
 						<span>${outreach.draftReady} drafts</span>
 						<span>${outreach.sent} sent</span>
@@ -2067,14 +1479,13 @@ function jobCard(job) {
 					</div>`
 				: ""
 		}
-		${sourceAttribution}
 		<div class="job-controls">
-			<a class="button primary" href="${escapeAttr(job.url)}" target="_blank" rel="noopener">View posting ${icon("external")}</a>
+			<a class="button primary" href="${escapeAttr(job.url)}" target="_blank" rel="noopener">View posting</a>
 			${
 				state.session?.authenticated
-					? `${!status || status === "SAVED" ? `<button data-job-save="${job.id}">${icon("bookmark")}${status === "SAVED" ? "Unsave" : "Save"}</button>` : ""}
-						<button data-job-apply="${job.id}" ${APPLICATION_STATUSES.includes(status) ? "disabled" : ""}>${icon("check")} Mark applied</button>
-						${jobOutreachLinkingEnabled() ? `<button class="secondary" data-job-network="${job.id}" ${state.networkingSearch.status === "running" ? "disabled" : ""}>${icon("people")} Find people</button>` : ""}
+					? `${!status || status === "SAVED" ? `<button data-job-save="${job.id}">${status === "SAVED" ? "Unsave" : "Save"}</button>` : ""}
+						<button data-job-apply="${job.id}" ${APPLICATION_STATUSES.includes(status) ? "disabled" : ""}>Mark applied</button>
+						${jobOutreachLinkingEnabled() ? `<button class="secondary" data-job-network="${job.id}" ${state.networkingSearch.status === "running" ? "disabled" : ""}>Find people at this company</button>` : ""}
 						<label class="job-stage">Stage
 							<select data-job-status="${job.id}">
 								${jobStatusOptions(status)}
@@ -2084,47 +1495,6 @@ function jobCard(job) {
 			}
 		</div>
 	</article>`;
-}
-
-function applicationCard(job) {
-	const status = job.userState?.status || "";
-	const outreach = job.outreachSummary;
-	return `<article class="application-card">
-		<div class="application-main">
-			<div class="company-tile company-tone-${companyTone(job.company)}" aria-hidden="true">${escapeHtml(companyInitials(job.company))}</div>
-			<div>
-				<p class="job-company">${escapeHtml(job.company)}</p>
-				<h3>${escapeHtml(job.title)}</h3>
-				<p class="application-meta">${icon("pin")}${escapeHtml([job.location, job.region].filter(Boolean).join(" · ") || "Location not listed")}<span>Updated ${formatDate(job.userState.updatedAt)}</span></p>
-			</div>
-		</div>
-		<div class="application-stage-cell">
-			<span class="status status-${status.toLowerCase()}">${formatStatus(status)}</span>
-			<label>Stage
-				<select data-job-status="${job.id}">${jobStatusOptions(status)}</select>
-			</label>
-		</div>
-		<div class="application-notes">
-			<label for="job-notes-${job.id}">Next step or notes
-				<textarea id="job-notes-${job.id}" rows="3" placeholder="Add a private note">${escapeHtml(job.userState.notes || "")}</textarea>
-			</label>
-			<button data-save-job-notes="${job.id}">${icon("save")} Save notes</button>
-		</div>
-		<div class="application-actions">
-			<a class="button" href="${escapeAttr(job.url)}" target="_blank" rel="noopener">Job ${icon("external")}</a>
-			${jobOutreachLinkingEnabled() ? `<button class="secondary" data-job-network="${job.id}">${icon("people")} Find people</button>` : ""}
-			${outreach ? `<span class="application-outreach">${outreach.total} linked · ${outreach.replied} ${outreach.replied === 1 ? "reply" : "replies"}</span>` : ""}
-		</div>
-	</article>`;
-}
-
-function applicationFilterButton(status, label, explicitCount) {
-	const count =
-		explicitCount ??
-		state.trackedJobs.jobs.filter(
-			(job) => job.userState?.status === status,
-		).length;
-	return `<button data-application-filter="${status}" class="${state.applicationFilter === status ? "active" : ""}">${escapeHtml(label)} <span>${count}</span></button>`;
 }
 
 function prospectCard(person, profileReady) {
@@ -2141,8 +1511,7 @@ function prospectCard(person, profileReady) {
 		<div class="chips">
 			<span class="chip">Relevance ${person.relevanceScore}/100</span>
 			${person.email ? '<span class="chip">Email found</span>' : ""}
-			${person.matchQuality === "STRONG" ? '<span class="chip chip-strong">Strong match</span>' : ""}
-			${person.matchQuality === "BROADER_COMPANY" ? '<span class="chip chip-warning">Broader match</span>' : ""}
+			${person.matchQuality === "BROADER_COMPANY" ? '<span class="chip chip-warning">Broader company match</span>' : ""}
 			${linkedJobChips(person)}
 		</div>
 		${person.matchQuality === "BROADER_COMPANY" ? '<p class="notice warning"><strong>Broader company match — review role relevance.</strong> The profile matches the employer and a professional/location or hiring signal, but not the exact target role/topic.</p>' : ""}
@@ -2323,19 +1692,12 @@ function providerOptions(selectedProvider) {
 		.join("");
 }
 
-function pageHeader(eyebrow, title, description, actions) {
-	return `<section class="page-heading">
-		<div>
-			<p class="eyebrow">${escapeHtml(eyebrow)}</p>
-			<h1>${escapeHtml(title)}</h1>
-			<p>${escapeHtml(description)}</p>
-		</div>
-		${actions || ""}
-	</section>`;
+function tabButton(id, label) {
+	return `<button data-tab="${id}" class="${state.tab === id ? "active" : ""}">${label}</button>`;
 }
 
-function stat(entry, label, iconName = "spark") {
-	return `<article class="stat"><span class="stat-icon" aria-hidden="true">${icon(iconName)}</span><div><strong>${Number(entry || 0)}</strong><span>${escapeHtml(label)}</span></div></article>`;
+function stat(entry, label) {
+	return `<article class="stat"><strong>${entry}</strong><span>${label}</span></article>`;
 }
 
 function textarea(id, label, initialValue) {
@@ -2343,89 +1705,7 @@ function textarea(id, label, initialValue) {
 }
 
 function empty(message) {
-	return `<div class="empty">${icon("compass")}<strong>Nothing to show yet</strong><span>${escapeHtml(message)}</span></div>`;
-}
-
-function companyInitials(company) {
-	const words = String(company || "")
-		.trim()
-		.split(/\s+/)
-		.filter(Boolean);
-	if (!words.length) return "—";
-	if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-	return `${words[0][0]}${words[words.length - 1][0]}`.toUpperCase();
-}
-
-function companyTone(company) {
-	return (
-		Array.from(String(company || "")).reduce(
-			(total, character) => total + character.charCodeAt(0),
-			0,
-		) % 6
-	);
-}
-
-function userInitials(user) {
-	const source = String(user?.name || user?.email || "CC");
-	const words = source.trim().split(/\s+/).filter(Boolean);
-	return (words.length > 1
-		? `${words[0][0]}${words[words.length - 1][0]}`
-		: words[0]?.slice(0, 2) || "CC"
-	).toUpperCase();
-}
-
-function activityIcon(action) {
-	if (String(action).startsWith("JOB_")) return "briefcase";
-	if (String(action).includes("DRAFT")) return "edit";
-	if (String(action).includes("EMAIL")) return "send";
-	if (String(action).includes("DISCOVERY")) return "search";
-	if (String(action).includes("RESUME")) return "document";
-	if (String(action).includes("SETTING")) return "settings";
-	return "spark";
-}
-
-function icon(name) {
-	const paths = {
-		home: '<path d="M3 10.5 10 4l7 6.5v6.2a1.3 1.3 0 0 1-1.3 1.3H4.3A1.3 1.3 0 0 1 3 16.7Z"/><path d="M7.5 18v-5h5v5"/>',
-		briefcase: '<rect x="2.5" y="6" width="15" height="10.5" rx="2"/><path d="M7 6V4.5h6V6M2.5 10.5h15M8 10.5v2h4v-2"/>',
-		layers: '<path d="m10 3 7 4-7 4-7-4 7-4Z"/><path d="m3 11 7 4 7-4M3 15l7 4 7-4"/>',
-		people: '<circle cx="7" cy="7" r="3"/><path d="M1.8 17c.5-3 2.2-4.5 5.2-4.5s4.7 1.5 5.2 4.5M13 4.5a3 3 0 0 1 0 5.8M14.3 12.8c2.2.3 3.5 1.7 3.9 4.2"/>',
-		chart: '<path d="M3 17V9M8 17V5M13 17v-7M18 17V3"/><path d="M2 17.5h17"/>',
-		settings: '<circle cx="10" cy="10" r="2.6"/><path d="M16.7 11.2v-2.4l-2-.5-.6-1.4 1-1.8-1.7-1.7-1.8 1-1.4-.6-.5-2H7.3l-.5 2-1.4.6-1.8-1-1.7 1.7 1 1.8-.6 1.4-2 .5v2.4l2 .5.6 1.4-1 1.8 1.7 1.7 1.8-1 1.4.6.5 2h2.4l.5-2 1.4-.6 1.8 1 1.7-1.7-1-1.8.6-1.4 2-.5Z"/>',
-		menu: '<path d="M3 5h14M3 10h14M3 15h14"/>',
-		"chevron-left": '<path d="m12.5 4-6 6 6 6"/>',
-		"chevron-right": '<path d="m7.5 4 6 6-6 6"/>',
-		"chevron-down": '<path d="m4 7 6 6 6-6"/>',
-		bookmark: '<path d="M5 3.5h10v14l-5-3-5 3v-14Z"/>',
-		progress: '<path d="M10 2.5a7.5 7.5 0 1 0 7.5 7.5H10V2.5Z"/><path d="M13 3.2a7.5 7.5 0 0 1 3.8 3.8H13V3.2Z"/>',
-		calendar: '<rect x="2.5" y="4.5" width="15" height="13" rx="2"/><path d="M6 2.5v4M14 2.5v4M2.5 8.5h15"/>',
-		spark: '<path d="m10 2 1.5 5.2L17 9l-5.5 1.8L10 16l-1.5-5.2L3 9l5.5-1.8L10 2Z"/>',
-		cup: '<path d="M4 6h10v6a4 4 0 0 1-4 4H8a4 4 0 0 1-4-4V6Z"/><path d="M14 8h1.5a2.5 2.5 0 0 1 0 5H14M6 3.5c0 1 1 1 1 2M10 3.5c0 1 1 1 1 2"/>',
-		laptop: '<rect x="4" y="3" width="12" height="9" rx="1"/><path d="M2 15h16l-1 2H3l-1-2Z"/>',
-		notebook: '<rect x="5" y="2.5" width="11" height="15" rx="1.5"/><path d="M8 2.5v15M3.5 5h3M3.5 9h3M3.5 13h3"/>',
-		plant: '<path d="M10 18v-8M10 12c-3.5 0-5.5-2-5.5-5.5 3.5 0 5.5 2 5.5 5.5ZM10 10c0-3.5 2-5.5 5.5-5.5 0 3.5-2 5.5-5.5 5.5ZM6 18h8l-1 2H7l-1-2Z"/>',
-		path: '<path d="M3 17c2-5 5-2 7-7s5-2 7-7"/><circle cx="3" cy="17" r="1.3"/><circle cx="10" cy="10" r="1.3"/><path d="M17 3v5M17 3h3l-1 2 1 2h-3"/>',
-		reset: '<path d="M4 7V3m0 0h4M4 3l3 3a6 6 0 1 1-1.2 8.9"/>',
-		compass: '<circle cx="10" cy="10" r="8"/><path d="m13.5 6.5-2 5-5 2 2-5 5-2Z"/>',
-		filter: '<path d="M3 4h14l-5.5 6v5l-3 1.5V10L3 4Z"/>',
-		grid: '<rect x="3" y="3" width="5" height="5" rx="1"/><rect x="12" y="3" width="5" height="5" rx="1"/><rect x="3" y="12" width="5" height="5" rx="1"/><rect x="12" y="12" width="5" height="5" rx="1"/>',
-		list: '<path d="M7 5h10M7 10h10M7 15h10"/><circle cx="3.5" cy="5" r=".8"/><circle cx="3.5" cy="10" r=".8"/><circle cx="3.5" cy="15" r=".8"/>',
-		search: '<circle cx="8.5" cy="8.5" r="5.5"/><path d="m13 13 4 4"/>',
-		edit: '<path d="m4 14.5-.5 3 3-.5L16 7.5 13.5 5 4 14.5Z"/><path d="m12 6.5 2.5 2.5"/>',
-		send: '<path d="m2.5 3 15 7-15 7 2-6.5L13 10 4.5 9.5 2.5 3Z"/>',
-		reply: '<path d="m8 5-5 5 5 5v-3c4 0 6.5 1.2 9 4-1-6-4-8-9-8V5Z"/>',
-		google: '<circle cx="10" cy="10" r="7"/><path d="M17 10h-7v3h4.2"/>',
-		document: '<path d="M5 2.5h7l3 3v12H5v-15Z"/><path d="M12 2.5v3h3M7.5 10h5M7.5 13h5"/>',
-		shield: '<path d="M10 2.5 17 5v4.5c0 4.2-2.7 6.8-7 8.5-4.3-1.7-7-4.3-7-8.5V5l7-2.5Z"/><path d="m7 10 2 2 4-4"/>',
-		external: '<path d="M11 3h6v6M17 3l-8 8"/><path d="M15 11v5H4V5h5"/>',
-		logout: '<path d="M8 3H4v14h4M12 6l4 4-4 4M7 10h9"/>',
-		source: '<circle cx="10" cy="10" r="7"/><path d="M3 10h14M10 3c2 2 3 4.3 3 7s-1 5-3 7c-2-2-3-4.3-3-7s1-5 3-7Z"/>',
-		pin: '<path d="M10 18s5-4.7 5-10a5 5 0 1 0-10 0c0 5.3 5 10 5 10Z"/><circle cx="10" cy="8" r="1.8"/>',
-		check: '<path d="m3.5 10.5 4 4 9-9"/>',
-		save: '<path d="M4 3h10l2 2v12H4V3Z"/><path d="M7 3v5h6V3M7 17v-5h6v5"/>',
-	};
-	const body = paths[name] || paths.spark;
-	return `<svg class="icon" viewBox="0 0 20 20" aria-hidden="true" focusable="false">${body}</svg>`;
+	return `<div class="empty">${escapeHtml(message)}</div>`;
 }
 
 function listValue(id) {
@@ -2480,12 +1760,6 @@ function formatStatus(entry) {
 		.split("_")
 		.map((word) => word[0].toUpperCase() + word.slice(1))
 		.join(" ");
-}
-
-function preferredScrollBehavior() {
-	return window.matchMedia("(prefers-reduced-motion: reduce)").matches
-		? "auto"
-		: "smooth";
 }
 
 function formatDate(entry) {

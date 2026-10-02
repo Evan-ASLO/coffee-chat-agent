@@ -6,12 +6,10 @@
 		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
-		"vendor:three": "node scripts/sync-three.mjs",
-		"check:vendor": "node scripts/sync-three.mjs",
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
-		"test:ui": "node --test test/*.cjs",
-		"check": "npm run check:vendor && npm run typecheck && npm test && npm run test:ui",
+		"test:ui": "node --test test/ui-contract.cjs",
+		"check": "npm run typecheck && npm test && npm run test:ui",
 		"cf-typegen": "wrangler types",
 		"db:migrate:local": "wrangler d1 migrations apply coffee-chat-agent --local",
 		"db:migrate:remote": "wrangler d1 migrations apply coffee-chat-agent --remote"
@@ -20,7 +18,6 @@
 		"fflate": "^0.8.3",
 		"hono": "4.13.8",
 		"jose": "6.2.0",
-		"three": "0.180.0",
 		"zod": "4.6.5"
 	},
 	"devDependencies": {
