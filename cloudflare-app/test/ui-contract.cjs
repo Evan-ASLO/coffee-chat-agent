@@ -27,6 +27,8 @@ test("self-hosts required attribution and reference-derived art crops", () => {
 
 	const receipt = JSON.parse(read("public/art/reference-art-receipt.json"));
 	for (const asset of [
+		"home-hero.webp",
+		"home-coffee.webp",
 		"jobs-hero.webp",
 		"applications-hero.webp",
 		"networking-hero.webp",
@@ -208,7 +210,7 @@ test("self-hosts pinned Three.js with full lifecycle and accessible fallback", (
 		assert.ok(fs.existsSync(path.join(root, "public", "vendor", file)));
 	}
 	assert.match(scene, /from "\.\/vendor\/three\.module\.min\.js"/);
-	assert.match(scene, /createCharacter/);
+	assert.match(scene, /createCareerLandscape/);
 	assert.match(scene, /IntersectionObserver/);
 	assert.match(scene, /ResizeObserver/);
 	assert.match(scene, /visibilitychange/);
@@ -222,10 +224,27 @@ test("self-hosts pinned Three.js with full lifecycle and accessible fallback", (
 		"applications",
 		"saved",
 		"progress",
-		"journey",
 	]) {
-		assert.match(app, new RegExp(`journeyControl\\("${area}"`));
+		assert.match(app, new RegExp(`homeJourneyControl\\("${area}"`));
 	}
+	assert.match(app, /data-journey-target="journey"/);
+});
+
+test("matches the new Home opportunity reference composition", () => {
+	const app = read("public/app.js");
+	const styles = read("public/styles.css");
+	assert.match(app, /Find your next<br \/><span>opportunity\.<\/span>/);
+	assert.match(app, /Coffee today\.<br \/>Opportunities tomorrow\./);
+	assert.match(app, /class="home-reference-stats"/);
+	assert.match(app, /id="home-job-search-form"/);
+	assert.match(app, /Good<br \/>People<br \/>Great<br \/>Opportunities/);
+	assert.match(app, /Recent roles/);
+	assert.match(app, /class="home-recent-grid"/);
+	assert.match(app, /class="home-journey-panel"/);
+	assert.match(app, /Your journey/);
+	assert.match(styles, /url\("\/art\/home-hero\.webp"\)/);
+	assert.match(styles, /\.home-reference-lower\s*\{[^}]*grid-template-columns:/s);
+	assert.doesNotMatch(app, /Welcome back,/);
 });
 
 test("retains beta access and legal paths without exposing job data", () => {

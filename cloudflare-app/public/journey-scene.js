@@ -54,11 +54,11 @@ export function createJourneyScene(options) {
 		reducedMotion,
 	});
 	const scene = new THREE.Scene();
-	const camera = new THREE.PerspectiveCamera(mobile ? 43 : 37, 1, 0.1, 100);
+	const camera = new THREE.PerspectiveCamera(mobile ? 45 : 38, 1, 0.1, 100);
 	const baseCamera = mobile
-		? new THREE.Vector3(10.2, 6.4, 13.8)
-		: new THREE.Vector3(7.8, 4.9, 9.8);
-	const baseLookAt = new THREE.Vector3(0, 0.05, -0.35);
+		? new THREE.Vector3(0, 7.2, 12.8)
+		: new THREE.Vector3(0, 5.7, 9.6);
+	const baseLookAt = new THREE.Vector3(0, -0.2, -0.7);
 	const desiredCamera = baseCamera.clone();
 	const desiredLookAt = baseLookAt.clone();
 	const currentLookAt = baseLookAt.clone();
@@ -91,10 +91,10 @@ export function createJourneyScene(options) {
 	container.appendChild(renderer.domElement);
 
 	const world = new THREE.Group();
-	world.rotation.y = -0.06;
+	world.rotation.y = -0.02;
 	if (mobile) {
-		world.scale.setScalar(0.72);
-		world.position.y = -0.12;
+		world.scale.setScalar(0.86);
+		world.position.y = -0.18;
 	}
 	scene.add(world);
 	const interactive = new Map();
@@ -111,45 +111,13 @@ export function createJourneyScene(options) {
 	let lastFrame = performance.now();
 
 	addLighting(scene);
-	const skyline = createTorontoSkyline();
-	world.add(skyline);
-	const desk = createDesk();
-	world.add(desk);
-	const character = createCharacter(config.geometryDetail);
-	character.scale.setScalar(1.24);
-	character.position.set(0.32, -0.88, -1.52);
-	world.add(character);
-	const books = createBooks();
-	books.position.set(-2.45, -0.72, -1.46);
-	world.add(books);
-
-	const path = createJourneyPath(metrics);
-	path.position.set(-0.4, -0.78, -1.05);
-	register(path, "journey");
-	world.add(path);
-
-	const cup = createCoffeeCup(metrics);
-	cup.position.set(-2.85, -0.65, 0.42);
-	register(cup, "networking");
-	world.add(cup);
-	animated.push(...cup.userData.animated);
-
-	const laptop = createLaptop(metrics);
-	laptop.position.set(-0.2, -0.7, 0.2);
-	register(laptop, "applications");
-	world.add(laptop);
-
-	const notebook = createNotebook(metrics);
-	notebook.position.set(2.45, -0.7, 0.72);
-	notebook.rotation.y = -0.16;
-	register(notebook, "saved");
-	world.add(notebook);
-
-	const plant = createPlant(metrics, config.geometryDetail);
-	plant.position.set(3.05, -0.68, -1.13);
-	register(plant, "progress");
-	world.add(plant);
-	animated.push(...plant.userData.animated);
+	const landscape = createCareerLandscape(
+		metrics,
+		config.geometryDetail,
+		register,
+		animated,
+	);
+	world.add(landscape);
 
 	const warmLight = new THREE.PointLight(COLORS.orangeLight, 23, 18, 2);
 	warmLight.position.set(-1.8, 3.2, 3.5);
@@ -310,8 +278,8 @@ export function createJourneyScene(options) {
 		camera.position.lerp(cameraTarget, 1 - Math.pow(0.001, delta));
 		currentLookAt.lerp(desiredLookAt, 1 - Math.pow(0.001, delta));
 		camera.lookAt(currentLookAt);
-		skyline.position.x +=
-			(pointerX * 0.12 - skyline.position.x) *
+		landscape.position.x +=
+			(pointerX * 0.08 - landscape.position.x) *
 			Math.min(1, delta * 2.8);
 		warmLight.position.x +=
 			(-1.8 + pointerX * 1.1 - warmLight.position.x) *
@@ -390,6 +358,155 @@ function addLighting(scene) {
 	const fill = new THREE.DirectionalLight(COLORS.sageLight, 1.3);
 	fill.position.set(-5, 4, 2);
 	scene.add(fill);
+}
+
+function createCareerLandscape(metrics, detail, register, animated) {
+	const group = new THREE.Group();
+	group.position.y = -0.65;
+
+	const ground = mesh(
+		roundedBoxGeometry(10.6, 0.42, 5.5, 0.34),
+		material(0x789264, 0.92),
+	);
+	ground.position.set(0, -0.35, 0);
+	group.add(ground);
+
+	const sun = mesh(
+		new THREE.SphereGeometry(0.58, detail === 0 ? 12 : 24, 16),
+		new THREE.MeshBasicMaterial({ color: 0xffe4a4 }),
+	);
+	sun.position.set(0.5, 3.1, -3.35);
+	group.add(sun);
+
+	const mountainSpecs = [
+		[-3.8, 0.4, -3.2, 2.25, 2.8, 0x9a9b8f],
+		[-1.7, 0.15, -3.45, 2.65, 3.2, 0xb39d8a],
+		[0.8, 0.25, -3.55, 2.4, 3.1, 0x9b9287],
+		[3.35, 0.15, -3.25, 2.5, 3.15, 0xaaa08c],
+	];
+	for (const [x, y, z, radius, height, color] of mountainSpecs) {
+		const mountain = mesh(
+			new THREE.ConeGeometry(radius, height, detail === 0 ? 18 : 32),
+			material(color, 0.94),
+		);
+		mountain.position.set(x, y + height / 2, z);
+		mountain.rotation.y = x * 0.08;
+		group.add(mountain);
+	}
+
+	const hillSpecs = [
+		[-4.4, -0.15, -1.8, 3.6, 0x466a4d],
+		[-1.2, -0.3, -1.55, 3.2, 0x5e7d56],
+		[2.3, -0.25, -1.7, 3.4, 0x3d6448],
+		[4.4, -0.35, -1.35, 2.6, 0x6d8758],
+	];
+	for (const [x, y, z, scale, color] of hillSpecs) {
+		const hill = mesh(
+			new THREE.SphereGeometry(1, detail === 0 ? 14 : 24, 12),
+			material(color, 0.96),
+		);
+		hill.scale.set(scale, scale * 0.72, scale * 0.7);
+		hill.position.set(x, y, z);
+		group.add(hill);
+	}
+
+	const pathPoints = [
+		new THREE.Vector3(-4.45, 0.01, 1.9),
+		new THREE.Vector3(-2.3, 0.14, 0.55),
+		new THREE.Vector3(-0.35, 0.18, 0.95),
+		new THREE.Vector3(1.65, 0.25, -0.05),
+		new THREE.Vector3(3.95, 0.5, -0.95),
+	];
+	const curve = new THREE.CatmullRomCurve3(pathPoints);
+	const path = mesh(
+		new THREE.TubeGeometry(curve, 60, 0.075, 10, false),
+		material(COLORS.creamLight, 0.68),
+	);
+	register(path, "journey");
+	group.add(path);
+
+	const stages = [
+		{ area: "saved", point: pathPoints[0], object: createNotebook(metrics), scale: 0.28 },
+		{ area: "networking", point: pathPoints[1], object: createCoffeeCup(metrics), scale: 0.32 },
+		{ area: "applications", point: pathPoints[3], object: createLaptop(metrics), scale: 0.28 },
+		{ area: "progress", point: pathPoints[4], object: createPlant(metrics, detail), scale: 0.34 },
+	];
+	for (const stage of stages) {
+		stage.object.scale.setScalar(stage.scale);
+		stage.object.position.copy(stage.point);
+		stage.object.position.y += 0.18;
+		stage.object.rotation.y = -0.25;
+		register(stage.object, stage.area);
+		group.add(stage.object);
+		animated.push(...(stage.object.userData.animated || []));
+	}
+
+	metrics.milestones.forEach((milestone, index) => {
+		const point = pathPoints[Math.min(index + 1, pathPoints.length - 1)];
+		const marker = new THREE.Group();
+		const ring = mesh(
+			new THREE.TorusGeometry(0.18, 0.055, 10, 20),
+			material(
+				milestone.active ? COLORS.orange : COLORS.creamLight,
+				0.58,
+			),
+		);
+		ring.rotation.x = Math.PI / 2;
+		marker.add(ring);
+		const core = mesh(
+			new THREE.SphereGeometry(0.08, 10, 8),
+			material(COLORS.forestDeep, 0.7),
+		);
+		marker.add(core);
+		marker.position.copy(point);
+		marker.position.y += 0.12;
+		group.add(marker);
+	});
+
+	const treePositions = [
+		[-4.8, -1.25],
+		[-3.6, -0.55],
+		[-2.8, -1.85],
+		[-1.15, -1.4],
+		[0.25, -1.2],
+		[1.1, -2],
+		[2.5, -1.35],
+		[3.35, -1.8],
+		[4.7, -1.05],
+		[4.1, 0.25],
+		[-4.2, 0.65],
+	];
+	for (let index = 0; index < treePositions.length; index += 1) {
+		const [x, z] = treePositions[index];
+		const tree = createTree(0.55 + (index % 3) * 0.12, detail);
+		tree.position.set(x, 0, z);
+		group.add(tree);
+	}
+	return group;
+}
+
+function createTree(scale, detail) {
+	const group = new THREE.Group();
+	const trunk = mesh(
+		new THREE.CylinderGeometry(0.08, 0.11, 0.65, 10),
+		material(COLORS.coffee, 0.86),
+	);
+	trunk.position.y = 0.32;
+	group.add(trunk);
+	for (let index = 0; index < 3; index += 1) {
+		const crown = mesh(
+			new THREE.ConeGeometry(
+				0.55 - index * 0.08,
+				0.86,
+				detail === 0 ? 12 : 20,
+			),
+			material(index === 1 ? 0x315b42 : 0x274f39, 0.9),
+		);
+		crown.position.y = 0.75 + index * 0.34;
+		group.add(crown);
+	}
+	group.scale.setScalar(scale);
+	return group;
 }
 
 function createDesk() {

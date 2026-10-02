@@ -118,5 +118,31 @@
     "width": 132,
     "height": 572,
     "bytes": 14364
+  },
+  "home-hero.webp": {
+    "source": "cac484f6-fa57-41dd-904e-9ebfe7796343-6b544319-272a-477d-897e-ba9254110a1f-clipboard.png",
+    "source_sha256": "8ba4d413cc7bd9ec76dc61a207433865083593137ea4742846c52e11a36eacb7",
+    "crop": [
+      570,
+      90,
+      1536,
+      470
+    ],
+    "width": 966,
+    "height": 380,
+    "bytes": 36970
+  },
+  "home-coffee.webp": {
+    "source": "cac484f6-fa57-41dd-904e-9ebfe7796343-6b544319-272a-477d-897e-ba9254110a1f-clipboard.png",
+    "source_sha256": "8ba4d413cc7bd9ec76dc61a207433865083593137ea4742846c52e11a36eacb7",
+    "crop": [
+      1100,
+      580,
+      1285,
+      700
+    ],
+    "width": 185,
+    "height": 120,
+    "bytes": 3030
   }
 }

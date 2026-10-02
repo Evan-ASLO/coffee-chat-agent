@@ -25,7 +25,7 @@
 	--paper-solid: #fffdf8;
 	--positive: #2b7a50;
 	--positive-soft: #e2f2e8;
-	--warning: #9a6411;
+	--warning: #855200;
 	--warning-soft: #fff0cf;
 	--danger: #b6403d;
 	--danger-soft: #fae4e2;
@@ -3405,6 +3405,488 @@ dialog::backdrop {
 	}
 }
 
+.app-frame.view-home {
+	padding: 0 0 8px;
+}
+
+.view-home .topbar {
+	position: absolute;
+	top: 28px;
+	left: 50%;
+	width: min(1386px, calc(100% - 150px));
+	transform: translateX(-50%);
+}
+
+.view-home #main-content {
+	width: 100%;
+}
+
+.home-reference-hero {
+	position: relative;
+	height: 510px;
+	padding: 116px 6.8% 58px;
+	background:
+		linear-gradient(
+			90deg,
+			rgba(255, 244, 225, 0.98) 0%,
+			rgba(255, 244, 225, 0.92) 28%,
+			rgba(255, 244, 225, 0.48) 48%,
+			rgba(255, 244, 225, 0) 68%
+		),
+		url("/art/home-hero.webp") calc(100% + 235px) center / auto 100% no-repeat,
+		var(--cream-100);
+	box-shadow: inset 0 -30px 55px rgba(86, 61, 38, 0.12);
+}
+
+.home-reference-copy {
+	position: relative;
+	z-index: 2;
+	width: min(520px, 40%);
+}
+
+.home-reference-copy .eyebrow {
+	color: #7d5a40;
+	font-size: 0.72rem;
+	letter-spacing: 0.24em;
+}
+
+.home-reference-copy .eyebrow span {
+	color: var(--orange-700);
+}
+
+.home-reference-copy h1 {
+	font-size: clamp(3.25rem, 4.15vw, 4.65rem);
+	line-height: 0.9;
+}
+
+.home-reference-copy h1 span {
+	color: var(--orange-600);
+}
+
+.home-reference-copy > p:not(.eyebrow, .home-handwritten) {
+	max-width: 410px;
+	margin-top: 13px;
+	color: #5d665f;
+	font-size: 1.08rem;
+	line-height: 1.35;
+}
+
+.home-reference-actions {
+	display: flex;
+	gap: 12px;
+	margin-top: 20px;
+}
+
+.home-reference-actions button {
+	min-height: 45px;
+	padding: 9px 22px;
+	border-radius: 12px;
+	font-size: 0.88rem;
+}
+
+.home-handwritten {
+	position: relative;
+	width: max-content;
+	margin: 20px 0 0 20px;
+	color: #524c42;
+	font-family: "Segoe Print", "Bradley Hand", cursive;
+	font-size: 1.25rem;
+	line-height: 1.25;
+	transform: rotate(-4deg);
+}
+
+.home-handwritten span {
+	position: absolute;
+	right: -18px;
+	bottom: -10px;
+	width: 88px;
+	height: 3px;
+	background: var(--orange-500);
+	transform: rotate(-3deg);
+}
+
+.home-reference-stats {
+	position: absolute;
+	z-index: 3;
+	right: 5.2%;
+	bottom: -38px;
+	left: 5.2%;
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 12px;
+}
+
+.home-reference-stats .reference-metric {
+	min-height: 85px;
+	background: rgba(255, 253, 248, 0.94);
+}
+
+.home-search-row {
+	display: grid;
+	width: min(1375px, calc(100% - 150px));
+	grid-template-columns: minmax(0, 1fr) 355px;
+	gap: 12px;
+	margin: 56px auto 12px;
+}
+
+.home-search-panel,
+.home-coffee-card,
+.home-recent-panel,
+.home-journey-panel {
+	background: rgba(255, 253, 248, 0.95);
+	border: 1px solid var(--line);
+	border-radius: 13px;
+	box-shadow: var(--shadow-soft);
+}
+
+.home-search-panel {
+	padding: 14px 18px;
+}
+
+.home-search-heading {
+	display: flex;
+	align-items: center;
+	gap: 12px;
+	margin-bottom: 10px;
+}
+
+.home-search-heading > .icon {
+	width: 30px;
+	height: 30px;
+	flex-basis: 30px;
+}
+
+.home-search-heading h2 {
+	margin-bottom: 3px;
+	font-size: 1.12rem;
+}
+
+.home-search-heading p {
+	color: var(--muted);
+	font-size: 0.72rem;
+}
+
+.home-search-controls {
+	display: grid;
+	grid-template-columns: minmax(280px, 1.5fr) repeat(3, minmax(130px, 0.65fr)) 76px 120px;
+	gap: 9px;
+}
+
+.home-search-input {
+	position: relative;
+}
+
+.home-search-input .icon {
+	position: absolute;
+	z-index: 1;
+	top: 11px;
+	left: 11px;
+	width: 17px;
+	height: 17px;
+}
+
+.home-search-input input {
+	padding-left: 36px;
+}
+
+.home-coffee-card {
+	display: grid;
+	overflow: hidden;
+	grid-template-columns: 1.1fr 0.9fr;
+	color: white;
+	background: linear-gradient(145deg, var(--forest-950), var(--forest-700));
+}
+
+.home-coffee-art {
+	min-height: 120px;
+	background: url("/art/home-coffee.webp") center / cover no-repeat;
+}
+
+.home-coffee-card p {
+	position: relative;
+	align-self: center;
+	padding: 14px 18px 18px;
+	font-size: 1.05rem;
+	line-height: 1.1;
+}
+
+.home-coffee-card p span {
+	position: absolute;
+	bottom: 8px;
+	left: 18px;
+	width: 34px;
+	height: 3px;
+	background: var(--orange-500);
+}
+
+.home-reference-lower {
+	display: grid;
+	width: min(1375px, calc(100% - 150px));
+	grid-template-columns: minmax(0, 1.35fr) minmax(460px, 1fr);
+	gap: 12px;
+	margin: 0 auto;
+}
+
+.home-recent-panel,
+.home-journey-panel {
+	min-width: 0;
+	padding: 14px 18px;
+}
+
+.home-recent-panel > header,
+.home-journey-panel > header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-bottom: 10px;
+}
+
+.home-recent-panel > header > div,
+.home-journey-panel > header > div:first-child {
+	display: flex;
+	align-items: center;
+	gap: 9px;
+}
+
+.home-journey-panel > header > div:last-child {
+	display: flex;
+	gap: 5px;
+}
+
+.home-recent-panel h2,
+.home-journey-panel h2 {
+	font-size: 1.05rem;
+}
+
+.home-recent-grid {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 10px;
+}
+
+.home-recent-card {
+	display: grid;
+	gap: 9px;
+	padding: 12px;
+	background: rgba(255, 255, 255, 0.76);
+	border: 1px solid #e0e3de;
+	border-radius: 10px;
+}
+
+.home-recent-title {
+	display: flex;
+	gap: 9px;
+}
+
+.home-recent-title > div:last-child {
+	min-width: 0;
+}
+
+.home-recent-title strong {
+	font-size: 0.75rem;
+}
+
+.home-recent-title h3 {
+	display: -webkit-box;
+	margin-top: 2px;
+	overflow: hidden;
+	font-size: 0.84rem;
+	line-height: 1.15;
+	-webkit-box-orient: vertical;
+	-webkit-line-clamp: 2;
+}
+
+.home-recent-title p {
+	margin-top: 3px;
+	color: var(--muted);
+	font-size: 0.64rem;
+}
+
+.home-recent-actions {
+	display: grid;
+	grid-template-columns: 1.15fr 0.7fr 1fr;
+	gap: 7px;
+}
+
+.home-recent-actions > * {
+	min-height: 35px;
+	padding: 6px 8px;
+	font-size: 0.66rem;
+}
+
+.home-journey-panel .journey-canvas {
+	min-height: 220px;
+	height: 220px;
+	overflow: hidden;
+	background:
+		radial-gradient(circle at 54% 18%, rgba(255, 228, 164, 0.78), transparent 7rem),
+		linear-gradient(180deg, #fae6ca, #d8dbb9 56%, #879b67);
+}
+
+.home-journey-milestones {
+	position: absolute;
+	z-index: 4;
+	inset: 0;
+	pointer-events: none;
+}
+
+.home-journey-milestones button {
+	position: absolute;
+	display: grid;
+	min-height: 0;
+	grid-template-columns: 30px auto;
+	gap: 6px;
+	align-items: center;
+	padding: 0;
+	pointer-events: auto;
+	background: transparent;
+	border: 0;
+	text-align: left;
+}
+
+.home-journey-milestones button:nth-child(1) {
+	left: 14%;
+	bottom: 14px;
+}
+
+.home-journey-milestones button:nth-child(2) {
+	left: 34%;
+	bottom: 42px;
+}
+
+.home-journey-milestones button:nth-child(3) {
+	left: 56%;
+	bottom: 70px;
+}
+
+.home-journey-milestones button:nth-child(4) {
+	right: 7%;
+	top: 32px;
+}
+
+.journey-marker {
+	display: grid;
+	width: 28px;
+	height: 28px;
+	place-items: center;
+	color: var(--forest-900);
+	background: var(--paper-solid);
+	border: 4px solid rgba(255, 253, 248, 0.9);
+	border-radius: 50%;
+	box-shadow: 0 0 0 2px var(--forest-700);
+}
+
+.home-journey-milestones button.active .journey-marker,
+.home-journey-milestones button.hovered .journey-marker {
+	color: white;
+	background: var(--orange-600);
+	box-shadow: 0 0 0 2px var(--orange-700);
+}
+
+.home-journey-milestones strong,
+.home-journey-milestones small {
+	display: block;
+	white-space: nowrap;
+}
+
+.home-journey-milestones strong {
+	font-size: 0.66rem;
+}
+
+.home-journey-milestones small {
+	color: #314b3e;
+	font-size: 0.55rem;
+}
+
+.journey-overview-button {
+	position: absolute;
+	z-index: 5;
+	top: 8px;
+	left: 8px;
+	min-height: 30px;
+	padding: 4px 8px;
+	background: rgba(255, 253, 248, 0.8);
+	border-radius: 8px;
+	font-size: 0.58rem;
+	backdrop-filter: blur(8px);
+}
+
+.home-journey-detail {
+	position: absolute;
+	z-index: 5;
+	top: 8px;
+	right: 8px;
+	width: 190px;
+	color: var(--ink);
+	background: rgba(255, 253, 248, 0.88);
+	border: 1px solid rgba(255, 255, 255, 0.8);
+	border-radius: 9px;
+	box-shadow: var(--shadow-soft);
+	backdrop-filter: blur(10px);
+}
+
+.home-journey-detail .journey-detail-inner {
+	display: block;
+	padding: 10px;
+}
+
+.home-journey-detail .eyebrow,
+.home-journey-detail .journey-detail-stats {
+	display: none;
+}
+
+.home-journey-detail h2 {
+	margin-bottom: 4px;
+	font-size: 0.86rem;
+}
+
+.home-journey-detail p:not(.eyebrow) {
+	color: var(--muted);
+	font-size: 0.59rem;
+	line-height: 1.25;
+}
+
+.home-journey-detail .primary {
+	min-height: 28px;
+	margin-top: 7px;
+	padding: 4px 7px;
+	font-size: 0.58rem;
+}
+
+.home-signoff {
+	display: flex;
+	width: min(1375px, calc(100% - 150px));
+	align-items: center;
+	justify-content: space-between;
+	margin: 12px auto 0;
+	color: #6f675c;
+}
+
+.home-signoff > span {
+	font-size: 0.58rem;
+	font-weight: 800;
+	letter-spacing: 0.14em;
+	text-transform: uppercase;
+}
+
+.home-signoff em {
+	position: relative;
+	padding-right: 14px;
+	font-family: "Segoe Print", "Bradley Hand", cursive;
+	font-size: 1rem;
+}
+
+.home-signoff i {
+	position: absolute;
+	right: 0;
+	bottom: -5px;
+	width: 42px;
+	height: 2px;
+	background: var(--orange-500);
+	transform: rotate(-7deg);
+}
+
 @media (max-width: 1240px) {
 	.app-frame.view-analytics::after {
 		display: none;
@@ -3437,6 +3919,25 @@ dialog::backdrop {
 
 	.job-search-strip label:nth-of-type(5) {
 		display: none;
+	}
+
+	.view-home .topbar,
+	.home-search-row,
+	.home-reference-lower,
+	.home-signoff {
+		width: calc(100% - 48px);
+	}
+
+	.home-search-controls {
+		grid-template-columns: minmax(240px, 1.3fr) repeat(2, minmax(120px, 0.7fr)) 72px 110px;
+	}
+
+	.home-search-controls label:nth-of-type(4) {
+		display: none;
+	}
+
+	.home-reference-lower {
+		grid-template-columns: minmax(0, 1.2fr) minmax(410px, 0.9fr);
 	}
 
 	.tracker-layout,
@@ -3484,6 +3985,12 @@ dialog::backdrop {
 		min-height: 58px;
 		gap: 10px;
 		border-radius: 12px;
+	}
+
+	.view-home .topbar {
+		position: absolute;
+		top: 18px;
+		width: calc(100% - 36px);
 	}
 
 	.brand {
@@ -3570,6 +4077,40 @@ dialog::backdrop {
 	.reference-hero {
 		margin-top: 0;
 		background-position: 60% center;
+	}
+
+	.home-reference-hero {
+		min-height: 590px;
+		padding: 108px 5% 92px;
+		background-position: 58% center;
+	}
+
+	.home-reference-copy {
+		width: min(420px, 48%);
+	}
+
+	.home-search-row,
+	.home-reference-lower,
+	.home-signoff {
+		width: calc(100% - 36px);
+	}
+
+	.home-search-row,
+	.home-reference-lower {
+		grid-template-columns: 1fr;
+	}
+
+	.home-search-controls {
+		grid-template-columns: minmax(240px, 1fr) repeat(2, minmax(120px, 0.55fr)) 72px 110px;
+	}
+
+	.home-coffee-card {
+		grid-template-columns: 190px 1fr;
+		min-height: 118px;
+	}
+
+	.home-reference-lower {
+		gap: 10px;
 	}
 
 	.reference-hero-copy {
@@ -3709,6 +4250,18 @@ dialog::backdrop {
 		padding: 8px 10px;
 	}
 
+	.app-frame.view-home {
+		padding: 8px 6px 6px;
+	}
+
+	.view-home .topbar {
+		position: relative;
+		top: auto;
+		left: auto;
+		width: 100%;
+		transform: none;
+	}
+
 	.brand strong {
 		max-width: 165px;
 		overflow: hidden;
@@ -3722,11 +4275,13 @@ dialog::backdrop {
 		overflow: hidden;
 		padding: 0;
 		color: transparent;
+		font-size: 0;
 	}
 
 	.sign-out-button::after {
 		color: var(--forest-950);
 		content: "↗";
+		font-size: 1rem;
 	}
 
 	.reference-hero {
@@ -3735,6 +4290,137 @@ dialog::backdrop {
 		align-items: flex-start;
 		background-position: 68% center;
 		background-size: auto 100%;
+	}
+
+	.home-reference-hero {
+		height: auto;
+		min-height: 0;
+		margin-top: 8px;
+		padding: 28px 16px 18px;
+		background:
+			linear-gradient(
+				180deg,
+				rgba(255, 244, 225, 0.95) 0%,
+				rgba(255, 244, 225, 0.88) 47%,
+				rgba(255, 244, 225, 0.18) 78%
+			),
+			url("/art/home-hero.webp") 43% bottom / auto 58% no-repeat,
+			var(--cream-100);
+		border-radius: 12px;
+	}
+
+	.home-reference-copy {
+		width: 100%;
+	}
+
+	.home-reference-copy h1 {
+		font-size: clamp(3rem, 14vw, 4.2rem);
+	}
+
+	.home-reference-copy > p:not(.eyebrow, .home-handwritten) {
+		max-width: 320px;
+	}
+
+	.home-handwritten {
+		display: none;
+	}
+
+	.home-reference-stats {
+		position: relative;
+		right: auto;
+		bottom: auto;
+		left: auto;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 8px;
+		margin-top: 230px;
+	}
+
+	.home-reference-stats .reference-metric {
+		min-height: 72px;
+		padding: 10px;
+	}
+
+	.home-search-row,
+	.home-reference-lower,
+	.home-signoff {
+		width: 100%;
+		margin-right: 0;
+		margin-left: 0;
+	}
+
+	.home-search-row {
+		margin-top: 10px;
+	}
+
+	.home-search-panel,
+	.home-recent-panel,
+	.home-journey-panel {
+		padding: 13px;
+	}
+
+	.home-search-controls {
+		grid-template-columns: 1fr;
+	}
+
+	.home-search-controls > * {
+		grid-column: 1;
+	}
+
+	.home-search-controls label:nth-of-type(4) {
+		display: grid;
+	}
+
+	.home-coffee-card {
+		grid-template-columns: 135px 1fr;
+	}
+
+	.home-recent-grid {
+		grid-template-columns: 1fr;
+	}
+
+	.home-recent-actions {
+		grid-template-columns: 1fr 0.7fr 0.9fr;
+	}
+
+	.home-journey-panel .journey-canvas {
+		min-height: 285px;
+		height: 285px;
+	}
+
+	.home-journey-detail {
+		width: 150px;
+	}
+
+	.home-journey-milestones button {
+		grid-template-columns: 24px auto;
+	}
+
+	.journey-marker {
+		width: 23px;
+		height: 23px;
+	}
+
+	.home-journey-milestones button:nth-child(1) {
+		left: 8%;
+	}
+
+	.home-journey-milestones button:nth-child(2) {
+		left: 28%;
+		bottom: 52px;
+	}
+
+	.home-journey-milestones button:nth-child(3) {
+		left: 49%;
+		bottom: 88px;
+	}
+
+	.home-journey-milestones button:nth-child(4) {
+		right: 4%;
+		top: 62px;
+	}
+
+	.home-signoff {
+		display: none;
 	}
 
 	.reference-hero::after {

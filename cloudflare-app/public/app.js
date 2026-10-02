@@ -204,11 +204,11 @@ function renderBetaLanding() {
 
 function renderStats() {
 	const metrics = journeyMetrics();
-	return `<section class="stats" aria-label="Career workspace summary">
-		${stat(state.jobs.pagination.total, "Open roles", "briefcase")}
-		${stat(metrics.saved, "Saved roles", "bookmark")}
-		${stat(metrics.activeApplications, "Active applications", "layers")}
-		${stat(metrics.peopleTracked, "People tracked", "people")}
+	return `<section class="home-reference-stats" aria-label="Career workspace summary">
+		${referenceMetric(state.jobs.pagination.total, "Open internships", "briefcase")}
+		${referenceMetric(metrics.saved, "Saved roles", "bookmark")}
+		${referenceMetric(metrics.activeApplications, "Active applications", "document")}
+		${referenceMetric(metrics.peopleTracked, "People tracked", "people")}
 	</section>`;
 }
 
@@ -259,57 +259,87 @@ function renderRailPage(content, activeView) {
 function renderHome() {
 	const metrics = journeyMetrics();
 	const detail = window.CareerJourney.detailFor(state.journeyFocus, metrics);
-	const firstName = String(state.session.user.name || "")
-		.trim()
-		.split(/\s+/)[0];
+	const recentJobs = state.jobs.jobs.slice(0, 2);
 	return `
-		<section class="home-hero">
-			<div class="home-hero-copy">
-				<p class="eyebrow">Career Journey</p>
-				<h1>${firstName ? `Welcome back, ${escapeHtml(firstName)}.` : "Welcome back."}</h1>
-				<p>Build momentum across opportunities, applications, and relationships. Every object on the desk reflects your current workspace data.</p>
-				<div class="actions hero-actions">
-					<button class="primary" data-nav="jobs">Explore jobs</button>
-					<button class="button-on-hero" data-nav="networking">Grow your network</button>
+		<section class="home-reference-hero">
+			<div class="home-reference-copy">
+				<p class="eyebrow">Coffee chats. Career growth. <span>Real opportunities.</span></p>
+				<h1>Find your next<br /><span>opportunity.</span></h1>
+				<p>Discover internships, track your applications, and connect with the people behind them.</p>
+				<div class="home-reference-actions">
+					<button class="primary" data-nav="jobs">${icon("search")} Browse Jobs</button>
+					<button class="secondary" data-nav="applications">My Applications</button>
 				</div>
-				${renderStats()}
+				<p class="home-handwritten">Coffee today.<br />Opportunities tomorrow.<span aria-hidden="true"></span></p>
 			</div>
-			<article class="home-scene-panel">
-				<div class="home-scene-heading">
-					<div>
-						<p class="eyebrow">Interactive Toronto workspace</p>
-						<h2>Your career desk</h2>
-						<p>Hover or tap an object to focus its real workspace data.</p>
-					</div>
-					<button id="journey-reset" class="icon-text-button">${icon("reset")} Reset</button>
+			${renderStats()}
+		</section>
+		<section class="home-search-row">
+			<form id="home-job-search-form" class="home-search-panel">
+				<div class="home-search-heading">${icon("search")}<div><h2>Find your next opportunity</h2><p>Search internships, track applications, and connect with the people behind them.</p></div></div>
+				<div class="home-search-controls">
+					<label class="home-search-input">${icon("search")}<span class="sr-only">Search roles</span><input id="home-job-q" placeholder="Title, company, location, or keyword" /></label>
+					<label><span class="sr-only">Company</span><input id="home-job-company" placeholder="Company" /></label>
+					<label><span class="sr-only">Location</span><input id="home-job-location" placeholder="Location" /></label>
+					<label><span class="sr-only">Career track</span><input id="home-job-category" placeholder="Category" /></label>
+					<button type="button" id="clear-home-job-search" class="secondary">Clear</button>
+					<button class="primary">Search jobs</button>
 				</div>
+			</form>
+			<aside class="home-coffee-card" aria-label="Networking prompt">
+				<div class="home-coffee-art" aria-hidden="true"></div>
+				<p>Good<br />People<br />Great<br />Opportunities<span aria-hidden="true"></span></p>
+			</aside>
+		</section>
+		<section class="home-reference-lower">
+			<article class="home-recent-panel">
+				<header><div>${icon("calendar")}<h2>Recent roles</h2></div><button class="text-button" data-nav="jobs">View all ${icon("chevron-right")}</button></header>
+				${recentJobs.length ? `<div class="home-recent-grid">${recentJobs.map(homeRecentJobCard).join("")}</div>` : empty("No current roles are available yet.")}
+			</article>
+			<article class="home-journey-panel">
+				<header><div>${icon("chart")}<h2>Your journey</h2></div><div><button id="journey-reset" class="text-button">${icon("reset")} Reset</button><button class="text-button" data-nav="analytics">View analytics ${icon("chevron-right")}</button></div></header>
 				<div id="journey-canvas" class="journey-canvas" aria-busy="true">
 					${renderJourneyFallback(metrics)}
+					<div class="home-journey-milestones" aria-label="Career Journey controls">
+						${homeJourneyControl("saved", "Explore", "Find roles", "bookmark")}
+						${homeJourneyControl("networking", "Connect", "Have coffee chats", "cup")}
+						${homeJourneyControl("applications", "Apply", "Track progress", "document")}
+						${homeJourneyControl("progress", "Grow", "Turn conversations into opportunities", "path")}
+					</div>
+					<button data-journey-target="journey" class="journey-overview-button ${state.journeyFocus === "journey" ? "active" : ""}">${icon("path")}<span>Journey overview</span></button>
+					<section class="home-journey-detail" id="journey-detail" aria-live="polite" aria-label="Selected Career Journey detail">
+						${renderJourneyDetail(detail)}
+					</section>
 				</div>
 			</article>
-			<div class="hero-orbit hero-orbit-one" aria-hidden="true"></div>
-			<div class="hero-orbit hero-orbit-two" aria-hidden="true"></div>
 		</section>
-		<section class="journey-dock" aria-label="Career Journey controls">
-			<div>
-				<p class="eyebrow">Explore the scene</p>
-				<p>Canvas interactions are mirrored here for keyboard and touch.</p>
-			</div>
-			<div class="journey-controls" aria-label="Career Journey objects">
-				${journeyControl("networking", "Coffee cup", "Networking", "cup")}
-				${journeyControl("applications", "Laptop", "Applications", "laptop")}
-				${journeyControl("saved", "Notebook", "Saved roles", "notebook")}
-				${journeyControl("progress", "Plant", "Overall progress", "plant")}
-				${journeyControl("journey", "Path", "Milestones", "path")}
-			</div>
-		</section>
-		<section class="journey-detail" id="journey-detail" aria-live="polite" aria-label="Selected Career Journey detail">
-			${renderJourneyDetail(detail)}
-		</section>
-		<section class="home-grid">
-			${renderHomeNextStep(metrics)}
-			${renderRecentActivity(5)}
-		</section>`;
+		<div class="home-signoff"><span>Toronto&nbsp;&nbsp;|&nbsp;&nbsp;Est. 2026</span><em>A Brighter You.<i aria-hidden="true"></i></em></div>`;
+}
+
+function homeJourneyControl(area, title, subtitle, iconName) {
+	return `<button data-journey-target="${area}" class="${state.journeyFocus === area ? "active" : ""}">
+		<span class="journey-marker">${icon(iconName)}</span>
+		<span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(subtitle)}</small></span>
+	</button>`;
+}
+
+function homeRecentJobCard(job) {
+	const status = job.userState?.status;
+	const posted = job.postedAt
+		? `Posted ${formatDateOnly(job.postedAt)}`
+		: job.postedText || "Date unavailable";
+	return `<article class="home-recent-card">
+		<div class="home-recent-title">
+			<span class="company-tile company-tone-${companyTone(job.company)}" aria-hidden="true">${escapeHtml(companyInitials(job.company))}</span>
+			<div><strong>${escapeHtml(job.company)}</strong><h3>${escapeHtml(job.title)}</h3><p>${escapeHtml([job.location, job.region].filter(Boolean).join(" · ") || "Location not listed")}</p></div>
+		</div>
+		<div class="chips"><span class="chip">${escapeHtml(JobSourceUi.sourceLabel(job.source))}</span>${job.industry && job.industry !== "Other" ? `<span class="chip">${escapeHtml(job.industry)}</span>` : ""}<span class="chip">${escapeHtml(posted)}</span></div>
+		<div class="home-recent-actions">
+			<a class="button primary" href="${escapeAttr(job.url)}" target="_blank" rel="noopener">View posting</a>
+			${!status || status === "SAVED" ? `<button data-job-save="${job.id}">${status === "SAVED" ? "Saved" : "Save"}</button>` : ""}
+			<button data-job-apply="${job.id}" ${APPLICATION_STATUSES.includes(status) ? "disabled" : ""}>Mark applied</button>
+		</div>
+	</article>`;
 }
 
 function renderJourneyFallback(metrics) {
@@ -1145,6 +1175,12 @@ function betaAccessCard(access) {
 }
 
 function wireTab() {
+	document
+		.getElementById("home-job-search-form")
+		?.addEventListener("submit", searchHomeJobs);
+	document
+		.getElementById("clear-home-job-search")
+		?.addEventListener("click", clearHomeJobSearch);
 	document.getElementById("job-filter-form")?.addEventListener("submit", filterJobs);
 	document.getElementById("clear-job-filters")?.addEventListener("click", clearJobFilters);
 	document.querySelectorAll("[data-job-quick-key]").forEach((button) =>
@@ -1353,6 +1389,34 @@ function wireTab() {
 	document.querySelectorAll("[data-beta-approve-email]").forEach((button) =>
 		button.addEventListener("click", () => approveBetaAccess(button.dataset.betaApproveEmail)),
 	);
+}
+
+async function searchHomeJobs(event) {
+	event.preventDefault();
+	state.jobMode = "all";
+	state.jobQuery = {
+		...state.jobQuery,
+		q: value("home-job-q"),
+		company: value("home-job-company"),
+		location: value("home-job-location"),
+		category: value("home-job-category"),
+		page: 1,
+	};
+	syncJobQueryToUrl();
+	state.jobs = await fetchJobs();
+	navigate("jobs");
+}
+
+function clearHomeJobSearch() {
+	for (const id of [
+		"home-job-q",
+		"home-job-company",
+		"home-job-location",
+		"home-job-category",
+	]) {
+		const input = document.getElementById(id);
+		if (input) input.value = "";
+	}
 }
 
 async function approveBetaEmailForm(event) {
@@ -1581,11 +1645,9 @@ async function beginApplicationNetworking() {
 
 function openLegacyImport() {
 	if (state.tab !== "settings") navigate("settings");
-	requestAnimationFrame(() => {
-		const details = document.getElementById("legacy-import-details");
-		if (details) details.open = true;
-		document.getElementById("legacy-import-json")?.focus();
-	});
+	const details = document.getElementById("legacy-import-details");
+	if (details) details.open = true;
+	document.getElementById("legacy-import-json")?.focus();
 }
 
 function openDiscoveryDialog() {
