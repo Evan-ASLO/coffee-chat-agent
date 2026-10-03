@@ -2,6 +2,7 @@
 .env
 .env.*
 node_modules/
+.d1/
 tests/preview.generated.html
 tests/bundle.generated.gs
 *.log

@@ -78,8 +78,23 @@ const toast = document.getElementById("toast");
 const dialog = document.getElementById("draft-dialog");
 let journeyController = null;
 let journeyModulePromise = null;
+let journeyMountToken = 0;
+const compactNavigation = window.matchMedia("(max-width: 1100px)");
+const journeyMediaConditions = [
+	window.matchMedia("(max-width: 760px)"),
+	window.matchMedia("(prefers-reduced-motion: reduce)"),
+];
 
 document.addEventListener("DOMContentLoaded", load);
+document.addEventListener("keydown", handleNavigationKeydown);
+compactNavigation.addEventListener("change", () => {
+	if (!compactNavigation.matches && state.mobileNavOpen) {
+		setMobileNavOpen(false);
+	}
+});
+journeyMediaConditions.forEach((condition) =>
+	condition.addEventListener("change", refreshJourneyScene),
+);
 document.getElementById("save-draft").addEventListener("click", saveDraft);
 document.getElementById("send-draft").addEventListener("click", sendDraft);
 
@@ -102,6 +117,7 @@ async function load() {
 }
 
 function render() {
+	setMobileNavOpen(false, false);
 	destroyJourneyScene();
 	state.renderToken += 1;
 	const authenticated = Boolean(state.session?.authenticated);
@@ -132,6 +148,7 @@ function render() {
 					${icon("menu")}<span class="sr-only">Toggle navigation</span>
 				</button>
 				<nav class="top-nav" id="primary-navigation" aria-label="Primary navigation">
+					<button class="mobile-nav-close" id="mobile-nav-close" aria-label="Close navigation">×</button>
 					${navItems
 						.map(
 							([id, label]) => `<button data-nav="${id}" class="${state.tab === id ? "active" : ""}" ${state.tab === id ? 'aria-current="page"' : ""}>${label}</button>`,
@@ -141,7 +158,7 @@ function render() {
 				<div class="top-actions">
 					${
 						authenticated
-							? `<span class="top-email">${escapeHtml(user.email)}</span><button id="logout" class="sign-out-button">Sign out</button>`
+							? `<span class="top-email">${escapeHtml(user.email)}</span><button id="logout" class="sign-out-button" aria-label="Sign out">${icon("logout")}<span>Sign out</span></button>`
 							: '<a class="button sign-in-button" href="/auth/google/login">Sign in</a>'
 					}
 				</div>
@@ -157,16 +174,65 @@ function render() {
 		}),
 	);
 	document.getElementById("mobile-nav-toggle")?.addEventListener("click", () => {
-		state.mobileNavOpen = !state.mobileNavOpen;
-		render();
+		setMobileNavOpen(!state.mobileNavOpen);
 	});
-	document.getElementById("nav-scrim")?.addEventListener("click", () => {
-		state.mobileNavOpen = false;
-		render();
-	});
+	document.getElementById("mobile-nav-close")?.addEventListener("click", () =>
+		setMobileNavOpen(false),
+	);
+	document.getElementById("nav-scrim")?.addEventListener("click", () =>
+		setMobileNavOpen(false),
+	);
 	wireTab();
 	if (authenticated && state.tab === "home") {
 		mountJourneyScene(state.renderToken);
+	}
+}
+
+function setMobileNavOpen(open, restoreFocus = true) {
+	const wasOpen = state.mobileNavOpen;
+	state.mobileNavOpen = Boolean(open && compactNavigation.matches);
+	app.querySelector(".app-frame")?.classList.toggle("nav-open", state.mobileNavOpen);
+	document.body.classList.toggle("navigation-open", state.mobileNavOpen);
+	const toggle = document.getElementById("mobile-nav-toggle");
+	const navigation = document.getElementById("primary-navigation");
+	toggle?.setAttribute("aria-expanded", String(state.mobileNavOpen));
+	app.querySelectorAll("#main-content, .site-footer, .brand-button, .top-actions, .mobile-nav-toggle")
+		.forEach((element) => { element.inert = state.mobileNavOpen; });
+	if (state.mobileNavOpen) {
+		navigation?.setAttribute("role", "dialog");
+		navigation?.setAttribute("aria-modal", "true");
+		navigation?.querySelector(".mobile-nav-close")?.focus({ preventScroll: true });
+	} else {
+		navigation?.removeAttribute("role");
+		navigation?.removeAttribute("aria-modal");
+		if (wasOpen && restoreFocus) {
+			const target = toggle?.getClientRects().length
+				? toggle
+				: navigation?.querySelector('[aria-current="page"]');
+			target?.focus({ preventScroll: true });
+		}
+	}
+}
+
+function handleNavigationKeydown(event) {
+	if (!state.mobileNavOpen) return;
+	if (event.key === "Escape") {
+		event.preventDefault();
+		setMobileNavOpen(false);
+		return;
+	}
+	if (event.key !== "Tab") return;
+	const navigation = document.getElementById("primary-navigation");
+	const buttons = Array.from(navigation?.querySelectorAll("button:not([disabled])") || []);
+	const first = buttons[0];
+	const last = buttons[buttons.length - 1];
+	if (event.shiftKey && document.activeElement === first) {
+		event.preventDefault();
+		last?.focus();
+	} else if ((!event.shiftKey && document.activeElement === last) ||
+		!navigation?.contains(document.activeElement)) {
+		event.preventDefault();
+		first?.focus();
 	}
 }
 
@@ -300,17 +366,17 @@ function renderHome() {
 				<header><div>${icon("chart")}<h2>Your journey</h2></div><div><button id="journey-reset" class="text-button">${icon("reset")} Reset</button><button class="text-button" data-nav="analytics">View analytics ${icon("chevron-right")}</button></div></header>
 				<div id="journey-canvas" class="journey-canvas" aria-busy="true">
 					${renderJourneyFallback(metrics)}
-					<div class="home-journey-milestones" aria-label="Career Journey controls">
-						${homeJourneyControl("saved", "Explore", "Find roles", "bookmark")}
-						${homeJourneyControl("networking", "Connect", "Have coffee chats", "cup")}
-						${homeJourneyControl("applications", "Apply", "Track progress", "document")}
-						${homeJourneyControl("progress", "Grow", "Turn conversations into opportunities", "path")}
-					</div>
 					<button data-journey-target="journey" class="journey-overview-button ${state.journeyFocus === "journey" ? "active" : ""}">${icon("path")}<span>Journey overview</span></button>
-					<section class="home-journey-detail" id="journey-detail" aria-live="polite" aria-label="Selected Career Journey detail">
-						${renderJourneyDetail(detail)}
-					</section>
 				</div>
+				<div class="home-journey-milestones" aria-label="Career Journey controls">
+					${homeJourneyControl("saved", "Explore", "Find roles", "bookmark")}
+					${homeJourneyControl("networking", "Connect", "Have coffee chats", "cup")}
+					${homeJourneyControl("applications", "Apply", "Track progress", "document")}
+					${homeJourneyControl("progress", "Grow", "Turn conversations into opportunities", "path")}
+				</div>
+				<section class="home-journey-detail" id="journey-detail" aria-live="polite" aria-label="Selected Career Journey detail">
+					${renderJourneyDetail(detail)}
+				</section>
 			</article>
 		</section>
 		<div class="home-signoff"><span>Toronto&nbsp;&nbsp;|&nbsp;&nbsp;Est. 2026</span><em>A Brighter You.<i aria-hidden="true"></i></em></div>`;
@@ -613,8 +679,9 @@ function renderApplications() {
 				</div>
 				${
 					jobs.length
-						? `<div class="responsive-table-wrap"><table class="data-table applications-table">
-								<thead><tr><th>Company</th><th>Role</th><th>Location</th><th>Status</th><th>Updated</th><th>Next step</th><th><span class="sr-only">Actions</span></th></tr></thead>
+						? `<div class="responsive-table-wrap" tabindex="0" role="region" aria-label="Applications table. Scroll to view every column."><table class="data-table applications-table">
+								<caption class="sr-only">Your applications and private next steps</caption>
+								<thead><tr><th scope="col">Company</th><th scope="col">Role</th><th scope="col">Location</th><th scope="col">Status</th><th scope="col">Updated</th><th scope="col">Next step</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
 								<tbody>${jobs.map(applicationTableRow).join("")}</tbody>
 							</table></div>`
 						: empty(allJobs.length ? "No applications match this stage and search." : "Mark a job as Applied to start your application pipeline.")
@@ -636,7 +703,7 @@ function renderApplications() {
 				<div class="rail-art rail-art-applications" aria-hidden="true"></div>
 			</aside>
 		</div>
-		<dialog id="application-dialog" class="editor-dialog">
+		<dialog id="application-dialog" class="editor-dialog" aria-labelledby="application-dialog-title">
 			<form method="dialog" class="dialog-card" id="application-editor-form">
 				<div class="dialog-head"><div><p class="eyebrow">Application details</p><h2 id="application-dialog-title">Edit application</h2><p id="application-dialog-company"></p></div><button class="icon-button" value="cancel" aria-label="Close application editor">×</button></div>
 				<input id="application-dialog-id" type="hidden" />
@@ -775,8 +842,9 @@ function renderNetworking() {
 				</div>
 				${
 					prospects.length
-						? `<div class="responsive-table-wrap"><table class="data-table networking-table">
-								<thead><tr><th>Name</th><th>Role</th><th>Company</th><th>Status</th><th>Match</th><th>Next step</th><th><span class="sr-only">Actions</span></th></tr></thead>
+						? `<div class="responsive-table-wrap" tabindex="0" role="region" aria-label="Networking table. Scroll to view every column."><table class="data-table networking-table">
+								<caption class="sr-only">Your network and approval-first outreach workflow</caption>
+								<thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Company</th><th scope="col">Status</th><th scope="col">Match</th><th scope="col">Next step</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
 								<tbody>${prospects.map((person) => networkingTableRow(person, profileReady)).join("")}</tbody>
 							</table></div>`
 						: empty(state.session.prospects.length ? "No people match these filters." : "Use Find people to search public professional profiles.")
@@ -804,9 +872,9 @@ function renderNetworking() {
 				<div class="rail-art rail-art-networking" aria-hidden="true"></div>
 			</aside>
 		</div>
-		<dialog id="discovery-dialog" class="editor-dialog discovery-dialog">
+		<dialog id="discovery-dialog" class="editor-dialog discovery-dialog" aria-labelledby="discovery-dialog-title">
 			<div class="dialog-card">
-				<div class="dialog-head"><div><p class="eyebrow">Public profile discovery</p><h2>Find relevant people</h2><p>Search never prepares or sends outreach automatically.</p></div><button class="icon-button" id="close-discovery-dialog" type="button" aria-label="Close people search">×</button></div>
+				<div class="dialog-head"><div><p class="eyebrow">Public profile discovery</p><h2 id="discovery-dialog-title">Find relevant people</h2><p>Search never prepares or sends outreach automatically.</p></div><button class="icon-button" id="close-discovery-dialog" type="button" aria-label="Close people search">×</button></div>
 				${renderFind()}
 			</div>
 		</dialog>`;
@@ -1070,9 +1138,9 @@ function renderSettings() {
 			</section>
 			<div class="settings-notebook-art" aria-hidden="true"></div>
 		</div>
-		<dialog id="profile-settings-dialog" class="editor-dialog settings-editor-dialog">
+		<dialog id="profile-settings-dialog" class="editor-dialog settings-editor-dialog" aria-labelledby="profile-settings-title">
 			<form method="dialog" class="dialog-card" id="settings-form">
-				<div class="dialog-head"><div><p class="eyebrow">Profile & drafting</p><h2>Edit real workspace preferences</h2><p>Only factual context you save here is available to drafting.</p></div><button class="icon-button" value="cancel" aria-label="Close profile settings">×</button></div>
+				<div class="dialog-head"><div><p class="eyebrow">Profile & drafting</p><h2 id="profile-settings-title">Edit real workspace preferences</h2><p>Only factual context you save here is available to drafting.</p></div><button class="icon-button" value="cancel" aria-label="Close profile settings">×</button></div>
 				<div class="grid grid-3">
 					<label>Your name<input id="sender-name" value="${escapeAttr(settings.senderName)}" /></label>
 					<label>Email enrichment<select id="enrichment-provider"><option value="HUNTER" ${selected(settings.enrichmentProvider, "HUNTER")}>Hunter</option><option value="NONE" ${selected(settings.enrichmentProvider, "NONE")}>Manual email entry</option></select></label>
@@ -2076,6 +2144,7 @@ function fillResumeSuggestions(suggestions) {
 }
 
 async function saveSettings(event) {
+	if (event.submitter?.value === "cancel") return;
 	event.preventDefault();
 	await run("Saving settings…", async () => {
 		await api("/api/settings", {
@@ -2332,11 +2401,13 @@ function journeyMetrics() {
 async function mountJourneyScene(renderToken) {
 	const container = document.getElementById("journey-canvas");
 	if (!container) return;
+	const mountToken = ++journeyMountToken;
 	try {
-		journeyModulePromise ||= import("/journey-scene.js?v=20261001-1");
+		journeyModulePromise ||= import("/journey-scene.js?v=20261002-layout-1");
 		const module = await journeyModulePromise;
 		if (
 			renderToken !== state.renderToken ||
+			mountToken !== journeyMountToken ||
 			state.tab !== "home" ||
 			container !== document.getElementById("journey-canvas")
 		) {
@@ -2361,15 +2432,28 @@ async function mountJourneyScene(renderToken) {
 			journeyController.focus(state.journeyFocus);
 		}
 	} catch {
-		if (renderToken !== state.renderToken) return;
+		if (renderToken !== state.renderToken || mountToken !== journeyMountToken) return;
 		container.setAttribute("aria-busy", "false");
 		container.classList.add("webgl-fallback");
 	}
 }
 
 function destroyJourneyScene() {
+	journeyMountToken += 1;
 	journeyController?.dispose();
 	journeyController = null;
+}
+
+function refreshJourneyScene() {
+	if (state.tab !== "home" || !state.session?.authenticated) return;
+	const container = document.getElementById("journey-canvas");
+	if (!container) return;
+	destroyJourneyScene();
+	container.setAttribute("aria-busy", "true");
+	container.classList.remove("webgl-fallback");
+	const fallback = document.getElementById("journey-fallback");
+	if (fallback) fallback.hidden = false;
+	mountJourneyScene(state.renderToken);
 }
 
 function openJourneyDetail(area, focusScene) {
@@ -2669,7 +2753,7 @@ function secretRow(provider, label, status) {
 			<strong>${label}</strong><br />
 			<small>${status.configured ? `Configured ${escapeHtml(status.hint)}` : "Not configured"}</small>
 		</div>
-		<input id="secret-${provider}" type="password" autocomplete="off" placeholder="${status.configured ? "Leave blank to keep current key" : "Enter API key"}" />
+		<input id="secret-${provider}" type="password" aria-label="${escapeAttr(label)} API key" autocomplete="off" placeholder="${status.configured ? "Leave blank to keep current key" : "Enter API key"}" />
 		<div class="actions">
 			<button data-save-secret="${provider}">Save</button>
 			<button class="danger" data-delete-secret="${provider}" ${status.configured ? "" : "disabled"}>Delete</button>

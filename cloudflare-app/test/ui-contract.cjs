@@ -77,13 +77,61 @@ test("matches the compact horizontal product navigation contract", () => {
 	assert.match(app, /class="top-nav"/);
 	assert.match(app, /<strong>Internship & Coffee Chat<\/strong>/);
 	assert.match(app, /class="dark-side-rail"/);
-	assert.match(styles, /\.view-analytics \.topbar/);
-	assert.match(styles, /\.view-settings \.topbar/);
+	assert.match(styles, /\.app-frame\.view-analytics,/);
+	assert.match(styles, /\.app-frame\.view-settings\s*\{[^}]*--content-width:/s);
+	assert.match(styles, /#main-content\s*\{[^}]*width:\s*min\(var\(--content-width\), 100%\)/s);
 	assert.match(
 		styles,
-		/@media \(max-width: 980px\)[\s\S]*\.top-nav\s*\{[\s\S]*position:\s*fixed;/,
+		/@media \(max-width: 1100px\)[\s\S]*\.top-nav\s*\{[\s\S]*position:\s*fixed;/,
 	);
 	assert.match(styles, /\.nav-open \.top-nav\s*\{[^}]*visibility:\s*visible/s);
+});
+
+test("reflows shared controls without hiding filters or losing navigation focus", () => {
+	const app = read("public/app.js");
+	const styles = read("public/styles.css");
+	assert.match(app, /function setMobileNavOpen/);
+	assert.match(app, /function handleNavigationKeydown/);
+	assert.match(app, /event\.key === "Escape"/);
+	assert.match(app, /element\.inert = state\.mobileNavOpen/);
+	assert.match(app, /id="mobile-nav-close"/);
+	assert.doesNotMatch(app, /state\.mobileNavOpen = !state\.mobileNavOpen;[\s\n]*render\(\)/);
+	assert.match(styles, /@container \(max-width: 920px\)/);
+	assert.doesNotMatch(styles, /label:nth-of-type\(\d+\)\s*\{\s*display:\s*none/);
+	assert.match(styles, /\.reference-metric div > strong,\s*\.reference-metric div > span/);
+	assert.match(styles, /\.job-card-heading\s*\{[^}]*minmax\(0, 1fr\) auto;/s);
+	assert.match(styles, /@media \(pointer: coarse\), \(max-width: 700px\)/);
+	assert.match(styles, /--touch-target-size:\s*44px/);
+	assert.match(styles, /\.settings-card-heading button\s*\{[^}]*min-height:\s*max\(34px, var\(--touch-target-size/s);
+	assert.match(read("public/index.html"), /viewport-fit=cover/);
+});
+
+test("bounds accessible tables and native dialogs instead of clipping their actions", () => {
+	const app = read("public/app.js");
+	const styles = read("public/styles.css");
+	assert.match(app, /class="responsive-table-wrap" tabindex="0" role="region"/);
+	assert.match(app, /<th scope="col">/);
+	assert.match(app, /aria-labelledby="application-dialog-title"/);
+	assert.match(app, /aria-labelledby="discovery-dialog-title"/);
+	assert.match(app, /aria-labelledby="profile-settings-title"/);
+	assert.match(app, /async function saveSettings\(event\)\s*\{\s*if \(event\.submitter\?\.value === "cancel"\) return;/);
+	assert.match(read("public/index.html"), /aria-labelledby="draft-name"/);
+	assert.match(styles, /\.responsive-table-wrap\s*\{[^}]*max-width:\s*100%;[^}]*overflow:\s*auto;/s);
+	assert.match(styles, /max-height:\s*calc\(100dvh - env\(safe-area-inset-top\)/);
+	assert.doesNotMatch(styles, /\.data-table thead\s*\{\s*display:\s*none/);
+	assert.doesNotMatch(styles, /\.applications-layout \.tracker-table-panel\s*\{[^}]*height:\s*451px/s);
+});
+
+test("keeps journey controls outside the rendered world and handles direct taps", () => {
+	const app = read("public/app.js");
+	const scene = read("public/journey-scene.js");
+	const styles = read("public/styles.css");
+	assert.match(app, /<\/div>\s*<div class="home-journey-milestones"/);
+	assert.match(app, /journeyMediaConditions/);
+	assert.match(app, /mountToken !== journeyMountToken/);
+	assert.match(scene, /function handleClick\(event\)[\s\S]*const area = areaAtPointer\(event\)/);
+	assert.match(styles, /\.home-journey-milestones\s*\{\s*display:\s*grid/);
+	assert.doesNotMatch(styles, /\.home-journey-milestones button:nth-child/);
 });
 
 test("renders the native-density Jobs composition and every real filter", () => {

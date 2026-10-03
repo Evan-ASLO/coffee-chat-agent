@@ -43,6 +43,10 @@
 	box-sizing: border-box;
 }
 
+[hidden] {
+	display: none !important;
+}
+
 html {
 	min-height: 100%;
 	background: var(--cream-100);
@@ -51,7 +55,10 @@ html {
 
 body {
 	min-height: 100vh;
+	min-height: 100svh;
 	margin: 0;
+	padding: env(safe-area-inset-top) env(safe-area-inset-right)
+		env(safe-area-inset-bottom) env(safe-area-inset-left);
 	color: var(--ink);
 	background:
 		radial-gradient(circle at 12% 0%, rgba(245, 197, 171, 0.56), transparent 28rem),
@@ -61,6 +68,7 @@ body {
 		"Segoe UI", Aptos, Calibri, -apple-system, BlinkMacSystemFont, sans-serif;
 	font-size: 14px;
 	line-height: 1.45;
+	overflow-wrap: anywhere;
 }
 
 button,
@@ -190,15 +198,22 @@ textarea:focus {
 }
 
 .app-frame {
+	--content-width: 1500px;
 	min-height: 100vh;
+	min-height: 100svh;
 	padding: 14px 18px 8px;
+}
+
+.app-frame.view-analytics,
+.app-frame.view-settings {
+	--content-width: 1786px;
 }
 
 .topbar {
 	position: relative;
 	z-index: 140;
 	display: flex;
-	width: min(1440px, calc(100% - 64px));
+	width: min(var(--content-width), 100%);
 	min-height: var(--topbar-height);
 	align-items: center;
 	gap: 24px;
@@ -211,25 +226,9 @@ textarea:focus {
 	box-shadow: 0 10px 28px rgba(11, 42, 33, 0.23);
 }
 
-.view-jobs .topbar {
-	width: min(1500px, 100%);
-	min-height: 72px;
-}
-
-.view-networking .topbar {
-	width: min(1370px, calc(100% - 84px));
-}
-
-.view-analytics .topbar {
-	width: min(1445px, calc(100% - 390px));
-}
-
-.view-settings .topbar {
-	width: min(1420px, calc(100% - 390px));
-}
-
 .brand {
 	display: inline-flex;
+	min-width: 0;
 	align-items: center;
 	gap: 11px;
 }
@@ -265,6 +264,7 @@ textarea:focus {
 
 .top-nav {
 	display: flex;
+	flex: 0 0 auto;
 	align-items: center;
 	justify-content: center;
 	gap: 3px;
@@ -272,8 +272,8 @@ textarea:focus {
 }
 
 .top-nav button {
-	min-height: 42px;
-	padding: 7px 17px;
+	min-height: 44px;
+	padding: 7px 12px;
 	color: rgba(255, 255, 255, 0.86);
 	background: transparent;
 	border: 0;
@@ -291,6 +291,7 @@ textarea:focus {
 
 .top-actions {
 	display: flex;
+	min-width: 0;
 	align-items: center;
 	gap: 12px;
 	margin-left: auto;
@@ -298,6 +299,7 @@ textarea:focus {
 }
 
 .top-email {
+	min-width: 0;
 	max-width: 220px;
 	overflow: hidden;
 	color: rgba(255, 255, 255, 0.86);
@@ -307,7 +309,7 @@ textarea:focus {
 
 .sign-out-button,
 .sign-in-button {
-	min-height: 40px;
+	min-height: max(40px, var(--touch-target-size, 0px));
 	padding: 8px 18px;
 	color: var(--forest-950);
 	background: white;
@@ -320,8 +322,8 @@ textarea:focus {
 
 .mobile-nav-toggle {
 	display: none;
-	width: 42px;
-	height: 42px;
+	width: max(42px, var(--touch-target-size, 0px));
+	height: max(42px, var(--touch-target-size, 0px));
 	padding: 0;
 	place-items: center;
 	color: white;
@@ -330,44 +332,28 @@ textarea:focus {
 	border-radius: 9px;
 }
 
+.sign-out-button .icon,
+.mobile-nav-close {
+	display: none;
+}
+
 .nav-scrim {
 	display: none;
 }
 
 #main-content {
-	width: min(1432px, calc(100% - 64px));
+	width: min(var(--content-width), 100%);
 	margin: 0 auto;
-}
-
-.view-jobs #main-content {
-	width: min(1500px, calc(100% - 34px));
-}
-
-.view-networking #main-content {
-	width: min(1370px, calc(100% - 84px));
-}
-
-.view-analytics #main-content,
-.view-settings #main-content {
-	width: min(1786px, calc(100% - 48px));
 }
 
 .app-frame.view-analytics {
 	position: relative;
 }
 
-.view-analytics #main-content {
+.view-analytics #main-content,
+.view-settings #main-content {
 	position: relative;
 	z-index: 1;
-	width: min(1674px, calc(100% - 12px));
-	margin-right: auto;
-	margin-left: 6px;
-}
-
-.view-settings #main-content {
-	width: min(1811px, calc(100% - 38px));
-	margin-right: auto;
-	margin-left: 6px;
 }
 
 .app-frame.view-analytics::after {
@@ -383,6 +369,7 @@ textarea:focus {
 
 .site-footer {
 	display: flex;
+	flex-wrap: wrap;
 	justify-content: center;
 	gap: 9px;
 	margin: 18px auto 0;
@@ -391,13 +378,19 @@ textarea:focus {
 }
 
 .site-footer a {
+	display: inline-flex;
+	min-width: var(--touch-target-size, 0px);
+	min-height: var(--touch-target-size, 0px);
+	align-items: center;
+	justify-content: center;
 	color: inherit;
 }
 
 button,
 .button {
 	display: inline-flex;
-	min-height: 40px;
+	min-width: var(--touch-target-size, 0px);
+	min-height: max(40px, var(--touch-target-size, 0px));
 	align-items: center;
 	justify-content: center;
 	gap: 7px;
@@ -450,7 +443,7 @@ button:disabled {
 }
 
 .text-button {
-	min-height: 30px;
+	min-height: max(30px, var(--touch-target-size, 0px));
 	padding: 3px 5px;
 	color: var(--forest-700);
 	background: transparent;
@@ -484,6 +477,7 @@ button:disabled {
 .reference-hero {
 	position: relative;
 	display: flex;
+	height: auto;
 	align-items: center;
 	margin-top: 4px;
 	overflow: hidden;
@@ -510,6 +504,7 @@ button:disabled {
 .reference-hero-copy {
 	position: relative;
 	z-index: 2;
+	min-width: 0;
 	width: 48%;
 	padding: 28px 32px;
 }
@@ -537,30 +532,30 @@ button:disabled {
 }
 
 .jobs-reference-hero {
-	height: 216px;
+	min-height: 216px;
 	margin-top: 2px;
 	background-image: url("/art/jobs-hero.webp");
 }
 
 .applications-reference-hero {
-	height: 269px;
+	min-height: 269px;
 	background-image: url("/art/applications-hero.webp");
 }
 
 .networking-reference-hero {
-	height: 247px;
+	min-height: 247px;
 	margin-top: -4px;
 	background-image: url("/art/networking-hero.webp");
 }
 
 .analytics-reference-hero {
-	height: 217px;
+	min-height: 217px;
 	margin-top: -8px;
 	background-image: url("/art/analytics-hero.webp");
 }
 
 .settings-reference-hero {
-	height: 185px;
+	min-height: 185px;
 	margin-top: 6px;
 	background-image: url("/art/settings-hero.webp");
 }
@@ -602,8 +597,12 @@ button:disabled {
 	background: var(--orange-100);
 }
 
-.reference-metric strong,
-.reference-metric span {
+.reference-metric > div {
+	min-width: 0;
+}
+
+.reference-metric div > strong,
+.reference-metric div > span {
 	display: block;
 }
 
@@ -621,7 +620,6 @@ button:disabled {
 
 .view-networking .reference-metric {
 	min-height: 74px;
-	padding: 10px 18px;
 }
 
 .catalog-warning {
@@ -694,11 +692,12 @@ button:disabled {
 .inline-search .icon {
 	position: absolute;
 	z-index: 1;
-	top: 36px;
+	top: 50%;
 	left: 12px;
 	width: 17px;
 	height: 17px;
 	color: var(--muted);
+	transform: translateY(-50%);
 }
 
 .search-field input,
@@ -756,6 +755,7 @@ button:disabled {
 	display: grid;
 	gap: 4px;
 	padding: 0;
+	min-width: 0;
 	margin: 0;
 	border: 0;
 }
@@ -768,7 +768,7 @@ button:disabled {
 
 .quick-filter-group button {
 	display: grid;
-	min-height: 24px;
+	min-height: max(24px, var(--touch-target-size, 0px));
 	grid-template-columns: 13px 1fr auto;
 	gap: 6px;
 	align-items: center;
@@ -852,7 +852,7 @@ button:disabled {
 }
 
 .collection-tabs button {
-	min-height: 30px;
+	min-height: max(30px, var(--touch-target-size, 0px));
 	padding: 4px 8px;
 	background: transparent;
 	border: 0;
@@ -882,7 +882,7 @@ button:disabled {
 }
 
 .layout-toggle button {
-	min-height: 34px;
+	min-height: max(34px, var(--touch-target-size, 0px));
 	padding: 5px 9px;
 	background: transparent;
 	border: 0;
@@ -909,7 +909,8 @@ button:disabled {
 
 .job-card {
 	position: relative;
-	display: grid;
+	display: flex;
+	flex-direction: column;
 	min-width: 0;
 	align-content: start;
 	gap: 8px;
@@ -922,7 +923,7 @@ button:disabled {
 
 .job-card-heading {
 	display: grid;
-	grid-template-columns: 42px minmax(0, 1fr) 30px;
+	grid-template-columns: 42px minmax(0, 1fr) auto;
 	gap: 9px;
 	align-items: start;
 }
@@ -966,11 +967,8 @@ button:disabled {
 }
 
 .job-card-title h3 {
-	display: -webkit-box;
-	overflow: hidden;
 	font-size: 0.9rem;
-	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 2;
+	line-height: 1.2;
 }
 
 .job-company {
@@ -982,8 +980,8 @@ button:disabled {
 .bookmark-button,
 .row-action-button {
 	display: grid;
-	width: 32px;
-	min-height: 32px;
+	width: max(32px, var(--touch-target-size, 0px));
+	min-height: max(32px, var(--touch-target-size, 0px));
 	padding: 0;
 	place-items: center;
 	background: transparent;
@@ -1000,6 +998,7 @@ button:disabled {
 	display: flex;
 	align-items: center;
 	justify-content: flex-end;
+	gap: 4px;
 }
 
 .job-location {
@@ -1144,7 +1143,7 @@ button:disabled {
 
 .job-controls .button,
 .job-controls button {
-	min-height: 35px;
+	min-height: max(35px, var(--touch-target-size, 0px));
 	padding: 6px 9px;
 	font-size: 0.7rem;
 }
@@ -1155,8 +1154,8 @@ button:disabled {
 
 .job-more summary {
 	display: grid;
-	width: 30px;
-	height: 30px;
+	width: max(30px, var(--touch-target-size, 0px));
+	height: max(30px, var(--touch-target-size, 0px));
 	place-items: center;
 	color: var(--muted);
 	cursor: pointer;
@@ -1175,7 +1174,7 @@ button:disabled {
 .job-more-menu {
 	position: absolute;
 	z-index: 30;
-	top: 34px;
+	top: calc(100% + 4px);
 	right: 0;
 	display: grid;
 	gap: 7px;
@@ -1200,6 +1199,7 @@ button:disabled {
 }
 
 .list-view .job-card {
+	display: grid;
 	grid-template-columns: 52px minmax(220px, 1.1fr) minmax(180px, 0.85fr) auto;
 	align-items: center;
 }
@@ -1337,7 +1337,7 @@ button:disabled {
 }
 
 .networking-layout .tracker-filters fieldset button {
-	min-height: 20px;
+	min-height: max(20px, var(--touch-target-size, 0px));
 	padding: 2px 6px;
 }
 
@@ -1361,6 +1361,7 @@ button:disabled {
 	display: grid;
 	gap: 5px;
 	padding: 0;
+	min-width: 0;
 	margin: 0;
 	border: 0;
 }
@@ -1373,7 +1374,7 @@ button:disabled {
 
 .tracker-filters fieldset button {
 	display: flex;
-	min-height: 29px;
+	min-height: max(29px, var(--touch-target-size, 0px));
 	justify-content: space-between;
 	padding: 4px 7px;
 	background: transparent;
@@ -1401,12 +1402,7 @@ button:disabled {
 	border-radius: 11px;
 }
 
-.applications-layout .tracker-table-panel {
-	height: 451px;
-	overflow: auto;
-}
-
-.applications-table thead th {
+.data-table thead th {
 	position: sticky;
 	z-index: 2;
 	top: 0;
@@ -1429,6 +1425,8 @@ button:disabled {
 
 .table-tools {
 	display: flex;
+	min-width: 0;
+	flex-wrap: wrap;
 	align-items: end;
 	gap: 9px;
 }
@@ -1447,26 +1445,30 @@ button:disabled {
 }
 
 .inline-search .icon {
-	top: 13px;
+	top: 50%;
 }
 
 .responsive-table-wrap {
-	overflow-x: auto;
+	max-width: 100%;
+	max-height: min(60vh, 560px);
+	overflow: auto;
+	overscroll-behavior: contain;
 	border: 1px solid #e2e5e0;
 	border-radius: 9px;
 }
 
 .data-table {
 	width: 100%;
+	min-width: 780px;
 	border-collapse: collapse;
 	background: rgba(255, 255, 255, 0.65);
-	font-size: 0.64rem;
-	line-height: 1.2;
+	font-size: 0.72rem;
+	line-height: 1.35;
 }
 
 .data-table th,
 .data-table td {
-	padding: 5px 7px;
+	padding: 8px;
 	text-align: left;
 	vertical-align: middle;
 	border-bottom: 1px solid #e6e8e4;
@@ -1515,6 +1517,11 @@ button:disabled {
 
 .table-muted {
 	color: var(--muted);
+}
+
+.table-role {
+	overflow: visible;
+	white-space: normal;
 }
 
 .tracker-right-rail {
@@ -1663,7 +1670,7 @@ button:disabled {
 }
 
 .table-action {
-	min-height: 26px;
+	min-height: max(26px, var(--touch-target-size, 0px));
 	padding: 3px 6px;
 	font-size: 0.62rem;
 }
@@ -1690,8 +1697,8 @@ button:disabled {
 }
 
 .donut-layout {
-	display: grid;
-	grid-template-columns: 120px 1fr;
+	display: flex;
+	flex-wrap: wrap;
 	gap: 12px;
 	align-items: center;
 }
@@ -1700,6 +1707,7 @@ button:disabled {
 	position: relative;
 	width: 116px;
 	height: 116px;
+	flex: 0 0 116px;
 }
 
 .donut-chart svg {
@@ -1759,6 +1767,8 @@ button:disabled {
 	margin: 0;
 	padding: 0;
 	list-style: none;
+	flex: 1 1 110px;
+	min-width: 0;
 }
 
 .donut-legend li,
@@ -1798,11 +1808,6 @@ button:disabled {
 	grid-template-columns: 170px minmax(0, 1fr);
 	gap: 18px;
 	align-items: start;
-}
-
-.view-settings .rail-page {
-	grid-template-columns: 193px minmax(0, 1fr);
-	gap: 20px;
 }
 
 .dark-side-rail {
@@ -2047,13 +2052,14 @@ button:disabled {
 
 .company-ranking li > div:first-child {
 	display: flex;
+	gap: 8px;
 	justify-content: space-between;
 	font-size: 0.62rem;
 }
 
 .network-impact {
-	display: grid;
-	grid-template-columns: 112px 1fr;
+	display: flex;
+	flex-wrap: wrap;
 	gap: 12px;
 	align-items: center;
 }
@@ -2062,6 +2068,7 @@ button:disabled {
 	display: grid;
 	width: 108px;
 	height: 108px;
+	flex: 0 0 108px;
 	place-items: center;
 	align-content: center;
 	background:
@@ -2199,6 +2206,7 @@ button:disabled {
 }
 
 .settings-reference-card {
+	container-type: inline-size;
 	min-width: 0;
 	padding: 18px;
 	border-radius: 11px;
@@ -2263,7 +2271,7 @@ button:disabled {
 }
 
 .settings-card-heading button {
-	min-height: 34px;
+	min-height: max(34px, var(--touch-target-size, 0px));
 	padding: 5px 10px;
 	font-size: 0.66rem;
 }
@@ -2279,6 +2287,7 @@ button:disabled {
 	display: grid;
 	width: 58px;
 	height: 58px;
+	flex: 0 0 58px;
 	place-items: center;
 	color: white;
 	background: var(--forest-900);
@@ -2289,6 +2298,7 @@ button:disabled {
 
 .account-summary > div {
 	display: grid;
+	min-width: 0;
 }
 
 .account-summary strong {
@@ -2353,7 +2363,7 @@ button:disabled {
 
 .settings-summary-list li > span {
 	display: grid;
-	grid-template-columns: 22px 1fr auto;
+	grid-template-columns: 22px minmax(0, 1fr) auto;
 	gap: 8px;
 	align-items: center;
 }
@@ -2363,6 +2373,7 @@ button:disabled {
 }
 
 .settings-summary-list small {
+	max-width: 130px;
 	font-size: 0.61rem;
 }
 
@@ -2422,6 +2433,7 @@ button:disabled {
 
 .integration-google {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
@@ -2430,6 +2442,7 @@ button:disabled {
 
 .integration-google > div {
 	display: flex;
+	min-width: 0;
 	align-items: center;
 	gap: 9px;
 }
@@ -2450,6 +2463,7 @@ button:disabled {
 	display: grid;
 	width: 34px;
 	height: 34px;
+	flex: 0 0 34px;
 	place-items: center;
 	color: white;
 	border-radius: 7px;
@@ -2466,7 +2480,7 @@ button:disabled {
 
 .secret-row {
 	display: grid;
-	grid-template-columns: 120px minmax(150px, 1fr) auto;
+	grid-template-columns: minmax(0, 1fr);
 	gap: 8px;
 	align-items: center;
 	padding: 7px 0;
@@ -2539,10 +2553,15 @@ button:disabled {
 
 .about-product > div {
 	display: grid;
+	min-width: 0;
 }
 
 .about-product strong {
 	font-size: 0.7rem;
+}
+
+.about-product .brand-mark {
+	flex-shrink: 0;
 }
 
 .about-product span,
@@ -2628,6 +2647,7 @@ button:disabled {
 
 label {
 	display: grid;
+	min-width: 0;
 	gap: 5px;
 	color: var(--forest-900);
 	font-size: 0.7rem;
@@ -2638,6 +2658,10 @@ input,
 select,
 textarea {
 	width: 100%;
+	min-width: 0;
+	font-size: 0.875rem;
+	font-weight: 400;
+	line-height: 1.35;
 	color: var(--ink);
 	background: rgba(255, 255, 255, 0.9);
 	border: 1px solid var(--line-strong);
@@ -2664,6 +2688,7 @@ label small {
 
 .check-row {
 	display: flex;
+	min-height: var(--touch-target-size, 0px);
 	align-items: center;
 	gap: 8px;
 	padding: 9px 10px;
@@ -3125,6 +3150,8 @@ label small {
 dialog {
 	width: min(760px, calc(100% - 28px));
 	max-height: calc(100vh - 28px);
+	max-height: calc(100dvh - env(safe-area-inset-top) - env(safe-area-inset-bottom) - 28px);
+	overflow: auto;
 	padding: 0;
 	border: 0;
 	border-radius: 14px;
@@ -3137,6 +3164,7 @@ dialog::backdrop {
 
 .dialog-card {
 	display: grid;
+	min-width: 0;
 	gap: 12px;
 	padding: 20px;
 	background: var(--paper-solid);
@@ -3145,9 +3173,13 @@ dialog::backdrop {
 }
 
 .dialog-head {
+	position: sticky;
+	z-index: 1;
+	top: 0;
 	display: flex;
 	justify-content: space-between;
 	gap: 14px;
+	background: var(--paper-solid);
 }
 
 .dialog-head p {
@@ -3155,17 +3187,27 @@ dialog::backdrop {
 	font-size: 0.7rem;
 }
 
+.dialog-head > div {
+	min-width: 0;
+}
+
 .icon-button {
-	width: 40px;
-	height: 40px;
+	width: max(40px, var(--touch-target-size, 0px));
+	height: max(40px, var(--touch-target-size, 0px));
 	padding: 0;
 	font-size: 1.15rem;
+	flex-shrink: 0;
 }
 
 .dialog-links {
 	display: flex;
 	gap: 8px;
 	flex-wrap: wrap;
+}
+
+.navigation-open,
+body:has(dialog[open]) {
+	overflow: hidden;
 }
 
 .discovery-dialog {
@@ -3180,7 +3222,7 @@ dialog::backdrop {
 	position: fixed;
 	z-index: 200;
 	right: 22px;
-	bottom: 22px;
+	bottom: max(22px, env(safe-area-inset-bottom));
 	width: min(400px, calc(100% - 44px));
 	padding: 12px 14px;
 	color: white;
@@ -3199,7 +3241,6 @@ dialog::backdrop {
 
 .toast.visible {
 	opacity: 1;
-	pointer-events: auto;
 	transform: translateY(0);
 	visibility: visible;
 	transition-delay: 0s;
@@ -3260,6 +3301,7 @@ dialog::backdrop {
 
 .beta-landing-brand {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
 	gap: 10px;
 }
@@ -3279,7 +3321,7 @@ dialog::backdrop {
 }
 
 .beta-landing-copy h1 {
-	font-size: clamp(3.1rem, 6vw, 6rem);
+	font-size: clamp(2.4rem, 6vw, 6rem);
 }
 
 .beta-landing-copy > p:not(.eyebrow, .notice, .beta-privacy) {
@@ -3411,10 +3453,10 @@ dialog::backdrop {
 
 .view-home .topbar {
 	position: absolute;
-	top: 28px;
-	left: 50%;
+	top: calc(28px + env(safe-area-inset-top));
+	right: 0;
+	left: 0;
 	width: min(1386px, calc(100% - 150px));
-	transform: translateX(-50%);
 }
 
 .view-home #main-content {
@@ -3423,7 +3465,7 @@ dialog::backdrop {
 
 .home-reference-hero {
 	position: relative;
-	height: 510px;
+	min-height: 510px;
 	padding: 116px 6.8% 58px;
 	background:
 		linear-gradient(
@@ -3473,6 +3515,7 @@ dialog::backdrop {
 
 .home-reference-actions {
 	display: flex;
+	flex-wrap: wrap;
 	gap: 12px;
 	margin-top: 20px;
 }
@@ -3540,6 +3583,7 @@ dialog::backdrop {
 }
 
 .home-search-panel {
+	container-type: inline-size;
 	padding: 14px 18px;
 }
 
@@ -3568,7 +3612,7 @@ dialog::backdrop {
 
 .home-search-controls {
 	display: grid;
-	grid-template-columns: minmax(280px, 1.5fr) repeat(3, minmax(130px, 0.65fr)) 76px 120px;
+	grid-template-columns: minmax(0, 1.5fr) repeat(3, minmax(0, 0.65fr)) 76px 120px;
 	gap: 9px;
 }
 
@@ -3579,10 +3623,11 @@ dialog::backdrop {
 .home-search-input .icon {
 	position: absolute;
 	z-index: 1;
-	top: 11px;
+	top: 50%;
 	left: 11px;
 	width: 17px;
 	height: 17px;
+	transform: translateY(-50%);
 }
 
 .home-search-input input {
@@ -3622,13 +3667,14 @@ dialog::backdrop {
 .home-reference-lower {
 	display: grid;
 	width: min(1375px, calc(100% - 150px));
-	grid-template-columns: minmax(0, 1.35fr) minmax(460px, 1fr);
+	grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
 	gap: 12px;
 	margin: 0 auto;
 }
 
 .home-recent-panel,
 .home-journey-panel {
+	container-type: inline-size;
 	min-width: 0;
 	padding: 14px 18px;
 }
@@ -3636,6 +3682,7 @@ dialog::backdrop {
 .home-recent-panel > header,
 .home-journey-panel > header {
 	display: flex;
+	flex-wrap: wrap;
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
@@ -3651,6 +3698,7 @@ dialog::backdrop {
 
 .home-journey-panel > header > div:last-child {
 	display: flex;
+	flex-wrap: wrap;
 	gap: 5px;
 }
 
@@ -3679,6 +3727,10 @@ dialog::backdrop {
 	gap: 9px;
 }
 
+.home-recent-title .company-tile {
+	flex: 0 0 42px;
+}
+
 .home-recent-title > div:last-child {
 	min-width: 0;
 }
@@ -3688,13 +3740,9 @@ dialog::backdrop {
 }
 
 .home-recent-title h3 {
-	display: -webkit-box;
 	margin-top: 2px;
-	overflow: hidden;
 	font-size: 0.84rem;
 	line-height: 1.15;
-	-webkit-box-orient: vertical;
-	-webkit-line-clamp: 2;
 }
 
 .home-recent-title p {
@@ -3705,12 +3753,12 @@ dialog::backdrop {
 
 .home-recent-actions {
 	display: grid;
-	grid-template-columns: 1.15fr 0.7fr 1fr;
+	grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.7fr) minmax(0, 1fr);
 	gap: 7px;
 }
 
 .home-recent-actions > * {
-	min-height: 35px;
+	min-height: max(35px, var(--touch-target-size, 0px));
 	padding: 6px 8px;
 	font-size: 0.66rem;
 }
@@ -3725,44 +3773,22 @@ dialog::backdrop {
 }
 
 .home-journey-milestones {
-	position: absolute;
-	z-index: 4;
-	inset: 0;
-	pointer-events: none;
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 7px;
+	margin-top: 10px;
 }
 
 .home-journey-milestones button {
-	position: absolute;
 	display: grid;
-	min-height: 0;
-	grid-template-columns: 30px auto;
+	min-height: 48px;
+	grid-template-columns: 28px minmax(0, 1fr);
 	gap: 6px;
 	align-items: center;
-	padding: 0;
-	pointer-events: auto;
-	background: transparent;
-	border: 0;
+	padding: 6px;
+	background: var(--cream-100);
+	border: 1px solid var(--line);
 	text-align: left;
-}
-
-.home-journey-milestones button:nth-child(1) {
-	left: 14%;
-	bottom: 14px;
-}
-
-.home-journey-milestones button:nth-child(2) {
-	left: 34%;
-	bottom: 42px;
-}
-
-.home-journey-milestones button:nth-child(3) {
-	left: 56%;
-	bottom: 70px;
-}
-
-.home-journey-milestones button:nth-child(4) {
-	right: 7%;
-	top: 32px;
 }
 
 .journey-marker {
@@ -3787,16 +3813,15 @@ dialog::backdrop {
 .home-journey-milestones strong,
 .home-journey-milestones small {
 	display: block;
-	white-space: nowrap;
 }
 
 .home-journey-milestones strong {
-	font-size: 0.66rem;
+	font-size: 0.72rem;
 }
 
 .home-journey-milestones small {
 	color: #314b3e;
-	font-size: 0.55rem;
+	font-size: 0.62rem;
 }
 
 .journey-overview-button {
@@ -3804,7 +3829,7 @@ dialog::backdrop {
 	z-index: 5;
 	top: 8px;
 	left: 8px;
-	min-height: 30px;
+	min-height: max(30px, var(--touch-target-size, 0px));
 	padding: 4px 8px;
 	background: rgba(255, 253, 248, 0.8);
 	border-radius: 8px;
@@ -3813,11 +3838,8 @@ dialog::backdrop {
 }
 
 .home-journey-detail {
-	position: absolute;
-	z-index: 5;
-	top: 8px;
-	right: 8px;
-	width: 190px;
+	position: relative;
+	margin-top: 10px;
 	color: var(--ink);
 	background: rgba(255, 253, 248, 0.88);
 	border: 1px solid rgba(255, 255, 255, 0.8);
@@ -3827,7 +3849,9 @@ dialog::backdrop {
 }
 
 .home-journey-detail .journey-detail-inner {
-	display: block;
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	gap: 12px;
 	padding: 10px;
 }
 
@@ -3843,15 +3867,14 @@ dialog::backdrop {
 
 .home-journey-detail p:not(.eyebrow) {
 	color: var(--muted);
-	font-size: 0.59rem;
+	font-size: 0.7rem;
 	line-height: 1.25;
 }
 
 .home-journey-detail .primary {
-	min-height: 28px;
-	margin-top: 7px;
-	padding: 4px 7px;
-	font-size: 0.58rem;
+	min-height: max(40px, var(--touch-target-size, 0px));
+	padding: 6px 9px;
+	font-size: 0.7rem;
 }
 
 .home-signoff {
@@ -3887,22 +3910,56 @@ dialog::backdrop {
 	transform: rotate(-7deg);
 }
 
+@container (max-width: 920px) {
+	.home-search-controls {
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+	}
+
+	.home-search-input,
+	.home-search-controls label:nth-of-type(4) {
+		grid-column: span 2;
+	}
+}
+
+@container (max-width: 520px) {
+	.home-search-controls {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.home-search-input,
+	.home-search-controls label:nth-of-type(4) {
+		grid-column: 1 / -1;
+	}
+}
+
+@container (max-width: 500px) {
+	.home-journey-milestones {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.home-journey-detail .journey-detail-inner {
+		grid-template-columns: minmax(0, 1fr);
+	}
+
+	.home-journey-detail .primary {
+		justify-self: start;
+	}
+}
+
+@container (max-width: 320px) {
+	.settings-card-heading {
+		grid-template-columns: 42px minmax(0, 1fr);
+	}
+
+	.settings-card-heading button {
+		grid-column: 2;
+		justify-self: start;
+	}
+}
+
 @media (max-width: 1240px) {
 	.app-frame.view-analytics::after {
 		display: none;
-	}
-
-	.topbar,
-	.view-jobs .topbar,
-	.view-networking .topbar,
-	.view-analytics .topbar,
-	.view-settings .topbar,
-	#main-content,
-	.view-jobs #main-content,
-	.view-networking #main-content,
-	.view-analytics #main-content,
-	.view-settings #main-content {
-		width: calc(100% - 24px);
 	}
 
 	.jobs-reference-layout {
@@ -3910,15 +3967,8 @@ dialog::backdrop {
 	}
 
 	.jobs-activity-rail {
-		display: none;
-	}
-
-	.job-search-strip {
-		grid-template-columns: minmax(280px, 1.4fr) repeat(3, minmax(120px, 0.6fr)) 90px;
-	}
-
-	.job-search-strip label:nth-of-type(5) {
-		display: none;
+		grid-column: 1 / -1;
+		grid-template-columns: repeat(3, minmax(0, 1fr));
 	}
 
 	.view-home .topbar,
@@ -3928,16 +3978,8 @@ dialog::backdrop {
 		width: calc(100% - 48px);
 	}
 
-	.home-search-controls {
-		grid-template-columns: minmax(240px, 1.3fr) repeat(2, minmax(120px, 0.7fr)) 72px 110px;
-	}
-
-	.home-search-controls label:nth-of-type(4) {
-		display: none;
-	}
-
 	.home-reference-lower {
-		grid-template-columns: minmax(0, 1.2fr) minmax(410px, 0.9fr);
+		grid-template-columns: minmax(0, 1.2fr) minmax(0, 0.9fr);
 	}
 
 	.tracker-layout,
@@ -3971,16 +4013,12 @@ dialog::backdrop {
 	}
 }
 
-@media (max-width: 980px) {
+@media (max-width: 1100px) {
 	.app-frame {
 		padding: 10px 8px 6px;
 	}
 
-	.topbar,
-	.view-jobs .topbar,
-	.view-networking .topbar,
-	.view-analytics .topbar,
-	.view-settings .topbar {
+	.topbar {
 		width: 100%;
 		min-height: 58px;
 		gap: 10px;
@@ -3994,6 +4032,7 @@ dialog::backdrop {
 	}
 
 	.brand {
+		flex: 1;
 		margin-right: auto;
 	}
 
@@ -4022,7 +4061,8 @@ dialog::backdrop {
 		width: min(300px, calc(100% - 52px));
 		align-content: start;
 		gap: 6px;
-		padding: 82px 14px 20px;
+		padding: calc(82px + env(safe-area-inset-top)) 14px
+			max(20px, env(safe-area-inset-bottom));
 		margin: 0;
 		background: var(--forest-950);
 		transform: translateX(-105%);
@@ -4030,6 +4070,19 @@ dialog::backdrop {
 		transition:
 			transform 170ms ease,
 			visibility 0s linear 170ms;
+		overflow-y: auto;
+		overscroll-behavior: contain;
+	}
+
+	.mobile-nav-close {
+		position: absolute;
+		top: calc(18px + env(safe-area-inset-top));
+		left: 14px;
+		display: grid;
+		width: 44px;
+		min-height: 44px;
+		padding: 0;
+		place-items: center;
 	}
 
 	.nav-open .top-nav {
@@ -4066,14 +4119,6 @@ dialog::backdrop {
 		display: none;
 	}
 
-	#main-content,
-	.view-jobs #main-content,
-	.view-networking #main-content,
-	.view-analytics #main-content,
-	.view-settings #main-content {
-		width: 100%;
-	}
-
 	.reference-hero {
 		margin-top: 0;
 		background-position: 60% center;
@@ -4098,10 +4143,6 @@ dialog::backdrop {
 	.home-search-row,
 	.home-reference-lower {
 		grid-template-columns: 1fr;
-	}
-
-	.home-search-controls {
-		grid-template-columns: minmax(240px, 1fr) repeat(2, minmax(120px, 0.55fr)) 72px 110px;
 	}
 
 	.home-coffee-card {
@@ -4143,6 +4184,7 @@ dialog::backdrop {
 
 	.filter-panel,
 	.jobs-results-panel,
+	.jobs-activity-rail,
 	.tracker-right-rail {
 		grid-column: 1;
 	}
@@ -4166,11 +4208,6 @@ dialog::backdrop {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 
-	.applications-layout .tracker-table-panel {
-		height: auto;
-		overflow: visible;
-	}
-
 	.tracker-filters {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
@@ -4179,6 +4216,10 @@ dialog::backdrop {
 	.tracker-filters fieldset,
 	.filter-footnote {
 		grid-column: 1 / -1;
+	}
+
+	.tracker-filters fieldset {
+		grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
 	}
 
 	.table-panel-heading {
@@ -4192,6 +4233,7 @@ dialog::backdrop {
 
 	.inline-search {
 		flex: 1;
+		min-width: 0;
 	}
 
 	.rail-page {
@@ -4242,10 +4284,6 @@ dialog::backdrop {
 }
 
 @media (max-width: 700px) {
-	body {
-		font-size: 13px;
-	}
-
 	.topbar {
 		padding: 8px 10px;
 	}
@@ -4263,25 +4301,33 @@ dialog::backdrop {
 	}
 
 	.brand strong {
-		max-width: 165px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
+		white-space: normal;
+		text-align: left;
+		font-size: 0.85rem;
+	}
+
+	.brand {
+		gap: 8px;
+	}
+
+	.brand-mark {
+		width: 32px;
+		height: 32px;
+		flex-basis: 32px;
 	}
 
 	.sign-out-button {
-		width: 40px;
-		min-height: 40px;
-		overflow: hidden;
+		width: 44px;
+		min-height: 44px;
 		padding: 0;
-		color: transparent;
-		font-size: 0;
 	}
 
-	.sign-out-button::after {
-		color: var(--forest-950);
-		content: "↗";
-		font-size: 1rem;
+	.sign-out-button > span {
+		display: none;
+	}
+
+	.sign-out-button .icon {
+		display: block;
 	}
 
 	.reference-hero {
@@ -4358,18 +4404,6 @@ dialog::backdrop {
 		padding: 13px;
 	}
 
-	.home-search-controls {
-		grid-template-columns: 1fr;
-	}
-
-	.home-search-controls > * {
-		grid-column: 1;
-	}
-
-	.home-search-controls label:nth-of-type(4) {
-		display: grid;
-	}
-
 	.home-coffee-card {
 		grid-template-columns: 135px 1fr;
 	}
@@ -4379,44 +4413,12 @@ dialog::backdrop {
 	}
 
 	.home-recent-actions {
-		grid-template-columns: 1fr 0.7fr 0.9fr;
+		grid-template-columns: minmax(0, 1fr) minmax(0, 0.7fr) minmax(0, 0.9fr);
 	}
 
 	.home-journey-panel .journey-canvas {
 		min-height: 285px;
 		height: 285px;
-	}
-
-	.home-journey-detail {
-		width: 150px;
-	}
-
-	.home-journey-milestones button {
-		grid-template-columns: 24px auto;
-	}
-
-	.journey-marker {
-		width: 23px;
-		height: 23px;
-	}
-
-	.home-journey-milestones button:nth-child(1) {
-		left: 8%;
-	}
-
-	.home-journey-milestones button:nth-child(2) {
-		left: 28%;
-		bottom: 52px;
-	}
-
-	.home-journey-milestones button:nth-child(3) {
-		left: 49%;
-		bottom: 88px;
-	}
-
-	.home-journey-milestones button:nth-child(4) {
-		right: 4%;
-		top: 62px;
 	}
 
 	.home-signoff {
@@ -4483,8 +4485,27 @@ dialog::backdrop {
 		grid-template-columns: 1fr;
 	}
 
+	.job-card-heading {
+		grid-template-columns: 42px minmax(0, 1fr);
+	}
+
+	.job-card-title {
+		grid-column: 1 / -1;
+		grid-row: 2;
+	}
+
+	.job-card-actions {
+		grid-column: 2;
+		grid-row: 1;
+		justify-self: end;
+	}
+
 	.results-toolbar {
 		align-items: flex-start;
+		flex-wrap: wrap;
+	}
+
+	.results-toolbar > div:first-child {
 		flex-wrap: wrap;
 	}
 
@@ -4510,12 +4531,14 @@ dialog::backdrop {
 	}
 
 	.tracker-right-rail,
+	.jobs-activity-rail,
 	.settings-reference-grid,
 	.analytics-reference-grid {
 		grid-template-columns: 1fr;
 	}
 
 	.tracker-right-rail > *,
+	.jobs-activity-rail > *,
 	.account-card,
 	.preferences-card,
 	.privacy-card,
@@ -4539,50 +4562,6 @@ dialog::backdrop {
 
 	.inline-search {
 		min-width: 0;
-	}
-
-	.responsive-table-wrap {
-		overflow: visible;
-		border: 0;
-	}
-
-	.data-table,
-	.data-table tbody,
-	.data-table tr,
-	.data-table td {
-		display: block;
-		width: 100%;
-	}
-
-	.data-table thead {
-		display: none;
-	}
-
-	.data-table tr {
-		margin-bottom: 8px;
-		padding: 10px;
-		background: rgba(255, 255, 255, 0.74);
-		border: 1px solid var(--line);
-		border-radius: 9px;
-	}
-
-	.data-table td {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 12px;
-		padding: 6px 0;
-		border-bottom: 1px solid #e8e9e6;
-	}
-
-	.data-table td:last-child {
-		border-bottom: 0;
-	}
-
-	.table-role,
-	.table-note {
-		max-width: 60%;
-		text-align: right;
 	}
 
 	.journey-dock {
@@ -4657,6 +4636,30 @@ dialog::backdrop {
 
 	.legal-card {
 		padding: 24px 18px;
+	}
+}
+
+@media (max-height: 500px) {
+	.dialog-head {
+		position: relative;
+	}
+}
+
+@media (pointer: coarse), (max-width: 700px) {
+	:root {
+		--touch-target-size: 44px;
+	}
+
+	input:not([type="checkbox"]):not([type="hidden"]),
+	select,
+	.networking-layout .tracker-filters input {
+		height: 44px;
+	}
+
+	input,
+	select,
+	textarea {
+		font-size: 16px;
 	}
 }
 

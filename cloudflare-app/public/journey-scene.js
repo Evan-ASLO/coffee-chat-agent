@@ -21,12 +21,10 @@ const COLORS = {
 export function supportsWebGL() {
 	try {
 		const canvas = document.createElement("canvas");
-		return Boolean(
-			window.WebGL2RenderingContext &&
-				canvas.getContext("webgl2", {
-					failIfMajorPerformanceCaveat: true,
-				}),
-		);
+		const context = window.WebGL2RenderingContext &&
+			canvas.getContext("webgl2", { failIfMajorPerformanceCaveat: true });
+		context?.getExtension("WEBGL_lose_context")?.loseContext();
+		return Boolean(context);
 	} catch {
 		return false;
 	}
@@ -165,8 +163,14 @@ export function createJourneyScene(options) {
 	}
 
 	function handlePointerMove(event) {
+		const area = areaAtPointer(event);
+		setHovered(area);
+		if (!config.animate) renderOnce();
+	}
+
+	function areaAtPointer(event) {
 		const rect = renderer.domElement.getBoundingClientRect();
-		if (!rect.width || !rect.height) return;
+		if (!rect.width || !rect.height) return "";
 		pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
 		pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
 		pointerX = pointer.x;
@@ -176,9 +180,7 @@ export function createJourneyScene(options) {
 			Array.from(interactive.values()),
 			true,
 		);
-		const area = areaForObject(hits[0]?.object);
-		setHovered(area);
-		if (!config.animate) renderOnce();
+		return areaForObject(hits[0]?.object);
 	}
 
 	function handlePointerLeave() {
@@ -188,10 +190,11 @@ export function createJourneyScene(options) {
 		if (!config.animate) renderOnce();
 	}
 
-	function handleClick() {
-		if (!hoveredArea) return;
-		focus(hoveredArea);
-		onFocus(hoveredArea);
+	function handleClick(event) {
+		const area = areaAtPointer(event);
+		if (!area) return;
+		focus(area);
+		onFocus(area);
 	}
 
 	function areaForObject(object) {

@@ -22,6 +22,9 @@ Configure the existing Google/encryption values plus `JOBS_INGEST_SECRET` in `.d
 - Three.js is pinned exactly in `package.json` and copied from the official npm package by `npm run vendor:three`; its self-hosted module/core files, MIT license, and receipt live under `public/vendor/`.
 - The Home Career Journey scene loads only on Home, mirrors pointer interactions with keyboard/touch controls, lowers quality on mobile, respects reduced motion, pauses offscreen/when hidden, and disposes all renderer resources and listeners on navigation.
 - The styled HTML fallback remains available when WebGL is unsupported.
+- Shared page containers, intrinsic grid tracks, wrapping controls and component-width queries keep the approved artwork and warm desktop theme intact while reflowing on phones. Every job filter remains available; application/network tables scroll only inside named, keyboard-focusable regions.
+- The compact navigation drawer preserves in-progress form values and the current scene, supports Escape and a focus loop, and restores focus on close. Native editors use dynamic-viewport height limits and safe-area spacing; their headings stay sticky except on short screens, where long headings must scroll without covering fields. Touch controls have a 44 CSS-pixel minimum height, with legible form text that avoids iOS focus zoom.
+- Career Journey milestones and selected details sit outside the canvas so they cannot obscure each other or the interactive world. Direct touch hits do not depend on prior pointer hover; viewport/reduced-motion changes dispose and rebuild the scene with the appropriate quality settings.
 
 ## Account-scoped analytics
 
@@ -194,6 +197,24 @@ Matching uses canonical URL first and normalized company/title second, and is ba
 npm run check
 npm audit
 ```
+
+### Isolated, read-only layout review
+
+Use only a clean local checkout/worktree, never production D1. The fixture configuration has a distinct fake database ID, synthetic approved accounts and encrypted fake provider credentials, no queue/cron handlers, and disabled network egress. OAuth and all application mutations (including discovery, resume analysis, drafting, CRM creation and sending) return an explicit `REVIEW_ONLY` error. Do not deploy this fixture.
+
+```powershell
+$env:WRANGLER_SEND_METRICS = "false"
+npx wrangler d1 migrations apply layout-review --config test\layout\wrangler.jsonc --local --persist-to ..\.d1
+node test\layout\seed.mjs ..\.d1\seed.sql
+npx wrangler d1 execute layout-review --config test\layout\wrangler.jsonc --local --persist-to ..\.d1 --file ..\.d1\seed.sql
+npx wrangler dev --config test\layout\wrangler.jsonc --local --ip 127.0.0.1 --port 8804 --persist-to ..\.d1
+```
+
+Open `http://127.0.0.1:8804/__review/login?scenario=normal` (or `empty` / `long`) for synthetic account states; `/__review/logout` shows the signed-out private-beta landing. Keep `.d1` inside the checkout to avoid Windows SQLite path-length problems.
+
+In a second terminal, run `npm run test:responsive` against that local fixture. The browser harness uses installed Microsoft Edge by default (`LAYOUT_BROWSER_CHANNEL` can select a separately installed Playwright browser), closes its automation browser on exit, and records screenshots plus overflow, control-collision, icon-alignment, hero-clipping, console and request measurements. Set `LAYOUT_EVIDENCE_DIR` to a session-artifact directory to preserve review evidence outside Git. `--quick` selects the smallest representative matrix; the full matrix includes 320/360/390/430/768/1024/1280/1440/1536/1920 widths, phone landscape, long content, empty tracking and the signed-out landing.
+
+Run `npm run test:interactions` for keyboard/touch navigation, all job filters, bounded table scrolling, native editors at 200%/400%-equivalent reflow, and actual WebGL hit testing, motion/visibility changes, orientation, disposal and stale-mount races. This suite also verifies the fixture's explicit OAuth and mutation denials. `--only=controls`, `--only=dialogs`, or `--only=journey` selects a targeted group.
 
 The Worker test suite covers ingestion authentication, future-boundary replay expiry, strict size/count/schema validation, active-catalog idempotency, A → B → A reactivation, stale replacement, public/private access, cross-user state isolation, status CRUD, zero-match/retry/idempotent legacy import, 500-reference batched matching, and job/prospect ownership.
 

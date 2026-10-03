@@ -2,7 +2,7 @@
 <html lang="en">
 	<head>
 		<meta charset="UTF-8" />
-		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 		<meta
 			name="description"
 			content="Internship & Coffee Chat brings Toronto internship search, application tracking, professional networking, and honest analytics into one secure workspace."
@@ -13,11 +13,11 @@
 			rel="icon"
 			href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='16' fill='%2317372e'/%3E%3Cpath d='M15 20h27v18a10 10 0 0 1-10 10h-7A10 10 0 0 1 15 38V20Zm27 5h4a7 7 0 0 1 0 14h-4' fill='none' stroke='%23e9653b' stroke-width='5'/%3E%3C/svg%3E"
 		/>
-		<link rel="stylesheet" href="/styles.css?v=20261002-reference-2" />
+		<link rel="stylesheet" href="/styles.css?v=20261002-layout-1" />
 		<script src="/job-source.js?v=20261001-3" defer></script>
 		<script src="/journey-progress.js?v=20261002-reference-2" defer></script>
 		<script src="/analytics-ui.js?v=20261002-reference-2" defer></script>
-		<script src="/app.js?v=20261002-reference-2" defer></script>
+		<script src="/app.js?v=20261002-layout-1" defer></script>
 	</head>
 	<body>
 		<noscript>
@@ -39,7 +39,7 @@
 			</section>
 		</div>
 		<div id="toast" class="toast" role="status"></div>
-		<dialog id="draft-dialog">
+		<dialog id="draft-dialog" aria-labelledby="draft-name">
 			<form method="dialog" class="dialog-card" id="draft-form">
 				<div class="dialog-head">
 					<div>
