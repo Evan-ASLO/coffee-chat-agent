@@ -42,6 +42,7 @@ import {
 	discoverWithPeopleSearchFallback,
 	PeopleSearchFallbackError,
 	type PeopleSearchErrorCategory,
+	type PeopleSearchErrorReason,
 	type PeopleSearchFallbackProvider,
 } from "./people-search-fallback";
 
@@ -65,6 +66,7 @@ export interface DiscoverySummary {
 	fallbackProvider: "NONE" | PeopleSearchFallbackProvider;
 	fallbackAttempted: boolean;
 	fallbackStatus: PeopleSearchFallbackStatus;
+	fallbackReason: PeopleSearchErrorReason | null;
 	fallbackModel: string;
 	fallbackHttpStatus: number | null;
 	fallbackReturned: number;
@@ -126,6 +128,7 @@ export async function discoverProspects(
 	let fallbackProvider: "NONE" | PeopleSearchFallbackProvider = "NONE";
 	let fallbackAttempted = false;
 	let fallbackStatus: PeopleSearchFallbackStatus = "NOT_NEEDED";
+	let fallbackReason: PeopleSearchErrorReason | null = null;
 	let fallbackModel = "";
 	let fallbackHttpStatus: number | null = null;
 	let fallbackReturned = 0;
@@ -157,7 +160,8 @@ export async function discoverProspects(
 						criteria,
 						count: requestedCount - discoveredByUrl.size,
 					});
-					fallbackStatus = "SUCCESS";
+					fallbackStatus = grounded.status;
+					fallbackReason = grounded.reason;
 					fallbackModel = grounded.model;
 					fallbackReturned = grounded.returned;
 					for (const person of grounded.people) {
@@ -170,6 +174,7 @@ export async function discoverProspects(
 				} catch (error) {
 					if (error instanceof PeopleSearchFallbackError) {
 						fallbackStatus = error.category;
+						fallbackReason = error.reason;
 						fallbackHttpStatus = error.httpStatus;
 					} else {
 						fallbackStatus = "PROVIDER_ERROR";
@@ -218,6 +223,7 @@ export async function discoverProspects(
 			fallbackProvider,
 			fallbackAttempted,
 			fallbackStatus,
+			fallbackReason,
 			fallbackModel,
 			fallbackHttpStatus,
 			fallbackReturned,
@@ -258,6 +264,7 @@ export async function discoverProspects(
 			fallbackProvider,
 			fallbackAttempted,
 			fallbackStatus,
+			fallbackReason,
 			fallbackModel,
 			fallbackHttpStatus,
 			fallbackReturned,

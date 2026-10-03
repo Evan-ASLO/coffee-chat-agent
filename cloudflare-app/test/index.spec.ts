@@ -400,6 +400,115 @@ describe("people-search fallback provider selection", () => {
 			settings: { peopleSearchFallbackProvider: "NONE" },
 		});
 	});
+
+	it.each([
+		{ name: "capped cited partial", code: "max_uses_exceeded", output: true, tavily: 1, http: 200, status: "SEARCH_LIMITED" },
+		{ name: "capped missing output", code: "max_uses_exceeded", output: false, tavily: 1, http: 200, status: "SEARCH_LIMITED" },
+		{ name: "capped empty failure", code: "max_uses_exceeded", output: false, tavily: 0, http: 200, status: "SEARCH_LIMITED" },
+		{ name: "invalid tool input", code: "invalid_tool_input", output: true, tavily: 1, http: 200, status: "BAD_REQUEST" },
+		{ name: "unknown tool error", code: "PRIVATE PROMPT SECRET-DO-NOT-STORE", output: true, tavily: 1, http: 200, status: "PROVIDER_ERROR" },
+		{ name: "HTTP 400", code: null, output: false, tavily: 1, http: 400, status: "BAD_REQUEST" },
+		{ name: "HTTP 422", code: null, output: false, tavily: 1, http: 422, status: "BAD_REQUEST" },
+	])("preserves Tavily and safe Anthropic diagnostics for $name", async (testCase) => {
+		const auth = await authenticatedTestUser("anthropic-diagnostics");
+		const bindings = env as unknown as AppBindings;
+		await saveCredential(bindings, {
+			userId: auth.user.id, provider: "TAVILY", value: "test-tavily-diagnostics-key",
+		});
+		await saveCredential(bindings, {
+			userId: auth.user.id, provider: "ANTHROPIC", value: "test-anthropic-diagnostics-key",
+		});
+		await env.DB.prepare(
+			"UPDATE user_settings SET people_search_fallback_provider = 'ANTHROPIC', anthropic_model = 'claude-haiku-4-5' WHERE user_id = ?",
+		).bind(auth.user.id).run();
+		const tavilyUrl = "https://www.linkedin.com/in/tavily-diagnostics";
+		const candidates = [
+			{
+				fullName: "Tavily Example", title: "Investment Analyst",
+				company: "BMO Financial Group", location: "Toronto", sourceUrl: tavilyUrl,
+				evidence: "Tavily Example is an Investment Analyst at BMO Financial Group in Toronto.",
+			},
+			{
+				fullName: "Alexander Spark", title: "Managing Director",
+				company: "BMO Financial Group", location: "Toronto",
+				sourceUrl: "https://privatewealth.bmo.com/en/people/alexander-spark",
+				evidence: "Alexander Spark is a Managing Director at BMO Financial Group in Toronto.",
+			},
+		];
+		const fetchSpy = vi.spyOn(globalThis, "fetch")
+			.mockRejectedValue(new Error("Unexpected outbound request in discovery test."))
+			.mockResolvedValueOnce(Response.json({
+				results: testCase.tavily ? [{
+					title: "Tavily Example - Investment Analyst - BMO | LinkedIn",
+					url: tavilyUrl,
+					content: candidates[0]!.evidence,
+				}] : [],
+			}))
+			.mockResolvedValueOnce(Response.json({ results: [] }))
+			.mockResolvedValueOnce(Response.json({
+				content: [
+					{
+						type: "text",
+						text: testCase.output ? JSON.stringify({ people: candidates }) : "",
+						citations: candidates.map(({ sourceUrl }) => ({
+							type: "web_search_result_location", url: sourceUrl,
+						})),
+					},
+					{
+						type: "web_search_tool_result",
+						content: {
+							type: "web_search_tool_result_error",
+							error_code: testCase.code,
+							message: "PRIVATE PROMPT https://private.example SECRET-DO-NOT-STORE",
+						},
+					},
+				],
+			}, { status: testCase.http }));
+		try {
+			const response = await authenticatedWorkerFetch(auth, "/api/discovery", {
+				method: "POST",
+				body: {
+					roles: ["Investment Analyst"], companies: ["BMO Financial Group"],
+					locations: ["Toronto"], industries: [], keywords: [], seniority: [],
+					objective: "PRIVATE USER OBJECTIVE", count: 3,
+				},
+			}, bindings);
+			expect(response.status).toBe(200);
+			const payload = await response.json() as {
+				prospects: Array<{ fullName: string; discoveryProvider: string; status: string }>;
+				summary: Record<string, unknown>;
+			};
+			const partial = testCase.output && testCase.code === "max_uses_exceeded";
+			const reason = testCase.status === "PROVIDER_ERROR" ? "unknown_tool_error" : testCase.code;
+			expect(payload.summary).toMatchObject({
+				fallbackProvider: "ANTHROPIC", fallbackAttempted: true,
+				fallbackModel: "claude-haiku-4-5", fallbackStatus: testCase.status,
+				fallbackReason: reason, fallbackHttpStatus: testCase.http === 200 ? null : testCase.http,
+				primaryAccepted: testCase.tavily,
+				fallbackReturned: partial ? 2 : 0,
+				fallbackAccepted: partial ? 1 : 0,
+				inserted: testCase.tavily + (partial ? 1 : 0),
+			});
+			expect(payload.prospects.map((person) => person.discoveryProvider)).toEqual([
+				...(testCase.tavily ? ["TAVILY"] : []),
+				...(partial ? ["ANTHROPIC_GROUNDED"] : []),
+			]);
+			expect(payload.prospects.every((person) => person.status === "DISCOVERED")).toBe(true);
+			const auditRow = await env.DB.prepare(
+				"SELECT metadata_json FROM audit_events WHERE user_id = ? AND action = 'DISCOVERY_COMPLETED' ORDER BY created_at DESC LIMIT 1",
+			).bind(auth.user.id).first<{ metadata_json: string }>();
+			expect(JSON.parse(auditRow!.metadata_json)).toEqual(payload.summary);
+			expect(auditRow!.metadata_json).not.toMatch(
+				/PRIVATE|SECRET-DO-NOT-STORE|diagnostics-key|Tavily Example|Alexander Spark|https:\/\//,
+			);
+			expect(fetchSpy.mock.calls.map(([url]) => url)).toEqual([
+				"https://api.tavily.com/search", "https://api.tavily.com/search",
+				"https://api.anthropic.com/v1/messages",
+			]);
+		} finally {
+			fetchSpy.mockRestore();
+		}
+	});
 });
 
 describe.sequential("approved-email beta access", () => {

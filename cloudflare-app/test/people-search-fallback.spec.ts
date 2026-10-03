@@ -65,7 +65,7 @@ const providerCases: Array<{
 	},
 	{
 		provider: "ANTHROPIC",
-		model: "claude-sonnet-4-6",
+		model: "claude-haiku-4-5",
 		endpoint: "https://api.anthropic.com/v1/messages",
 		discoveryProvider: "ANTHROPIC_GROUNDED",
 	},
@@ -73,9 +73,14 @@ const providerCases: Array<{
 
 function groundedResponse(
 	provider: PeopleSearchFallbackProvider,
-	input: { people: unknown[]; citations?: string[] },
+	input: {
+		people: unknown[];
+		citations?: string[];
+		text?: string;
+		anthropicToolErrors?: string[];
+	},
 ): Response {
-	const text = JSON.stringify({ people: input.people });
+	const text = input.text ?? JSON.stringify({ people: input.people });
 	const urls = input.citations || [];
 	let body: unknown;
 	if (provider === "GEMINI") {
@@ -125,6 +130,13 @@ function groundedResponse(
 						url,
 					})),
 				},
+				...(input.anthropicToolErrors || []).map((errorCode) => ({
+					type: "web_search_tool_result",
+					content: {
+						type: "web_search_tool_result_error",
+						error_code: errorCode,
+					},
+				})),
 			],
 		};
 	}
@@ -152,6 +164,8 @@ describe("cited people-search fallback providers", () => {
 			expect(result).toMatchObject({
 				provider: testCase.provider,
 				model: testCase.model,
+				status: "SUCCESS",
+				reason: null,
 				returned: 2,
 				accepted: 2,
 			});
@@ -199,6 +213,7 @@ describe("cited people-search fallback providers", () => {
 					},
 				});
 			} else {
+				expect(body).toMatchObject({ max_tokens: 1400, temperature: 0.1 });
 				expect(body.tools[0]).toMatchObject({
 					type: "web_search_20250305",
 					name: "web_search",
@@ -246,6 +261,23 @@ describe("cited people-search fallback providers", () => {
 					"https://vertexaisearch.cloud.google.com/grounding-api-redirect/example",
 				],
 			},
+			{
+				person: {
+					...people[1],
+					company: "Unrelated Employer",
+					evidence: "Jamie Example is an Investment Analyst at Unrelated Employer in Toronto.",
+				},
+				citations,
+			},
+			{
+				person: {
+					...people[1],
+					title: "Profile",
+					location: "Ottawa",
+					evidence: "Jamie Example works at BMO Financial Group in Ottawa.",
+				},
+				citations,
+			},
 		];
 		for (const testCase of providerCases) {
 			for (const candidate of candidates) {
@@ -253,6 +285,10 @@ describe("cited people-search fallback providers", () => {
 					groundedResponse(testCase.provider, {
 						people: [candidate.person],
 						citations: candidate.citations,
+						anthropicToolErrors:
+							testCase.provider === "ANTHROPIC"
+								? ["max_uses_exceeded"]
+								: [],
 					}),
 				);
 			}
@@ -265,6 +301,10 @@ describe("cited people-search fallback providers", () => {
 					count: 1,
 				});
 				expect(result).toMatchObject({
+					status:
+						testCase.provider === "ANTHROPIC"
+							? "SEARCH_LIMITED"
+							: "SUCCESS",
 					returned: 1,
 					accepted: 0,
 					people: [],
@@ -329,6 +369,20 @@ describe("cited people-search fallback providers", () => {
 			},
 			{
 				provider: "ANTHROPIC",
+				model: "claude-haiku-4-5",
+				status: 400,
+				body: "invalid request body with private prompt",
+				category: "BAD_REQUEST",
+			},
+			{
+				provider: "ANTHROPIC",
+				model: "claude-haiku-4-5",
+				status: 422,
+				body: "invalid request body with private prompt",
+				category: "BAD_REQUEST",
+			},
+			{
+				provider: "ANTHROPIC",
 				model: "claude-sonnet-4-6",
 				status: 400,
 				body: "web search tool is not enabled for this account",
@@ -360,6 +414,7 @@ describe("cited people-search fallback providers", () => {
 			expect(error).toMatchObject({
 				category: testCase.category,
 				httpStatus: testCase.status,
+				reason: null,
 				message: "People-search fallback failed.",
 			});
 			expect(error.message).not.toContain(testCase.body);
@@ -367,45 +422,118 @@ describe("cited people-search fallback providers", () => {
 		expect(fetchSpy).toHaveBeenCalledTimes(cases.length);
 	});
 
-	it("classifies Anthropic tool errors without exposing their response", async () => {
-		const fetchSpy = vi.spyOn(globalThis, "fetch");
-		for (const errorCode of ["too_many_requests", "unavailable"]) {
-			fetchSpy.mockResolvedValueOnce(
-				new Response(
-					JSON.stringify({
-						content: [
-							{
-								type: "web_search_tool_result",
-								content: {
-									type: "web_search_tool_result_error",
-									error_code: errorCode,
-								},
-							},
-						],
-					}),
-					{ status: 200 },
-				),
-			);
-		}
-		await expect(
-			fallbackError({
-				provider: "ANTHROPIC",
-				model: "claude-sonnet-4-6",
+	it("retains only validated cited profiles when Anthropic reaches its search-use cap", async () => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			groundedResponse("ANTHROPIC", {
+				people: [people[0], people[0], people[1]],
+				citations,
+				anthropicToolErrors: ["max_uses_exceeded"],
 			}),
-		).resolves.toMatchObject({
-			category: "RATE_LIMITED",
+		);
+		const result = await discoverWithPeopleSearchFallback({
+			provider: "ANTHROPIC",
+			model: "claude-haiku-4-5",
+			apiKey: "test-anthropic-key",
+			criteria,
+			count: 3,
+		});
+		expect(result).toMatchObject({
+			status: "SEARCH_LIMITED",
+			reason: "max_uses_exceeded",
+			returned: 3,
+			accepted: 2,
+		});
+		expect(result.people.map((person) => person.sourceUrl)).toEqual(citations);
+		expect(result.people.map((person) => person.matchQuality)).toEqual([
+			"BROADER_COMPANY", "STRONG",
+		]);
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it.each([
+		{ name: "missing JSON", text: "" },
+		{ name: "truncated JSON", text: '{"people":[' },
+		{
+			name: "invalid schema",
+			text: JSON.stringify({ people, unexpected: "private prompt SECRET-DO-NOT-STORE" }),
+		},
+	])("reports the search-use cap without salvaging $name", async ({ text }) => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			groundedResponse("ANTHROPIC", {
+				people,
+				citations,
+				text,
+				anthropicToolErrors: ["max_uses_exceeded"],
+			}),
+		);
+		const error = await fallbackError({
+			provider: "ANTHROPIC",
+			model: "claude-haiku-4-5",
+		});
+		expect(error).toMatchObject({
+			category: "SEARCH_LIMITED",
+			reason: "max_uses_exceeded",
 			httpStatus: null,
 		});
-		await expect(
-			fallbackError({
-				provider: "ANTHROPIC",
-				model: "claude-sonnet-4-6",
+		expect(JSON.stringify(error)).not.toMatch(/private prompt|SECRET-DO-NOT-STORE|Alexander Spark/);
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it.each([
+		["too_many_requests", "RATE_LIMITED", "too_many_requests"],
+		["invalid_tool_input", "BAD_REQUEST", "invalid_tool_input"],
+		["query_too_long", "BAD_REQUEST", "query_too_long"],
+		["request_too_large", "BAD_REQUEST", "request_too_large"],
+		["unavailable", "PROVIDER_ERROR", "unavailable"],
+		["private prompt SECRET-DO-NOT-STORE", "PROVIDER_ERROR", "unknown_tool_error"],
+	])("classifies Anthropic tool error %s without salvaging or exposing its response", async (errorCode, category, reason) => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			groundedResponse("ANTHROPIC", {
+				people,
+				citations,
+				anthropicToolErrors: ["max_uses_exceeded", errorCode],
 			}),
-		).resolves.toMatchObject({
+		);
+		const error = await fallbackError({
+				provider: "ANTHROPIC",
+				model: "claude-haiku-4-5",
+		});
+		expect(error).toMatchObject({
+			category,
+			reason,
+			httpStatus: null,
+		});
+		expect(JSON.stringify(error)).not.toMatch(/private prompt|SECRET-DO-NOT-STORE|Alexander Spark/);
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it.each([
+		{ name: "missing content", content: undefined },
+		{ name: "invalid error type", content: { type: "text", error_code: "max_uses_exceeded" } },
+	])("does not salvage a malformed Anthropic tool result with $name", async ({ content }) => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			Response.json({
+				content: [
+					{
+						type: "text",
+						text: JSON.stringify({ people }),
+						citations: citations.map((url) => ({
+							type: "web_search_result_location", url,
+						})),
+					},
+					{ type: "web_search_tool_result", content },
+				],
+			}),
+		);
+		await expect(fallbackError({
+			provider: "ANTHROPIC",
+			model: "claude-haiku-4-5",
+		})).resolves.toMatchObject({
 			category: "PROVIDER_ERROR",
+			reason: "unknown_tool_error",
 			httpStatus: null,
 		});
-		expect(fetchSpy).toHaveBeenCalledTimes(2);
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
 	});
 
 	it("classifies malformed JSON and timeouts without retries", async () => {

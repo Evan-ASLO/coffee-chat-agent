@@ -948,9 +948,9 @@ function renderNetworkingSearchState() {
 	}
 	const className = search.status === "success" ? "notice" : "notice warning";
 	return `<section class="${className} discovery-state" role="${search.status === "error" ? "alert" : "status"}">
-		<div><strong>${escapeHtml(search.status === "success" ? "People found" : search.status === "empty" ? "No people found" : "Search could not be completed")}</strong><span>${escapeHtml(search.message)}</span></div>
+		<div><strong>${escapeHtml(search.status === "success" ? "People found" : search.status === "partial" ? "Partial results - search incomplete" : search.status === "empty" ? "No new people added" : "Search could not be completed")}</strong><span>${escapeHtml(search.message)}</span></div>
 		${
-			search.status === "empty" || search.status === "error"
+			["empty", "error", "partial"].includes(search.status)
 				? '<button id="retry-job-discovery" class="secondary">Retry search</button>'
 				: ""
 		}
@@ -1816,6 +1816,7 @@ async function executeDiscovery(criteria) {
 			fallbackProvider: "NONE",
 			fallbackAttempted: false,
 			fallbackStatus: "NOT_NEEDED",
+			fallbackReason: null,
 			fallbackModel: "",
 			fallbackHttpStatus: null,
 			fallbackReturned: 0,
@@ -1824,15 +1825,16 @@ async function executeDiscovery(criteria) {
 			duplicates: 0,
 			rejected: 0,
 		};
+		const status = discoverySearchStatus(summary);
 		if (summary.inserted > 0) {
 			state.networkingSearch = {
-				status: "success",
+				status,
 				message: discoverySuccessMessage(summary),
 				summary,
 			};
 			render();
 			showToast(
-				`Found ${summary.inserted} new ${summary.inserted === 1 ? "person" : "people"} to review.`,
+				`${status === "partial" ? "Partial search: found" : "Found"} ${summary.inserted} new ${summary.inserted === 1 ? "person" : "people"} to review.`,
 			);
 			document.getElementById("approve-panel")?.scrollIntoView({
 				behavior: preferredScrollBehavior(),
@@ -1841,7 +1843,7 @@ async function executeDiscovery(criteria) {
 			return;
 		}
 		state.networkingSearch = {
-			status: "empty",
+			status,
 			message: discoveryEmptyMessage(summary),
 			summary,
 		};
@@ -1876,6 +1878,15 @@ function readDiscoveryCriteria() {
 	};
 }
 
+function discoverySearchStatus(summary) {
+	if (discoveryFallbackFailureMessage(summary)) {
+		return summary.accepted > 0 || summary.inserted > 0 || summary.duplicates > 0
+			? "partial"
+			: "error";
+	}
+	return summary.inserted > 0 ? "success" : "empty";
+}
+
 function discoverySuccessMessage(summary) {
 	const details = [];
 	if (summary.strongAccepted) {
@@ -1908,15 +1919,14 @@ function discoverySuccessMessage(summary) {
 }
 
 function discoveryEmptyMessage(summary) {
+	const fallbackFailure = discoveryFallbackFailureMessage(summary);
+	if (summary.duplicates > 0) {
+		return `No new people were added. ${summary.duplicates} matching ${summary.duplicates === 1 ? "profile is" : "profiles are"} already tracked.${fallbackFailure ? ` ${fallbackFailure}` : " Edit the criteria to search for different roles."}`;
+	}
+	if (fallbackFailure) return fallbackFailure;
 	if (summary.fallbackStatus === "DISABLED") {
 		return "Tavily found no usable public professional profiles. The optional cited provider fallback is disabled in Settings.";
 	}
-	if (summary.fallbackStatus === "MISSING_KEY") {
-		const provider = fallbackProviderLabel(summary.fallbackProvider);
-		return `The cited ${provider} fallback is selected, but no ${provider} API key is configured. Add your key under Settings or disable the fallback.`;
-	}
-	const fallbackFailure = discoveryFallbackFailureMessage(summary);
-	if (fallbackFailure) return fallbackFailure;
 	if (summary.providerReturned === 0) {
 		return "The search provider returned no profiles. Edit the roles, company, or location below and retry.";
 	}
@@ -1937,16 +1947,30 @@ function discoveryEmptyMessage(summary) {
 		}
 		return `The search returned ${stages.length ? stages.join(" and ") : `${summary.providerReturned} candidate results`}, but none were usable public professional profiles. Broaden the roles or location and retry.`;
 	}
-	if (summary.duplicates > 0) {
-		return `No new people were added. ${summary.duplicates} matching ${summary.duplicates === 1 ? "profile is" : "profiles are"} already tracked and linked to this job. Edit the criteria to search for different roles.`;
-	}
 	return "No new people matched these criteria. Edit the fields below and retry.";
 }
 
 function discoveryFallbackFailureMessage(summary) {
 	const provider = fallbackProviderLabel(summary.fallbackProvider);
 	let message = "";
-	if (summary.fallbackStatus === "RATE_LIMITED") {
+	if (summary.fallbackStatus === "MISSING_KEY") {
+		message = `The cited ${provider} fallback is selected, but no API key is configured for it. Add your key under Settings or disable the fallback.`;
+	} else if (
+		summary.fallbackStatus === "SEARCH_LIMITED" ||
+		summary.fallbackReason === "max_uses_exceeded"
+	) {
+		message = `${provider} reached this request's one-search limit, not an API quota or key failure. Narrow the criteria before retrying, or choose another fallback provider. ${summary.fallbackAccepted > 0 ? "Only cited profiles that passed validation were retained." : "No usable fallback profiles were retained."}`;
+	} else if (summary.fallbackReason === "invalid_tool_input") {
+		message = `${provider} could not run the search tool because its query input was invalid. Try fewer role, company, or location terms, or choose another fallback provider.`;
+	} else if (summary.fallbackReason === "query_too_long") {
+		message = `${provider}'s search-tool query was too long. Reduce the role, company, or location terms before retrying.`;
+	} else if (summary.fallbackReason === "request_too_large") {
+		message = `${provider}'s search-tool request was too large. Search fewer companies at a time to reduce the domain filters, or choose another fallback provider.`;
+	} else if (summary.fallbackReason === "too_many_requests") {
+		message = `${provider}'s search tool was rate limited. Wait before retrying, or choose another fallback provider.`;
+	} else if (summary.fallbackReason === "unavailable") {
+		message = `${provider}'s search tool was unavailable. Retry later or choose another fallback provider.`;
+	} else if (summary.fallbackStatus === "RATE_LIMITED") {
 		if (summary.fallbackProvider === "GEMINI") {
 			message =
 				"Gemini Search quota or rate limit was reached. Check the API project's billing and Search grounding quota, wait for reset, or choose another fallback provider.";
@@ -1958,11 +1982,13 @@ function discoveryFallbackFailureMessage(summary) {
 				"Anthropic Web Search quota or rate limit was reached. Check the API account's billing and Web Search limits, wait for reset, or choose another fallback provider.";
 		}
 	} else if (summary.fallbackStatus === "AUTH") {
-		message = `${provider} rejected the configured API key. Update the key in Settings or choose another fallback provider.`;
+		message = `${provider} denied API access. Check the key's validity and account permissions in Settings, or choose another fallback provider.`;
 	} else if (summary.fallbackStatus === "BAD_REQUEST") {
-		message = `${provider} rejected the search request. Verify the configured model and web-search settings, or choose another fallback provider.`;
+		message = [400, 422].includes(summary.fallbackHttpStatus)
+			? `${provider} rejected the API request (HTTP ${summary.fallbackHttpStatus}). Retry with narrower criteria; if it persists, report this request error or choose another fallback provider.`
+			: `${provider} could not complete the request or search tool. The available diagnostic does not identify which failed. Try narrower criteria or choose another fallback provider.`;
 	} else if (summary.fallbackStatus === "UNSUPPORTED") {
-		message = `The configured ${provider} model or account does not support the required web-search tool. Choose a search-capable model or another fallback provider.`;
+		message = `The configured ${provider} model or account does not support the required web-search tool. Check model support and account capabilities, or choose another fallback provider.${summary.fallbackProvider === "ANTHROPIC" ? " An organization admin can check Web Search at platform.claude.com/settings/capabilities." : ""}`;
 	} else if (summary.fallbackStatus === "TIMEOUT") {
 		message = `${provider} timed out before returning cited profiles. Retry once later or choose another fallback provider.`;
 	} else if (summary.fallbackStatus === "MALFORMED_RESPONSE") {
@@ -1970,7 +1996,10 @@ function discoveryFallbackFailureMessage(summary) {
 	} else if (summary.fallbackStatus === "PROVIDER_ERROR") {
 		message = `${provider} could not complete the cited search. Check the provider's service and web-search availability before retrying.`;
 	}
-	return message ? `${message} Tavily results were preserved.` : "";
+	if (!message) return "";
+	const tavilyAccepted =
+		(summary.primaryAccepted || 0) + (summary.professionalBioAccepted || 0);
+	return `${message} ${tavilyAccepted > 0 ? "Accepted Tavily profiles were preserved." : "No usable Tavily profiles were available."}`;
 }
 
 function fallbackProviderLabel(provider) {

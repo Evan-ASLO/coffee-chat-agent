@@ -2,6 +2,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const test = require("node:test");
+const vm = require("node:vm");
 const jobSource = require("../public/job-source.js");
 
 const root = path.resolve(__dirname, "..");
@@ -208,6 +209,100 @@ test("preserves discovery recovery and cited-search provider safety", () => {
 	assert.match(app, /id="people-search-fallback-provider"/);
 	assert.match(app, /Provider web-search tools may incur charges/);
 	assert.doesNotMatch(app, /raw model/i);
+});
+
+function discoveryClient(summary) {
+	const source = read("public/app.js");
+	const client = {
+		state: { networkingSearch: { status: "idle" } },
+		toasts: [],
+		api: async (url) => {
+			if (url === "/api/discovery") return { summary };
+			if (url === "/api/session") return {};
+			throw new Error(`Unexpected API path: ${url}`);
+		},
+		jobOutreachLinkingEnabled: () => false,
+		render: () => {},
+		document: { getElementById: () => null },
+		loadJobData: async () => {},
+		loadBetaAdminData: async () => {},
+		loadAnalyticsData: async () => {},
+		showToast: (message) => client.toasts.push(message),
+		escapeHtml: (value) => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;"),
+	};
+	vm.runInNewContext(
+		source.slice(source.indexOf("async function executeDiscovery("), source.indexOf("\nfunction readDiscoveryCriteria(")) +
+		source.slice(source.indexOf("function discoverySearchStatus("), source.indexOf("\nasync function prepare(")) +
+		source.slice(source.indexOf("function renderNetworkingSearchState("), source.indexOf("\nfunction renderApprove(")),
+		client,
+	);
+	return client;
+}
+
+test("discovery renders failed, partial, duplicate, and completed outcomes honestly", async () => {
+	for (const fixture of [
+		{ inserted: 0, accepted: 0, primaryAccepted: 0, fallbackAccepted: 0, duplicates: 0, status: "error" },
+		{ inserted: 2, accepted: 2, primaryAccepted: 1, fallbackAccepted: 1, duplicates: 0, status: "partial" },
+		{ inserted: 0, accepted: 1, primaryAccepted: 1, fallbackAccepted: 0, duplicates: 1, status: "partial" },
+		{ inserted: 0, accepted: 0, duplicates: 0, fallbackStatus: "SUCCESS", fallbackReason: null, status: "empty" },
+		{ inserted: 1, accepted: 1, duplicates: 0, fallbackStatus: "SUCCESS", fallbackReason: null, status: "success" },
+	]) {
+		const summary = {
+			fallbackProvider: "ANTHROPIC", fallbackStatus: "SEARCH_LIMITED",
+			fallbackReason: "max_uses_exceeded", fallbackHttpStatus: null,
+			providerReturned: 0, ...fixture,
+		};
+		const client = discoveryClient(summary);
+		await client.executeDiscovery({ count: 3 });
+		assert.equal(client.state.networkingSearch.status, fixture.status);
+		const html = client.renderNetworkingSearchState();
+		assert.doesNotMatch(html, /No people found|Verify the configured model/);
+		if (summary.fallbackStatus === "SEARCH_LIMITED") {
+			assert.match(html, /one-search limit, not an API quota or key failure/);
+			assert.match(html, /notice warning/);
+			assert.match(html, /retry-job-discovery/);
+			assert.match(html, fixture.status === "error" ? /Search could not be completed/ : /Partial results - search incomplete/);
+			assert.match(html, fixture.primaryAccepted ? /Accepted Tavily profiles were preserved/ : /No usable Tavily profiles were available/);
+		}
+		if (fixture.inserted > 0 && fixture.status === "partial") {
+			assert.match(client.toasts[0], /^Partial search:/);
+			assert.match(html, /Only cited profiles that passed validation were retained/);
+		}
+		if (fixture.duplicates) assert.match(html, /already tracked/);
+		if (fixture.status === "empty") assert.match(html, /No new people added/);
+		if (fixture.status === "success") assert.match(html, /People found/);
+	}
+});
+
+test("discovery distinguishes safe tool reasons from HTTP and account errors", () => {
+	const client = discoveryClient({});
+	for (const [status, reason, http, expected] of [
+		["BAD_REQUEST", "invalid_tool_input", null, /query input was invalid/],
+		["BAD_REQUEST", "query_too_long", null, /search-tool query was too long/],
+		["BAD_REQUEST", "request_too_large", null, /search-tool request was too large/],
+		["BAD_REQUEST", null, 400, /API request \(HTTP 400\)/],
+		["BAD_REQUEST", null, 422, /API request \(HTTP 422\)/],
+		["BAD_REQUEST", null, null, /diagnostic does not identify which failed/],
+		["RATE_LIMITED", "too_many_requests", null, /search tool was rate limited/],
+		["RATE_LIMITED", null, 429, /quota or rate limit was reached/],
+		["AUTH", null, 401, /denied API access/],
+		["UNSUPPORTED", null, 400, /platform\.claude\.com\/settings\/capabilities/],
+		["TIMEOUT", null, null, /timed out/],
+		["MALFORMED_RESPONSE", null, null, /unusable cited-profile response/],
+		["PROVIDER_ERROR", "unavailable", null, /search tool was unavailable/],
+		["PROVIDER_ERROR", "PRIVATE PROMPT SECRET-DO-NOT-STORE", null, /could not complete the cited search/],
+		["MISSING_KEY", null, null, /no API key is configured/],
+	]) {
+		const summary = {
+			fallbackProvider: "ANTHROPIC", fallbackStatus: status,
+			fallbackReason: reason, fallbackHttpStatus: http, inserted: 0,
+		};
+		const message = client.discoveryFallbackFailureMessage(summary);
+		assert.match(message, expected);
+		assert.doesNotMatch(message, /PRIVATE PROMPT|SECRET-DO-NOT-STORE|Verify the configured model/);
+		assert.equal(client.discoverySearchStatus(summary), "error");
+		assert.equal(client.discoverySearchStatus({ ...summary, inserted: 1 }), "partial");
+	}
 });
 
 test("renders dense honest Analytics geometry and bounded route use", () => {

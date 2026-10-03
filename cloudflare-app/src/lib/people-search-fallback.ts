@@ -20,12 +20,22 @@ export type PeopleSearchFallbackProvider =
 
 export type PeopleSearchErrorCategory =
 	| "RATE_LIMITED"
+	| "SEARCH_LIMITED"
 	| "AUTH"
 	| "BAD_REQUEST"
 	| "UNSUPPORTED"
 	| "TIMEOUT"
 	| "MALFORMED_RESPONSE"
 	| "PROVIDER_ERROR";
+
+export type PeopleSearchErrorReason =
+	| "max_uses_exceeded"
+	| "invalid_tool_input"
+	| "query_too_long"
+	| "request_too_large"
+	| "too_many_requests"
+	| "unavailable"
+	| "unknown_tool_error";
 
 const GEMINI_SEARCH_MODELS = new Set([
 	"gemini-3.8-flash",
@@ -99,11 +109,14 @@ interface AnthropicResponse {
 interface GroundedOutput {
 	text: string;
 	citations: string[];
+	searchLimited?: boolean;
 }
 
 export interface PeopleSearchFallbackResult {
 	provider: PeopleSearchFallbackProvider;
 	model: string;
+	status: "SUCCESS" | "SEARCH_LIMITED";
+	reason: "max_uses_exceeded" | null;
 	returned: number;
 	accepted: number;
 	people: DiscoveredPerson[];
@@ -113,6 +126,7 @@ export class PeopleSearchFallbackError extends Error {
 	constructor(
 		readonly category: PeopleSearchErrorCategory,
 		readonly httpStatus: number | null = null,
+		readonly reason: PeopleSearchErrorReason | null = null,
 	) {
 		super("People-search fallback failed.");
 		this.name = "PeopleSearchFallbackError";
@@ -144,7 +158,17 @@ export async function discoverWithPeopleSearchFallback(input: {
 			prompt,
 			allowedDomains,
 		});
-		const parsed = groundedResponseSchema.parse(parseJsonObject(output.text));
+		let parsed: z.infer<typeof groundedResponseSchema>;
+		try {
+			parsed = groundedResponseSchema.parse(parseJsonObject(output.text));
+		} catch (error) {
+			if (!output.searchLimited) throw error;
+			throw new PeopleSearchFallbackError(
+				"SEARCH_LIMITED",
+				null,
+				"max_uses_exceeded",
+			);
+		}
 		const citedUrls = new Set(
 			output.citations
 				.map(normalizeProfessionalSourceUrl)
@@ -172,6 +196,8 @@ export async function discoverWithPeopleSearchFallback(input: {
 		return {
 			provider,
 			model,
+			status: output.searchLimited ? "SEARCH_LIMITED" : "SUCCESS",
+			reason: output.searchLimited ? "max_uses_exceeded" : null,
 			returned: parsed.people.length,
 			accepted: people.size,
 			people: [...people.values()],
@@ -368,6 +394,7 @@ function extractAnthropicOutput(
 		(content) => content.type === "text",
 	);
 	const citations: string[] = [];
+	let searchLimited = false;
 	for (const block of textBlocks) {
 		for (const citation of block.citations || []) {
 			if (
@@ -381,19 +408,20 @@ function extractAnthropicOutput(
 	for (const block of response.content || []) {
 		if (
 			block.type === "web_search_tool_result" &&
-			block.content &&
 			!Array.isArray(block.content)
 		) {
-			throw new PeopleSearchFallbackError(
-				anthropicToolErrorCategory(block.content.error_code),
+			const error = anthropicToolError(
+				block.content?.type === "web_search_tool_result_error"
+					? block.content.error_code
+					: undefined,
 			);
+			if (error.category !== "SEARCH_LIMITED") throw error;
+			searchLimited = true;
 		}
 	}
-	return requireGroundedOutput(
-		textBlocks.map((content) => content.text || "").join(""),
-		citations,
-		"Anthropic",
-	);
+	const text = textBlocks.map((content) => content.text || "").join("");
+	if (searchLimited) return { text, citations, searchLimited };
+	return requireGroundedOutput(text, citations, "Anthropic");
 }
 
 function collectUrlCitations(
@@ -482,19 +510,42 @@ function httpErrorCategory(
 	return "PROVIDER_ERROR";
 }
 
-function anthropicToolErrorCategory(
+function anthropicToolError(
 	errorCode?: string,
-): PeopleSearchErrorCategory {
+): PeopleSearchFallbackError {
 	switch (errorCode) {
-		case "too_many_requests":
-			return "RATE_LIMITED";
-		case "invalid_tool_input":
 		case "max_uses_exceeded":
+			return new PeopleSearchFallbackError(
+				"SEARCH_LIMITED",
+				null,
+				errorCode,
+			);
+		case "too_many_requests":
+			return new PeopleSearchFallbackError(
+				"RATE_LIMITED",
+				null,
+				errorCode,
+			);
+		case "invalid_tool_input":
 		case "query_too_long":
 		case "request_too_large":
-			return "BAD_REQUEST";
+			return new PeopleSearchFallbackError(
+				"BAD_REQUEST",
+				null,
+				errorCode,
+			);
+		case "unavailable":
+			return new PeopleSearchFallbackError(
+				"PROVIDER_ERROR",
+				null,
+				errorCode,
+			);
 		default:
-			return "PROVIDER_ERROR";
+			return new PeopleSearchFallbackError(
+				"PROVIDER_ERROR",
+				null,
+				"unknown_tool_error",
+			);
 	}
 }
 
