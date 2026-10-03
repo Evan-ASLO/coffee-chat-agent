@@ -1,5 +1,8 @@
 import worker from "../../src/index";
 import { applySecurityHeaders } from "../../src/lib/http";
+import { findSession } from "../../src/lib/db";
+import { sha256 } from "../../src/lib/encoding";
+import tutorialReview from "../local-onboarding-preview";
 import type { AppBindings } from "../../src/types";
 
 // This fixture has no queue/cron handlers or network egress, even for accidental calls.
@@ -11,6 +14,20 @@ function reviewResponse(response: Response): Response {
 	const result = applySecurityHeaders(response);
 	result.headers.set("X-Layout-Review", "seeded-local-only");
 	return result;
+}
+
+async function isSyntheticTutorialMutation(request: Request, env: AppBindings) {
+	const pathname = new URL(request.url).pathname;
+	const permitted = request.method === "PUT" && (
+		["/api/onboarding", "/api/settings"].includes(pathname) ||
+		/^\/api\/credentials\/(TAVILY|HUNTER|GEMINI|OPENAI|ANTHROPIC)$/.test(pathname) ||
+		/^\/api\/jobs\/[a-f0-9]{64}\/state$/.test(pathname)
+	);
+	if (!permitted) return false;
+	const token = request.headers.get("Cookie")?.match(/(?:^|;\s*)cc_session=([^;]+)/)?.[1];
+	if (!token) return false;
+	const session = await findSession(env, await sha256(token));
+	return Boolean(session && /^local-tutorial-(new|existing|second)$/.test(session.google_sub));
 }
 
 export default {
@@ -52,8 +69,16 @@ export default {
 			return reviewResponse(new Response(null, { status: 303, headers }));
 		}
 		if (
+			(request.method === "GET" && /^\/__review\/(new|existing|second|denied|signed-out)$/.test(url.pathname)) ||
+			(request.method === "POST" && /^\/__review\/(reset|revoke-new)$/.test(url.pathname))
+		) {
+			return reviewResponse(await tutorialReview.fetch(
+				request, { ...env, LOCAL_TUTORIAL_PREVIEW: "true" }, context,
+			));
+		}
+		if (
 			url.pathname.startsWith("/auth/") ||
-			!["GET", "HEAD"].includes(request.method)
+			(!["GET", "HEAD"].includes(request.method) && !(await isSyntheticTutorialMutation(request, env)))
 		) {
 			return reviewResponse(
 				Response.json(

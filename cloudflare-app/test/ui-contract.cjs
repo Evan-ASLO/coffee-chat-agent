@@ -112,7 +112,7 @@ test("bounds accessible tables and native dialogs instead of clipping their acti
 	assert.match(app, /class="responsive-table-wrap" tabindex="0" role="region"/);
 	assert.match(app, /<th scope="col">/);
 	assert.match(app, /aria-labelledby="application-dialog-title"/);
-	assert.match(app, /aria-labelledby="discovery-dialog-title"/);
+	assert.match(app, /aria-labelledby="discovery-title"/);
 	assert.match(app, /aria-labelledby="profile-settings-title"/);
 	assert.match(app, /async function saveSettings\(event\)\s*\{\s*if \(event\.submitter\?\.value === "cancel"\) return;/);
 	assert.match(read("public/index.html"), /aria-labelledby="draft-name"/);

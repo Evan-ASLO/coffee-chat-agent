@@ -30,6 +30,79 @@ Configure the existing Google/encryption values plus `JOBS_INGEST_SECRET` in `.d
 
 `GET /api/analytics` is authenticated and ownership-scoped. It uses bounded queries over existing job state, prospect, job, and audit tables to return current application/networking counts, top companies, a 28-day recorded-activity series, and recent activity. It requires no migration and does not fabricate growth, conversion, coffee-chat, reminder, or future-event data.
 
+## Optional first-login tutorial
+
+The no-build `public/onboarding.js` / `onboarding.css` guide has two chapters:
+**Set up API keys** and **Explore your workspace**. It highlights real controls
+across Home, Jobs, Applications, Networking, Analytics, and Settings without
+changing the reference artwork or replacing page layouts.
+
+- Genuinely new approved accounts receive an optional invitation. Jobs, saves,
+  and application tracking remain available with no provider keys.
+- Migration `0008_first_login_tutorial.sql` gives existing users `legacy` state,
+  so they are not suddenly enrolled. Settings offers replay to everyone.
+- Next/Back save the stable step to the authenticated account. **Continue later**,
+  the close button, and Escape save `paused`; Settings resumes that place.
+  `in_progress` resumes on reload/sign-in. **Skip tutorial** saves `skipped`,
+  and **Finish tutorial** saves `completed`; neither reopens automatically.
+- `GET /api/onboarding` and CSRF/same-origin-protected `PUT /api/onboarding`
+  expose only version, status, stable step, revision, and last-save time.
+  `/api/session` includes that same account-scoped object. Mutations accept
+  strict `{version, revision, action, step}` payloads, never a user ID.
+- Version 1 validates start, adjacent progress, pause/resume, completion at the
+  last step, skip, explicit key-free chapter skipping, and explicit replay.
+  An atomic revision guard rejects stale/concurrent writes, including stale
+  attempts to undo completion or skipping. Failed saves keep an actionable
+  retry instead of claiming progress was persisted.
+- Keys use the existing encrypted credential API and password controls. Only
+  masked hints return from the server. The tutorial never stores a key, profile,
+  or resume in its state, browser storage, links, or audit records. Fields are
+  cleared on disposal, cancellation, successful save, account changes, and logout.
+- Provider preferences change only through the real explicit Save settings
+  workflow. Template/manual paths are available; saving a key never enables
+  search fallback. Use your own provider accounts and check their current API
+  billing, grounding/model availability, costs, and quotas.
+- Tutorial navigation never searches, prepares a person, drafts/regenerates,
+  sends, analyzes a resume, starts OAuth, or creates a CRM. User-opened native
+  dialogs temporarily replace the non-modal coach rather than stacking modals.
+
+Apply migration 0008 **before** deploying this Worker in a separately approved
+release. This change does not migrate or deploy production automatically.
+
+### Fictional local tutorial review
+
+The test-only entry point `test/local-onboarding-preview.ts` is not referenced by
+the production Wrangler configuration. It requires a local-preview flag and a
+loopback host, uses fictional approved/denied accounts and opportunities, and
+blocks external provider, OAuth, CRM-creation, resume-analysis, and send actions.
+It does not use real Google identities or credentials.
+
+```powershell
+# From cloudflare-app; install only if dependencies are missing.
+npm ci
+$env:PLAYWRIGHT_BROWSERS_PATH = Join-Path (Get-Location) '.test-browsers'
+npx playwright install chromium
+npm run preview:onboarding:prepare
+npm run preview:onboarding
+```
+
+Preparation refuses to overwrite an existing `.d1` review database and checks
+that the chosen port is free. It applies 0001-0007, seeds a fictional legacy
+account, applies 0008, and seeds the local catalog. The short `.d1` path avoids
+Windows SQLite WAL filename limits; all data/config remains in this checkout.
+`TUTORIAL_PREVIEW_PORT` can choose a distinct port (default 8803).
+
+Open `http://127.0.0.1:8803/__review/new` for the new-account invitation, or
+`http://127.0.0.1:8803/__review/existing` for Settings replay. Signing into either
+fictional account again preserves its tutorial progress. The test-only
+`POST /__review/reset` resets only those named fictional fixtures.
+
+In a second terminal, run `npm run test:onboarding:browser`. The suite intercepts
+network requests, uses only fake keys, covers native dialogs and real app actions,
+and writes redacted network receipts, desktop/phone screenshots, and scoped WCAG
+axe results. Set `TUTORIAL_EVIDENCE_DIR` to choose the output folder. Browser
+tooling is development-only; the application has no new runtime dependencies.
+
 ## Approved-email beta
 
 The private-beta gate uses two normal environment variables:
@@ -136,6 +209,7 @@ Job cards normalize source names for display without exposing publisher credenti
 - `GET /api/jobs/:id`: public active-job detail with the same freshness and feature metadata.
 - `GET /api/job-states`: authenticated, bounded private tracking list.
 - `GET /api/analytics`: authenticated, bounded current-status and audit-backed activity summary for the signed-in user.
+- `GET|PUT /api/onboarding`: authenticated per-user tutorial state; PUT is CSRF-protected, strictly validated, and revision-guarded.
 - `PUT /api/jobs/:id/state`: authenticated/CSRF-protected upsert for `SAVED`, `APPLIED`, `INTERVIEWING`, `REJECTED`, `OFFER`, or `ARCHIVED`.
 - `DELETE /api/jobs/:id/state`: authenticated/CSRF-protected removal.
 - `POST /api/job-states/import-legacy`: authenticated one-time import.
@@ -200,13 +274,15 @@ npm audit
 
 ### Isolated, read-only layout review
 
-Use only a clean local checkout/worktree, never production D1. The fixture configuration has a distinct fake database ID, synthetic approved accounts and encrypted fake provider credentials, no queue/cron handlers, and disabled network egress. OAuth and all application mutations (including discovery, resume analysis, drafting, CRM creation and sending) return an explicit `REVIEW_ONLY` error. Do not deploy this fixture.
+Use only a clean local checkout/worktree, never production D1. The fixture configuration has a distinct fake database ID, synthetic approved accounts and encrypted fake provider credentials, no queue/cron handlers, and disabled network egress. The normal/empty/long layout accounts cannot mutate application data. OAuth, discovery, resume analysis, drafting, CRM creation and sending always return an explicit `REVIEW_ONLY` error. Only the separate fictional tutorial accounts may save progress, encrypted fake keys, preferences and key-free job tracking through the real authenticated/CSRF-protected routes. Do not deploy this fixture or enter real credentials.
 
 ```powershell
 $env:WRANGLER_SEND_METRICS = "false"
 npx wrangler d1 migrations apply layout-review --config test\layout\wrangler.jsonc --local --persist-to ..\.d1
 node test\layout\seed.mjs ..\.d1\seed.sql
 npx wrangler d1 execute layout-review --config test\layout\wrangler.jsonc --local --persist-to ..\.d1 --file ..\.d1\seed.sql
+node test\layout\seed-tutorial.mjs ..\.d1\tutorial-seed.sql
+npx wrangler d1 execute layout-review --config test\layout\wrangler.jsonc --local --persist-to ..\.d1 --file ..\.d1\tutorial-seed.sql
 npx wrangler dev --config test\layout\wrangler.jsonc --local --ip 127.0.0.1 --port 8804 --persist-to ..\.d1
 ```
 
@@ -215,6 +291,8 @@ Open `http://127.0.0.1:8804/__review/login?scenario=normal` (or `empty` / `long`
 In a second terminal, run `npm run test:responsive` against that local fixture. The browser harness uses installed Microsoft Edge by default (`LAYOUT_BROWSER_CHANNEL` can select a separately installed Playwright browser), closes its automation browser on exit, and records screenshots plus overflow, control-collision, icon-alignment, hero-clipping, console and request measurements. Set `LAYOUT_EVIDENCE_DIR` to a session-artifact directory to preserve review evidence outside Git. `--quick` selects the smallest representative matrix; the full matrix includes 320/360/390/430/768/1024/1280/1440/1536/1920 widths, phone landscape, long content, empty tracking and the signed-out landing.
 
 Run `npm run test:interactions` for keyboard/touch navigation, all job filters, bounded table scrolling, native editors at 200%/400%-equivalent reflow, and actual WebGL hit testing, motion/visibility changes, orientation, disposal and stale-mount races. This suite also verifies the fixture's explicit OAuth and mutation denials. `--only=controls`, `--only=dialogs`, or `--only=journey` selects a targeted group.
+
+The combined fixture also provides `/__review/new` for an optional first-login invitation and `/__review/existing` for legacy-account replay. Its reset/revocation controls affect only fictional tutorial accounts, never the three layout accounts. To run the tutorial browser regressions here rather than against another session's preview, set `TUTORIAL_PREVIEW_URL=http://127.0.0.1:8804` and `TUTORIAL_EVIDENCE_DIR` to your session-artifact directory, then run `npm run test:onboarding:browser`. The suite uses installed Edge by default and covers short-screen scrollable tutorial chrome, 44px touch controls, drawer/modal handoff, keyboard focus and keyboard-sized visual-viewport/safe-inset bounds. It never runs provider tests or real Google/email actions.
 
 The Worker test suite covers ingestion authentication, future-boundary replay expiry, strict size/count/schema validation, active-catalog idempotency, A → B → A reactivation, stale replacement, public/private access, cross-user state isolation, status CRUD, zero-match/retry/idempotent legacy import, 500-reference batched matching, and job/prospect ownership.
 

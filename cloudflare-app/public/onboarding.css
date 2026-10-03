@@ -1,0 +1,388 @@
+body.tutorial-open {
+	padding-bottom: calc(var(--tutorial-space, 0px) + env(safe-area-inset-bottom));
+}
+
+#onboarding-root[hidden],
+.tutorial-panel[hidden],
+.tutorial-spotlight[hidden],
+.tutorial-context-note[hidden] {
+	display: none;
+}
+
+#onboarding-root {
+	position: fixed;
+	z-index: 190;
+	inset: 0;
+	padding: env(safe-area-inset-top) env(safe-area-inset-right)
+		env(safe-area-inset-bottom) env(safe-area-inset-left);
+	pointer-events: none;
+}
+
+.tutorial-panel {
+	position: absolute;
+	display: flex;
+	flex-direction: column;
+	max-height: min(680px, calc(var(--tutorial-viewport-height, 100dvh) - 96px));
+	color: var(--ink);
+	background: var(--cream-50);
+	border: 1px solid var(--forest-700);
+	border-radius: var(--radius-lg);
+	box-shadow: var(--shadow);
+	pointer-events: auto;
+	overflow: hidden;
+}
+
+.tutorial-header {
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	padding: 10px 14px;
+	color: var(--cream-50);
+	background: var(--forest-900);
+	font-weight: 600;
+}
+
+.tutorial-header .icon-button {
+	margin-left: auto;
+	min-width: max(40px, var(--touch-target-size, 0px));
+	color: var(--cream-50);
+	background: var(--forest-800);
+	border-color: var(--forest-600);
+}
+
+.tutorial-mark {
+	display: grid;
+	place-items: center;
+	width: 28px;
+	height: 28px;
+	color: var(--forest-950);
+	background: var(--orange-200);
+	border-radius: var(--radius-sm);
+	font-size: 11px;
+}
+
+.tutorial-chapters {
+	display: flex;
+	gap: 12px;
+	list-style: none;
+	padding: 12px 16px 4px;
+	margin: 0;
+	font-size: 11px;
+	line-height: 1.3;
+}
+
+.tutorial-chapters li {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	flex: 1;
+	color: var(--muted);
+}
+
+.tutorial-chapters li[aria-current] {
+	color: var(--forest-900);
+	font-weight: 700;
+}
+
+.tutorial-chapters li > span {
+	display: grid;
+	place-items: center;
+	width: 23px;
+	height: 23px;
+	flex: 0 0 23px;
+	border: 1px solid var(--line-strong);
+	border-radius: 50%;
+}
+
+.tutorial-chapters li[aria-current] > span {
+	color: var(--cream-50);
+	background: var(--forest-800);
+	border-color: var(--forest-800);
+}
+
+.tutorial-progress {
+	padding: 6px 16px;
+	font-size: 11px;
+	color: var(--muted);
+}
+
+.tutorial-panel progress {
+	display: block;
+	height: 4px;
+	width: calc(100% - 32px);
+	margin: 0 16px 12px;
+	border: 0;
+	border-radius: 4px;
+	accent-color: var(--orange-700);
+	background: var(--cream-200);
+}
+
+.tutorial-panel progress::-webkit-progress-bar {
+	background: var(--cream-200);
+	border-radius: 4px;
+}
+
+.tutorial-panel progress::-webkit-progress-value {
+	background: var(--orange-700);
+	border-radius: 4px;
+}
+
+.tutorial-panel progress::-moz-progress-bar {
+	background: var(--orange-700);
+	border-radius: 4px;
+}
+
+.tutorial-content {
+	min-height: 0;
+	overflow-y: auto;
+	overscroll-behavior: contain;
+	padding: 0 16px 12px;
+	scrollbar-gutter: stable;
+}
+
+.tutorial-content h2 {
+	font-size: 1.2rem;
+	margin: 0 0 12px;
+	line-height: 1.15;
+}
+
+.tutorial-content p,
+.tutorial-content ol {
+	font-size: 12px;
+	line-height: 1.6;
+	margin: 0 0 10px;
+}
+
+.tutorial-content ol {
+	padding-left: 18px;
+}
+
+.tutorial-provider-links {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 16px;
+}
+
+.tutorial-provider-links a {
+	display: inline-flex;
+	min-height: var(--touch-target-size, 0px);
+	align-items: center;
+	padding-block: 5px;
+	font-weight: 600;
+}
+
+.tutorial-key-state,
+.tutorial-context-note,
+.tutorial-dialog-note {
+	padding: 9px 10px;
+	background: var(--sage-100);
+	border: 1px solid var(--sage-200);
+	border-radius: var(--radius-sm);
+}
+
+.tutorial-context-note {
+	background: var(--warning-soft);
+	border-color: var(--orange-200);
+}
+
+.tutorial-key-options {
+	margin-bottom: 12px;
+	padding: 9px 10px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+}
+
+.tutorial-key-options summary {
+	min-height: var(--touch-target-size, 0px);
+	cursor: pointer;
+	font-size: 12px;
+	font-weight: 600;
+}
+
+.tutorial-key-options[open] summary {
+	margin-bottom: 8px;
+}
+
+.tutorial-inspect {
+	width: 100%;
+}
+
+.tutorial-save-state {
+	padding: 8px 16px;
+	font-size: 11px;
+	color: var(--forest-800);
+	border-top: 1px solid var(--line);
+}
+
+.tutorial-save-state[role="alert"] {
+	color: var(--danger);
+	background: var(--danger-soft);
+}
+
+.tutorial-save-state button {
+	margin-top: 8px;
+}
+
+.tutorial-actions,
+.tutorial-dismiss-actions {
+	display: flex;
+	justify-content: space-between;
+	gap: 12px;
+	padding: 0 16px 8px;
+}
+
+.tutorial-actions > button {
+	flex: 1;
+}
+
+.tutorial-panel button,
+.tutorial-entry-card button {
+	min-height: max(40px, var(--touch-target-size, 0px));
+}
+
+.tutorial-dismiss-actions .text-button {
+	font-size: 11px;
+}
+
+.tutorial-footnote {
+	padding: 0 16px 12px;
+	font-size: 10px;
+	color: var(--muted);
+	line-height: 1.5;
+}
+
+.tutorial-spotlight {
+	position: absolute;
+	border: 3px solid var(--orange-700);
+	border-radius: var(--radius-md);
+	pointer-events: none;
+}
+
+.tutorial-entry-card > p {
+	font-size: 12px;
+	margin-bottom: 12px;
+}
+
+.tutorial-entry-card {
+	grid-column: 1 / -1;
+}
+
+.tutorial-open .credentials-details .secret-row {
+	grid-template-columns: minmax(0, 1fr);
+}
+
+.tutorial-open .credentials-details .secret-row .actions {
+	justify-content: flex-start;
+}
+
+.tutorial-entry-card > small {
+	display: block;
+	margin-top: 12px;
+}
+
+.tutorial-dialog-note {
+	margin: 8px 0 16px;
+	font-size: 12px;
+	line-height: 1.5;
+}
+
+.secret-save-status[data-error="true"] {
+	color: var(--danger);
+}
+
+@media (max-width: 760px) {
+	.tutorial-panel {
+		max-height: min(520px, calc(var(--tutorial-viewport-height, 100dvh) * 0.55));
+		border-radius: var(--radius-md);
+	}
+
+	.tutorial-header {
+		padding-block: 6px;
+	}
+
+	.tutorial-chapters {
+		padding-top: 8px;
+	}
+
+	.tutorial-panel button {
+		min-height: 44px;
+	}
+
+	.tutorial-header .icon-button {
+		min-width: 44px;
+	}
+
+	.tutorial-provider-links a {
+		display: inline-flex;
+		align-items: center;
+		min-height: 44px;
+	}
+
+	.tutorial-footnote {
+		display: none;
+	}
+
+	.tutorial-content {
+		padding-bottom: 8px;
+	}
+}
+
+.tutorial-panel-scroll {
+	overflow-y: auto;
+	overscroll-behavior: contain;
+}
+
+.tutorial-panel-scroll > * {
+	flex-shrink: 0;
+}
+
+.tutorial-panel-scroll .tutorial-content {
+	overflow-y: visible;
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.tutorial-panel,
+	.tutorial-spotlight {
+		animation: none;
+		transition: none;
+	}
+}
+
+@media (max-width: 760px) and (max-height: 620px) {
+	.tutorial-header {
+		padding-inline: 12px;
+	}
+
+	.tutorial-chapters {
+		gap: 8px;
+		padding: 6px 12px 0;
+		font-size: 10px;
+	}
+
+	.tutorial-progress {
+		margin: 0;
+		padding: 4px 12px;
+	}
+
+	.tutorial-panel progress {
+		margin-bottom: 8px;
+	}
+
+	.tutorial-actions,
+	.tutorial-dismiss-actions {
+		gap: 8px;
+		padding: 0 12px 4px;
+	}
+
+	.tutorial-save-state {
+		padding: 4px 12px;
+	}
+
+	.tutorial-content {
+		padding-inline: 12px;
+	}
+
+	.tutorial-content h2 {
+		margin-bottom: 8px;
+	}
+}
