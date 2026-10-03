@@ -80,6 +80,11 @@ import {
 	revokeBetaEmail,
 } from "./lib/beta";
 import { getUserAnalytics } from "./lib/analytics";
+import {
+	getOnboarding,
+	onboardingInputSchema,
+	updateOnboarding,
+} from "./lib/onboarding";
 
 const app = new Hono<AppEnvironment>();
 
@@ -194,11 +199,12 @@ app.get("/api/session", async (c) => {
 		});
 	}
 	c.set("user", user);
-	const [settings, credentials, prospects, resume] = await Promise.all([
+	const [settings, credentials, prospects, resume, onboarding] = await Promise.all([
 		getSettings(c.env, user.id),
 		credentialStatus(c.env, user.id),
 		listProspects(c.env, user.id),
 		getResumeStatus(c.env, user.id),
+		getOnboarding(c.env, user.id),
 	]);
 	return c.json({
 		authenticated: true,
@@ -210,6 +216,19 @@ app.get("/api/session", async (c) => {
 		credentials,
 		prospects,
 		resume,
+		onboarding,
+	});
+});
+
+app.get("/api/onboarding", requireUser, async (c) =>
+	c.json({ onboarding: await getOnboarding(c.env, c.get("user")!.id) }),
+);
+
+app.put("/api/onboarding", requireUser, async (c) => {
+	await protectMutation(c);
+	const input = onboardingInputSchema.parse(await readJson(c, 4 * 1024));
+	return c.json({
+		onboarding: await updateOnboarding(c.env, c.get("user")!.id, input),
 	});
 });
 

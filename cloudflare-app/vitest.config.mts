@@ -11,6 +11,7 @@ const migrationStatements = [
 	"0005_structured_job_filters.sql",
 	"0006_prospect_match_quality.sql",
 	"0007_people_search_fallback.sql",
+	"0008_first_login_tutorial.sql",
 ]
 	.flatMap((fileName) =>
 		readFileSync(resolve(`migrations/${fileName}`), "utf8")

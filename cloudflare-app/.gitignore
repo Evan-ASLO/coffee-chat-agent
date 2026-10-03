@@ -166,3 +166,8 @@ dist
 !.env.example
 .wrangler/
 dist/
+.test-browsers/
+.tutorial-preview/
+.d1/
+test-results/
+playwright-report/

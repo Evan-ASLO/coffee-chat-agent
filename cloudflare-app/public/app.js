@@ -78,6 +78,17 @@ const toast = document.getElementById("toast");
 const dialog = document.getElementById("draft-dialog");
 let journeyController = null;
 let journeyModulePromise = null;
+const onboarding = window.WorkspaceOnboarding?.create({
+	getSession: () => state.session,
+	getView: () => state.tab,
+	isMenuOpen: () => state.mobileNavOpen,
+	navigate,
+	api,
+	notify: showToast,
+	openPreferences: openProfileSettings,
+	openDiscovery: openDiscoveryDialog,
+	clearPrivateDialogs,
+});
 
 document.addEventListener("DOMContentLoaded", load);
 document.getElementById("save-draft").addEventListener("click", saveDraft);
@@ -102,11 +113,13 @@ async function load() {
 }
 
 function render() {
+	onboarding?.beforeRender();
 	destroyJourneyScene();
 	state.renderToken += 1;
 	const authenticated = Boolean(state.session?.authenticated);
 	if (betaLandingRequired()) {
 		renderBetaLanding();
+		onboarding?.sync();
 		return;
 	}
 	const user = state.session?.user;
@@ -168,6 +181,7 @@ function render() {
 	if (authenticated && state.tab === "home") {
 		mountJourneyScene(state.renderToken);
 	}
+	onboarding?.sync();
 }
 
 function renderBetaLanding() {
@@ -204,7 +218,7 @@ function renderBetaLanding() {
 
 function renderStats() {
 	const metrics = journeyMetrics();
-	return `<section class="home-reference-stats" aria-label="Career workspace summary">
+	return `<section class="home-reference-stats" data-tour="home-summary" aria-label="Career workspace summary">
 		${referenceMetric(state.jobs.pagination.total, "Open internships", "briefcase")}
 		${referenceMetric(metrics.saved, "Saved roles", "bookmark")}
 		${referenceMetric(metrics.activeApplications, "Active applications", "document")}
@@ -296,7 +310,7 @@ function renderHome() {
 				<header><div>${icon("calendar")}<h2>Recent roles</h2></div><button class="text-button" data-nav="jobs">View all ${icon("chevron-right")}</button></header>
 				${recentJobs.length ? `<div class="home-recent-grid">${recentJobs.map(homeRecentJobCard).join("")}</div>` : empty("No current roles are available yet.")}
 			</article>
-			<article class="home-journey-panel">
+			<article class="home-journey-panel" data-tour="home-journey">
 				<header><div>${icon("chart")}<h2>Your journey</h2></div><div><button id="journey-reset" class="text-button">${icon("reset")} Reset</button><button class="text-button" data-nav="analytics">View analytics ${icon("chevron-right")}</button></div></header>
 				<div id="journey-canvas" class="journey-canvas" aria-busy="true">
 					${renderJourneyFallback(metrics)}
@@ -445,7 +459,7 @@ function renderJobs() {
 		${renderCatalogWarning()}
 		<div class="jobs-reference-layout ${state.jobMode === "saved" ? "saved-mode" : ""}">
 			<form id="job-filter-form" class="jobs-filter-form">
-				<div class="job-search-strip">
+				<div class="job-search-strip" data-tour="jobs-search">
 					<label class="search-field"><span class="sr-only">Search</span>${icon("search")}<input id="job-q" value="${escapeAttr(state.jobQuery.q)}" placeholder="Search by title, company, location, or keyword…" /></label>
 					<label><span>Location</span><input id="job-location" value="${escapeAttr(state.jobQuery.location)}" placeholder="Any location" /></label>
 					<label><span>Industry</span><select id="job-industry">${facetOptions(state.jobs.facets?.industries, state.jobQuery.industry, "All industries")}</select></label>
@@ -472,7 +486,7 @@ function renderJobs() {
 						: `<aside class="filter-panel saved-filter" aria-label="Saved jobs"><strong>Your shortlist</strong><p>Saved roles stay private to your account.</p></aside>`
 				}
 			</form>
-			<section class="jobs-results-panel">
+			<section class="jobs-results-panel" data-tour="jobs-results">
 				<div class="results-toolbar">
 					<div>
 						<div class="collection-tabs" role="group" aria-label="Job collection">
@@ -599,7 +613,7 @@ function renderApplications() {
 				<label>Location<input id="application-location-filter" value="${escapeAttr(state.applicationLocationSearch)}" placeholder="Search locations…" /></label>
 				<p class="filter-footnote">Dates shown are recorded update dates. The app does not invent deadlines or reminders.</p>
 			</aside>
-			<section class="tracker-table-panel">
+			<section class="tracker-table-panel" data-tour="applications">
 				<div class="table-panel-heading">
 					<div><h2>Your applications</h2><p>Track and manage every real application in one place.</p></div>
 					<form id="application-search-form" class="table-tools">
@@ -636,7 +650,7 @@ function renderApplications() {
 				<div class="rail-art rail-art-applications" aria-hidden="true"></div>
 			</aside>
 		</div>
-		<dialog id="application-dialog" class="editor-dialog">
+		<dialog id="application-dialog" class="editor-dialog" aria-labelledby="application-dialog-title">
 			<form method="dialog" class="dialog-card" id="application-editor-form">
 				<div class="dialog-head"><div><p class="eyebrow">Application details</p><h2 id="application-dialog-title">Edit application</h2><p id="application-dialog-company"></p></div><button class="icon-button" value="cancel" aria-label="Close application editor">×</button></div>
 				<input id="application-dialog-id" type="hidden" />
@@ -734,7 +748,7 @@ function renderNetworking() {
 				<h1>Build meaningful<br /><span>connections.</span></h1>
 				<p>Find relevant public profiles, approve each person, review every exact draft, and send only when you are ready.</p>
 				<div class="reference-hero-actions">
-					<button id="open-discovery-dialog" class="primary">${icon("plus")} Find people</button>
+					<button id="open-discovery-dialog" data-tour="networking-find" class="primary">${icon("plus")} Find people</button>
 					<button class="secondary" data-nav="settings">${icon("upload")} Import or configure</button>
 				</div>
 			</div>
@@ -768,7 +782,7 @@ function renderNetworking() {
 				<label>Location<input id="networking-location-filter" value="${escapeAttr(state.networkingLocationSearch)}" placeholder="Search locations…" /></label>
 				<p class="filter-footnote">A sent email or reply is not shown as a completed coffee chat unless you record that evidence elsewhere.</p>
 			</aside>
-			<section class="tracker-table-panel">
+			<section class="tracker-table-panel" data-tour="networking-review">
 				<div class="table-panel-heading">
 					<div><h2>Your network</h2><p>Keep approval, draft, send, and reply state visible in one compact workflow.</p></div>
 					<div class="table-tools"><button id="open-discovery-dialog-secondary" class="primary">${icon("search")} Find people</button></div>
@@ -783,7 +797,7 @@ function renderNetworking() {
 				}
 			</section>
 			<aside class="tracker-right-rail" aria-label="Networking activity">
-				<section class="rail-panel workflow-rail">
+				<section class="rail-panel workflow-rail" data-tour="networking-workflow">
 					<h2>Approval workflow</h2>
 					<ol><li><b>1</b><span>Discover</span></li><li><b>2</b><span>Approve</span></li><li><b>3</b><span>Review draft</span></li><li><b>4</b><span>Send</span></li><li><b>5</b><span>Reply</span></li></ol>
 				</section>
@@ -804,9 +818,9 @@ function renderNetworking() {
 				<div class="rail-art rail-art-networking" aria-hidden="true"></div>
 			</aside>
 		</div>
-		<dialog id="discovery-dialog" class="editor-dialog discovery-dialog">
+		<dialog id="discovery-dialog" class="editor-dialog discovery-dialog" aria-labelledby="discovery-title">
 			<div class="dialog-card">
-				<div class="dialog-head"><div><p class="eyebrow">Public profile discovery</p><h2>Find relevant people</h2><p>Search never prepares or sends outreach automatically.</p></div><button class="icon-button" id="close-discovery-dialog" type="button" aria-label="Close people search">×</button></div>
+				<div class="dialog-head"><div><p class="eyebrow">Public profile discovery</p><h2 id="discovery-title">Find relevant people</h2><p>Search never prepares or sends outreach automatically.</p></div><button class="icon-button" id="close-discovery-dialog" type="button" aria-label="Close people search">×</button></div>
 				${renderFind()}
 			</div>
 		</dialog>`;
@@ -831,6 +845,7 @@ function renderFind() {
 	return `
 		<section id="find-people-panel" aria-busy="${searching}">
 			${ready ? "" : '<p class="notice warning">Add a Tavily key under Settings before searching.</p>'}
+			<p class="notice">Submitting this form uses your Tavily account and may use your explicitly selected cited-search fallback. Provider search tools and tokens may incur charges or use quotas. It does not approve people, draft, or send.</p>
 			<form id="find-form" class="grid">
 				${textarea("roles", "Target roles", criteria.roles.join("\n"))}
 				${textarea("industries", "Industries", criteria.industries.join("\n"))}
@@ -941,7 +956,7 @@ function renderAnalytics() {
 			${referenceMetric(applications.inProgress + applications.offers, "Active applications", "document")}
 			${referenceMetric(networking.tracked, "People tracked", "people")}
 		</section>
-		<div class="analytics-reference-grid">
+		<div class="analytics-reference-grid" data-tour="analytics">
 			<section class="analytics-panel funnel-panel">
 				<div class="analytics-panel-heading"><div><h2>Application Funnel</h2><p>Current stage counts, not a conversion rate.</p></div></div>
 				${window.CareerAnalyticsUi.renderApplicationFunnel(applications)}
@@ -1007,12 +1022,12 @@ function renderSettings() {
 			</div>
 		</section>
 		<div class="settings-reference-grid">
-			<section class="settings-reference-card account-card">
+			<section class="settings-reference-card account-card" data-tour="profile">
 				<div class="settings-card-heading"><span>${icon("user")}</span><div><h2>Account Information</h2><p>Your signed-in Google identity and drafting name.</p></div><button id="open-profile-settings" class="secondary">Edit profile</button></div>
 				<div class="account-summary"><span class="account-avatar">${escapeHtml(userInitials(state.session.user))}</span><div><strong>${escapeHtml(state.session.user.name || settings.senderName || "Signed-in user")}</strong><span>${escapeHtml(state.session.user.email)}</span></div></div>
 				<dl class="compact-definition-grid"><div><dt>Sender name</dt><dd>${escapeHtml(settings.senderName || "Not set")}</dd></div><div><dt>Google</dt><dd>${credentials.GOOGLE.configured ? "Connected" : "Not connected"}</dd></div></dl>
 			</section>
-			<section class="settings-reference-card preferences-card">
+			<section class="settings-reference-card preferences-card" data-tour="preferences">
 				<div class="settings-card-heading"><span>${icon("settings")}</span><div><h2>Preferences</h2><p>Only controls backed by current product behavior.</p></div><button id="open-profile-settings-secondary" class="secondary">Edit</button></div>
 				<ul class="settings-summary-list">
 					<li><span>${icon("edit")}<b>Draft provider</b><small>${escapeHtml(formatStatus(settings.draftProvider))}</small></span></li>
@@ -1021,7 +1036,7 @@ function renderSettings() {
 					<li><span>${icon("reply")}<b>Reply sync</b><small>${settings.replySyncEnabled ? "Enabled" : "Disabled"}</small></span></li>
 				</ul>
 			</section>
-			<section class="settings-reference-card privacy-card">
+			<section class="settings-reference-card privacy-card" data-tour="private-data">
 				<div class="settings-card-heading"><span>${icon("shield")}</span><div><h2>Data & Privacy</h2><p>Encrypted files, import tools, and service policies.</p></div></div>
 				<details>
 					<summary>${icon("document")}<span><b>Resume</b><small>${resume.configured ? `${escapeHtml(resume.fileName)} · ${formatFileSize(resume.sizeBytes)}` : "No resume stored"}</small></span>${icon("chevron-right")}</summary>
@@ -1043,7 +1058,7 @@ function renderSettings() {
 			</section>
 			<section class="settings-reference-card integrations-card">
 				<div class="settings-card-heading"><span>${icon("plug")}</span><div><h2>Integrations</h2><p>Connected services and encrypted provider credentials.</p></div></div>
-				<div class="integration-google">
+				<div class="integration-google" data-tour="google-connections">
 					<div><span class="integration-mark google-mark">G</span><span><b>Google Gmail & Sheets</b><small>${credentials.GOOGLE.configured ? "Connected for approved sends and CRM sync" : "Not connected"}</small></span></div>
 					${credentials.GOOGLE.configured ? (settings.spreadsheetId ? `<a class="button" href="https://docs.google.com/spreadsheets/d/${escapeAttr(settings.spreadsheetId)}" target="_blank" rel="noopener">Open CRM</a>` : '<button id="init-workspace" class="secondary">Create CRM</button>') : '<a class="button primary" href="/auth/google/connect">Connect</a>'}
 				</div>
@@ -1069,10 +1084,11 @@ function renderSettings() {
 				<div class="actions"><a class="button" href="mailto:evanastonlowe@gmail.com">${icon("mail")} Get support</a><button id="settings-logout" class="secondary">${icon("logout")} Sign out</button></div>
 			</section>
 			<div class="settings-notebook-art" aria-hidden="true"></div>
+			${window.WorkspaceOnboarding?.settingsHtml(state.session) || ""}
 		</div>
-		<dialog id="profile-settings-dialog" class="editor-dialog settings-editor-dialog">
+		<dialog id="profile-settings-dialog" class="editor-dialog settings-editor-dialog" aria-labelledby="profile-settings-title">
 			<form method="dialog" class="dialog-card" id="settings-form">
-				<div class="dialog-head"><div><p class="eyebrow">Profile & drafting</p><h2>Edit real workspace preferences</h2><p>Only factual context you save here is available to drafting.</p></div><button class="icon-button" value="cancel" aria-label="Close profile settings">×</button></div>
+				<div class="dialog-head"><div><p class="eyebrow">Profile & drafting</p><h2 id="profile-settings-title">Edit real workspace preferences</h2><p>Only factual context you save here is available to drafting.</p></div><button class="icon-button" value="cancel" aria-label="Close profile settings">×</button></div>
 				<div class="grid grid-3">
 					<label>Your name<input id="sender-name" value="${escapeAttr(settings.senderName)}" /></label>
 					<label>Email enrichment<select id="enrichment-provider"><option value="HUNTER" ${selected(settings.enrichmentProvider, "HUNTER")}>Hunter</option><option value="NONE" ${selected(settings.enrichmentProvider, "NONE")}>Manual email entry</option></select></label>
@@ -2077,6 +2093,10 @@ function fillResumeSuggestions(suggestions) {
 
 async function saveSettings(event) {
 	event.preventDefault();
+	if (event.submitter?.value === "cancel") {
+		document.getElementById("profile-settings-dialog")?.close();
+		return;
+	}
 	await run("Saving settings…", async () => {
 		await api("/api/settings", {
 			method: "PUT",
@@ -2121,13 +2141,29 @@ async function saveSettings(event) {
 async function saveSecret(provider) {
 	const input = document.getElementById(`secret-${provider}`);
 	if (!input.value.trim()) return showToast("Enter a key first.", true);
+	const identity = state.session?.user?.id;
+	const status = document.getElementById(`secret-status-${provider}`);
+	status.textContent = "Saving encrypted key…";
+	status.dataset.error = "false";
 	await run(`Encrypting ${provider} credential…`, async () => {
-		await api(`/api/credentials/${provider}`, {
-			method: "PUT",
-			body: { value: input.value.trim() },
-		});
+		try {
+			await api(`/api/credentials/${provider}`, {
+				method: "PUT",
+				body: { value: input.value.trim() },
+			});
+		} catch (error) {
+			status.textContent = `Not saved. ${error.message} Use Save to retry.`;
+			status.dataset.error = "true";
+			throw error;
+		}
 		input.value = "";
-		await refresh("settings");
+		status.textContent = "Saved. Not provider-validated.";
+		if (state.session?.user?.id !== identity) return;
+		try {
+			await refresh("settings");
+		} catch (error) {
+			throw new Error(`Key saved, but the workspace could not refresh. Reload to see its status. ${error.message}`);
+		}
 	});
 }
 
@@ -2147,13 +2183,39 @@ async function initWorkspace() {
 }
 
 async function logout() {
-	await api("/logout", { method: "POST" });
-	location.reload();
+	onboarding?.dispose();
+	clearPrivateDialogs();
+	await run("Signing out…", async () => {
+		await api("/logout", { method: "POST" });
+		location.reload();
+	});
+}
+
+function clearPrivateDialogs() {
+	document.querySelectorAll('input[type="password"]').forEach((input) => { input.value = ""; });
+	dialog.close();
+	document.getElementById("draft-form").reset();
+	document.getElementById("draft-name").textContent = "Review draft";
+	document.getElementById("draft-audit").textContent = "";
 }
 
 async function refresh(tab = state.tab) {
+	const previousIdentity = state.session?.user?.id;
 	state.session = await api("/api/session");
 	state.tab = state.session.authenticated ? tab : "jobs";
+	if (previousIdentity && previousIdentity !== state.session.user?.id) {
+		onboarding?.dispose();
+		clearPrivateDialogs();
+		state.jobs = { ...state.jobs, jobs: [], pagination: { ...state.jobs.pagination, total: 0, totalPages: 0 } };
+		state.trackedJobs = { ...state.trackedJobs, jobs: [], pagination: { ...state.trackedJobs.pagination, total: 0, totalPages: 0 } };
+		state.betaAdmin = null;
+		state.analytics = null;
+		state.analyticsError = "";
+		state.networkingJob = null;
+		state.networkingCriteria = null;
+		state.networkingSearch = { status: "idle", message: "", summary: null };
+		render();
+	}
 	if (!betaLandingRequired()) {
 		await Promise.all([
 			loadJobData(),
@@ -2301,7 +2363,7 @@ function initialView() {
 	return hasJobQuery ? "jobs" : "home";
 }
 
-function navigate(view) {
+function navigate(view, options = {}) {
 	const allowed =
 		state.session?.authenticated && PRIMARY_VIEWS.includes(view)
 			? view
@@ -2311,6 +2373,7 @@ function navigate(view) {
 	syncViewToUrl();
 	render();
 	requestAnimationFrame(() => {
+		if (options.tutorial) return;
 		document.getElementById("main-content")?.focus({ preventScroll: true });
 		window.scrollTo({ top: 0, behavior: "auto" });
 	});
@@ -2434,9 +2497,23 @@ async function api(path, options = {}) {
 					: JSON.stringify(options.body),
 		credentials: "same-origin",
 	});
-	const data = await response.json().catch(() => ({}));
+	let data;
+	try {
+		data = await response.json();
+	} catch {
+		throw new Error("The server response could not be read. Retry when connected.");
+	}
 	if (!response.ok) {
-		throw new Error(data.message || `Request failed (${response.status}).`);
+		if (response.status === 401 && state.session?.authenticated) {
+			state.session = { authenticated: false, betaAccessMode: state.session.betaAccessMode };
+			onboarding?.dispose();
+			clearPrivateDialogs();
+			render();
+		}
+		const error = new Error(data.message || `Request failed (${response.status}).`);
+		error.status = response.status;
+		error.code = data.error;
+		throw error;
 	}
 	return data;
 }
@@ -2664,11 +2741,12 @@ function linkedJobChips(person) {
 }
 
 function secretRow(provider, label, status) {
-	return `<div class="secret-row">
+	return `<div class="secret-row" data-tour="credential-${provider}">
 		<div>
 			<strong>${label}</strong><br />
-			<small>${status.configured ? `Configured ${escapeHtml(status.hint)}` : "Not configured"}</small>
+			<small id="secret-status-${provider}" class="secret-save-status" role="status">${status.configured ? `Saved ${escapeHtml(status.hint)} · not provider-validated` : "Not saved"}</small>
 		</div>
+		<label class="sr-only" for="secret-${provider}">${label} API key</label>
 		<input id="secret-${provider}" type="password" autocomplete="off" placeholder="${status.configured ? "Leave blank to keep current key" : "Enter API key"}" />
 		<div class="actions">
 			<button data-save-secret="${provider}">Save</button>

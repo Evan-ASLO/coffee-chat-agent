@@ -48,31 +48,30 @@ export async function upsertUser(
 	profile: Omit<AuthenticatedUser, "id">,
 ): Promise<AuthenticatedUser> {
 	const now = new Date().toISOString();
-	const existing = await env.DB.prepare(
-		"SELECT id FROM users WHERE google_sub = ?",
-	)
-		.bind(profile.googleSub)
-		.first<{ id: string }>();
-	const id = existing?.id ?? crypto.randomUUID();
-	await env.DB.prepare(
-		`INSERT INTO users(id, google_sub, email, name, image, created_at, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)
+	const row = await env.DB.prepare(
+		`INSERT INTO users(id, google_sub, email, name, image, created_at, updated_at,
+		                  onboarding_status, onboarding_updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, 'invited', ?)
 		 ON CONFLICT(google_sub) DO UPDATE SET
 		   email = excluded.email,
 		   name = excluded.name,
 		   image = excluded.image,
-		   updated_at = excluded.updated_at`,
+		   updated_at = excluded.updated_at
+		 RETURNING id`,
 	)
 		.bind(
-			id,
+			crypto.randomUUID(),
 			profile.googleSub,
 			profile.email.toLowerCase(),
 			profile.name,
 			profile.image,
 			now,
 			now,
+			now,
 		)
-		.run();
+		.first<{ id: string }>();
+	if (!row) throw new Error("User creation did not return an identity.");
+	const { id } = row;
 	await env.DB.prepare(
 		`INSERT INTO user_settings(user_id, created_at, updated_at)
 		 VALUES (?, ?, ?)

@@ -11,6 +11,9 @@
 		"typecheck": "tsc --noEmit",
 		"test": "vitest run",
 		"test:ui": "node --test test/*.cjs",
+		"test:onboarding:browser": "playwright test --config playwright.onboarding.config.mjs",
+		"preview:onboarding:prepare": "node scripts/prepare-onboarding-preview.mjs",
+		"preview:onboarding": "node scripts/serve-onboarding-preview.mjs",
 		"check": "npm run check:vendor && npm run typecheck && npm test && npm run test:ui",
 		"cf-typegen": "wrangler types",
 		"db:migrate:local": "wrangler d1 migrations apply coffee-chat-agent --local",
@@ -24,7 +27,9 @@
 		"zod": "4.6.5"
 	},
 	"devDependencies": {
+		"@axe-core/playwright": "4.13.0",
 		"@cloudflare/vitest-plugin": "1.2.3",
+		"@playwright/test": "1.63.0",
 		"@types/node": "26.6.2",
 		"typescript": "5.9.3",
 		"vitest": "4.1.11",
