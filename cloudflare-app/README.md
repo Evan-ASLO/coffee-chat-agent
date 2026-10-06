@@ -30,6 +30,87 @@ Configure the existing Google/encryption values plus `JOBS_INGEST_SECRET` in `.d
 
 `GET /api/analytics` is authenticated and ownership-scoped. It uses bounded queries over existing job state, prospect, job, and audit tables to return current application/networking counts, top companies, a 28-day recorded-activity series, and recent activity. It requires no migration and does not fabricate growth, conversion, coffee-chat, reminder, or future-event data.
 
+## Owner activity and reviewed beta approvals
+
+**Settings > Owner tools** is visible only for the server-reported owner role.
+Every owner API independently requires a valid session and the existing
+`BETA_ADMIN_EMAILS` guard; an approved beta account is not an owner.
+No owner identities or permission settings are added by this feature.
+
+`GET /api/beta/admin/activity` returns non-deleted registered account identifiers,
+7- or 28-UTC-day audit counts (28 by default), and 20 account rows per page.
+`GET /api/beta/admin/activity/events` returns 25 events per page, optionally
+filtered by `userId` and an allowlisted `action`. Keyset cursors are bound to the
+period and filters. Continue with the returned `asOf` time; snapshots older than
+24 hours require an explicit refresh. Both endpoints use existing tables and
+the user/time audit index, without a migration or per-user request loop.
+
+The explicit response schema excludes raw metadata, entity/recipient details,
+credentials and key hints, session hashes, resumes, private profile/draft/email
+content and search queries. Only existing allowlisted search-fallback outcomes,
+providers and error-reason enums are exposed. Counts mean recorded actions, not
+pageviews, current saved-job totals, visits or live presence. Background events
+are not evidence that someone was online. No activity in the period is not
+"never used"; unrecorded failures are not counted. Owner UI caches and dialogs
+are cleared on logout, account changes, owner-role loss and owner-route denial;
+aborted, superseded or stale responses cannot repopulate them. No polling,
+tracking SDK, export or historical backfill is added. See the privacy policy for
+the existing retention limitations: display windows are not deletion schedules.
+
+**Approve all pending** first fetches a fresh, owner-bound, authenticated
+snapshot from `GET /api/beta/admin/requests/pending`. A native confirmation lists
+the exact emails, including explicit new requests after denial/revocation.
+Reviews expire after 10 minutes. Each confirmation is limited to **50 requests**;
+larger queues say **Review pending batch (50 of N)** and require separate reviews.
+The total count is independent of the existing 500-row administrative lists.
+
+`POST /api/beta/admin/requests/approve-pending` accepts only
+`{ snapshot, requestIds }` for that exact reviewed set, with owner, same-origin
+and CSRF checks. One D1 transaction conditionally records owner audit receipts,
+grants access, and transitions only still-pending, unchanged requests.
+Later arrivals are excluded. Repeats and races return explicit approved and
+skipped IDs; request identity/version or access status/version changes are
+skipped rather than overriding a concurrent decision. A write error rolls back
+the transaction; an unconfirmed response can be retried with the same snapshot
+without approving future requests. The UI re-queries the pending list after
+success and reports skips and refresh failures, not a blanket "all approved."
+Single pending approval uses the same safe transition. Already-handled request
+IDs cannot restore revoked access; deliberate re-approval remains an explicit
+email action. No email, drafting, outreach approval or provider action occurs.
+
+### Local-only owner review
+
+From a fresh isolated checkout (dependencies must already be available):
+
+```powershell
+node scripts\prepare-owner-preview.mjs
+npm run preview:onboarding
+```
+
+The preparation script checks port **8806**, reuses the existing local migration
+and fixture harness, and writes only ignored local configuration/D1 state.
+Open `http://127.0.0.1:8806/__review/owner#settings` for the fictional owner,
+`/__review/member#settings` for a fictional non-owner, or
+`/__review/signed-out` for no session. The separate `test/local-owner-preview.ts`
+entry is never referenced by production config. It restricts itself to loopback,
+blocks external fetch/OAuth/provider/CRM/discovery/enrichment/draft/send actions,
+and permits only fictional local beta mutations and logout. No real credentials,
+production database IDs or remote migrations are used by the review harness.
+
+Focused checks:
+
+```powershell
+npm test -- test/owner-admin.spec.ts
+node --test test\owner-admin.cjs test\ui-contract.cjs test\onboarding-contract.cjs
+$env:OWNER_EVIDENCE_DIR = "C:\path\to\session\files\owner-review-evidence"
+node test\browser\owner-admin.mjs
+```
+
+Browser checks use installed Edge, a desktop and a phone viewport, and the
+isolated seeded Worker/D1 on 8806. JSON evidence and screenshots go to the
+specified session-artifact directory. They make real local beta decisions, not
+provider calls; the script creates only named fictional pending review fixtures.
+
 ## Optional first-login tutorial
 
 The no-build `public/onboarding.js` / `onboarding.css` guide has two chapters:
@@ -216,6 +297,9 @@ Job cards normalize source names for display without exposing publisher credenti
 - `POST|DELETE /api/jobs/:jobId/prospects/:prospectId`: authenticated ownership-checked job/prospect linkage.
 - `GET /api/jobs/:id/prospects`: authenticated, feature-gated saved contacts for this job (including inactive tracked jobs), ownership-checked and deterministically ranked using persisted public evidence. Reading never calls a provider.
 - `GET /api/beta/admin/access`: environment-admin-only pending/access list.
+- `GET /api/beta/admin/activity` and `/api/beta/admin/activity/events`: minimized owner-only operational summaries and paginated events.
+- `GET /api/beta/admin/requests/pending`: bounded, authenticated review snapshot of current pending requests.
+- `POST /api/beta/admin/requests/approve-pending`: owner/CSRF-authorized transactional approval of that exact snapshot.
 - `POST /api/beta/admin/requests/:id/approve|deny`: environment-admin-only request decisions.
 - `POST /api/beta/admin/access/approve|revoke`: environment-admin-only invite, re-approve, and revoke actions.
 

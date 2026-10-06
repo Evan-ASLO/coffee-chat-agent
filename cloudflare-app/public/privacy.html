@@ -28,7 +28,7 @@
 			</header>
 
 			<article class="legal-card">
-				<p class="eyebrow">Effective October 2, 2026</p>
+				<p class="eyebrow">Effective October 6, 2026</p>
 				<h1>Privacy Policy</h1>
 				<p class="legal-lede">
 					Internship & Coffee Chat publishes normalized internship listings and
@@ -100,7 +100,8 @@
 					<li>
 						<strong>Security and operational records:</strong> session,
 						rate-limit, request, and audit records used to operate and secure
-						the service and provide your account-scoped activity view. Secrets
+						the service, provide your account-scoped activity view, and support
+						restricted owner operational-activity administration. Secrets
 						and message bodies are not intentionally written to application
 						logs.
 					</li>
@@ -128,6 +129,10 @@
 					<li>
 						show account-scoped application, networking, company, and recent
 						activity counts calculated from your existing records;
+					</li>
+					<li>
+						let configured owners administer the beta using basic registered
+						account identifiers and limited operational event summaries;
 					</li>
 					<li>prevent abuse, duplicate sends, and unauthorized access.</li>
 				</ul>
@@ -171,11 +176,38 @@
 					and privacy policies.
 				</p>
 				<p>
-					The Analytics page does not use a third-party analytics or advertising
-					service. It runs bounded, account-scoped queries over records already
+					The Analytics page and owner activity dashboard do not use a
+					third-party analytics or advertising service. The personal Analytics
+					page runs bounded, account-scoped queries over records already
 					stored to provide the workspace. Decorative interface crops and the
 					Three.js Career Journey runtime are self-hosted and do not contact an
 					image-generation service or runtime CDN.
+				</p>
+
+				<h2>Restricted owner operational activity</h2>
+				<p>
+					Only owners configured in the server's beta-administrator allowlist can
+					access the owner dashboard. It shows non-deleted registered accounts'
+					names, email addresses, account identifiers and registration times,
+					recorded action counts, and a paginated feed of event types and
+					timestamps for a selected recent 7- or 28-day period. Examples include
+					people searches, job saves, application changes, draft actions, sends,
+					and beta-access decisions. Where already recorded, only allowlisted
+					search-fallback provider, outcome and error-reason categories are shown.
+					This view does not expose API keys or key hints, tokens or session
+					hashes, resumes, private profile text, draft or email bodies, recipient
+					details, search queries, raw provider responses, or raw audit metadata.
+				</p>
+				<p>
+					The dashboard adds no pageview tracking, keystroke or screen recording,
+					browser fingerprinting, or live polling. Recorded events are not visits
+					or exact login times. Background work is not evidence that a user was
+					online, and the dashboard does not infer live presence or session
+					duration. No events in a selected period means only that no activity
+					was recorded in that period, not that the account was never used.
+					Not every operation or failure is recorded; historical activity is
+					not reconstructed. Ordinary users cannot access other accounts'
+					owner-dashboard records.
 				</p>
 
 				<h2>Storage and security</h2>
@@ -214,6 +246,12 @@
 				</p>
 
 				<h2>Retention and deletion</h2>
+				<p>
+					The owner dashboard's 7- and 28-day display windows are query limits,
+					not deletion schedules. Audit records do not currently have a fixed
+					automatic expiry. Existing retention and verified deletion handling
+					below still apply; this dashboard creates no new retention guarantee.
+				</p>
 				<p>
 					Data is retained while needed to provide the service and maintain the
 					user's application and outreach history. Job listings that disappear

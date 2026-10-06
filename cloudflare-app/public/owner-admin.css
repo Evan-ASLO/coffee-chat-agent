@@ -1,0 +1,246 @@
+.owner-tabs,
+.owner-filters,
+.owner-pagination {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: end;
+	gap: 12px;
+}
+
+.owner-tabs button[aria-pressed="true"] {
+	color: var(--paper-solid);
+	background: var(--forest-800);
+	border-color: var(--forest-800);
+}
+
+#owner-panel,
+.owner-activity,
+.owner-events {
+	min-width: 0;
+}
+
+.owner-filters {
+	margin-block: 16px;
+}
+
+.owner-filters label {
+	flex: 1 1 220px;
+	max-width: 420px;
+	min-width: 0;
+}
+
+.owner-filters select {
+	width: 100%;
+	min-width: 0;
+}
+
+.owner-period,
+.owner-privacy-note {
+	color: var(--muted);
+	font-size: 0.8rem;
+	line-height: 1.6;
+	margin-block: 16px;
+}
+
+.owner-metrics {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 12px;
+	margin-block: 20px;
+}
+
+.owner-metric {
+	display: grid;
+	align-content: start;
+	gap: 8px;
+	padding: 16px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-md);
+	background: var(--cream-50);
+}
+
+.owner-metric > strong {
+	font-size: 1.75rem;
+	line-height: 1.1;
+}
+
+.owner-metric > span {
+	font-weight: 600;
+}
+
+.owner-metric small,
+.owner-event-list span,
+.owner-event-list small,
+.owner-accounts-table small,
+.owner-approval-list span {
+	display: block;
+	color: var(--muted);
+	font-size: 0.8rem;
+	line-height: 1.5;
+}
+
+.owner-table-scroll {
+	max-width: 100%;
+	overflow: auto;
+	margin-top: 16px;
+	border: 1px solid var(--line);
+	border-radius: var(--radius-sm);
+}
+
+.owner-accounts-table {
+	width: 100%;
+	min-width: 1000px;
+	border-collapse: collapse;
+	font-size: 0.8rem;
+}
+
+.owner-accounts-table th,
+.owner-accounts-table td {
+	padding: 12px;
+	text-align: left;
+	vertical-align: top;
+	border-bottom: 1px solid var(--line);
+}
+
+.owner-accounts-table th {
+	background: var(--cream-100);
+}
+
+.owner-accounts-table tbody th {
+	min-width: 200px;
+	max-width: 280px;
+	overflow-wrap: anywhere;
+}
+
+.owner-accounts-table td:nth-last-child(2) {
+	min-width: 160px;
+}
+
+.owner-pagination {
+	align-items: center;
+	justify-content: space-between;
+	margin-block: 16px;
+	font-size: 0.8rem;
+}
+
+.owner-events {
+	margin-top: 28px;
+	padding-top: 20px;
+	border-top: 1px solid var(--line);
+}
+
+.owner-event-list {
+	list-style: none;
+	padding: 0;
+	margin: 0;
+}
+
+.owner-event-list li {
+	display: flex;
+	justify-content: space-between;
+	gap: 16px;
+	padding-block: 14px;
+	border-bottom: 1px solid var(--line);
+	overflow-wrap: anywhere;
+}
+
+.owner-event-list time {
+	flex: 0 0 155px;
+	color: var(--muted);
+	font-size: 0.8rem;
+}
+
+.owner-access-cards {
+	margin-block: 16px 24px;
+}
+
+.owner-access-cards h4,
+.owner-approval-list,
+.owner-approval-result {
+	overflow-wrap: anywhere;
+}
+
+.owner-pending-heading {
+	margin-top: 24px;
+	align-items: start;
+}
+
+.owner-pending-heading > button {
+	flex-shrink: 0;
+}
+
+.owner-approval-list {
+	display: grid;
+	gap: 12px;
+	padding-left: 24px;
+	margin: 0;
+}
+
+.owner-reapplication {
+	display: block;
+	color: var(--warning);
+	font-size: 0.85rem;
+}
+
+.owner-approval-result {
+	padding: 16px;
+	margin-block: 12px;
+	border: 1px solid var(--line-strong);
+	border-radius: var(--radius-sm);
+	background: var(--sage-100);
+}
+
+.owner-bulk-dialog {
+	width: min(660px, calc(100% - 28px));
+}
+
+.owner-bulk-dialog .dialog-head {
+	position: static;
+}
+
+.owner-dialog-actions {
+	position: sticky;
+	bottom: 0;
+	padding-block: 12px;
+	background: var(--paper-solid);
+	border-top: 1px solid var(--line);
+}
+
+#owner-controls button,
+#owner-controls select,
+#owner-controls input,
+.owner-bulk-dialog button {
+	min-height: 44px;
+}
+
+@media (max-width: 760px) {
+	.owner-metrics {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.owner-pending-heading,
+	.owner-event-list li {
+		flex-direction: column;
+	}
+
+	.owner-event-list time {
+		flex-basis: auto;
+	}
+
+	.owner-pending-heading > button,
+	.owner-filters label {
+		max-width: 100%;
+		width: 100%;
+	}
+
+	.owner-pagination span {
+		flex: 1 1 100%;
+		order: -1;
+		text-align: center;
+	}
+
+	.owner-bulk-dialog .actions {
+		display: grid;
+		grid-template-columns: 1fr;
+	}
+}
