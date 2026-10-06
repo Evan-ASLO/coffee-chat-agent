@@ -65,6 +65,9 @@ const state = {
 	renderToken: 0,
 	networkingJob: null,
 	networkingCriteria: null,
+	networkingContacts: { status: "idle", prospects: [], message: "", request: 0 },
+	anthropicSearchMaxUses: 1,
+	discoveryRequest: null,
 	networkingSearch: {
 		status: "idle",
 		message: "",
@@ -120,6 +123,11 @@ async function load() {
 				loadBetaAdminData(),
 				loadAnalyticsData(),
 			]);
+			const jobId = new URLSearchParams(location.search).get("contactJob");
+			if (state.session.authenticated && jobOutreachLinkingEnabled() && /^[a-f0-9]{64}$/.test(jobId || "")) {
+				state.networkingJob = findJob(jobId) || { id: jobId, title: "Loading job...", company: "" };
+				await loadNetworkingContacts();
+			}
 		}
 		render();
 	} catch (error) {
@@ -419,6 +427,7 @@ function homeRecentJobCard(job) {
 			<a class="button primary" href="${escapeAttr(job.url)}" target="_blank" rel="noopener">View posting</a>
 			${!status || status === "SAVED" ? `<button data-job-save="${job.id}">${status === "SAVED" ? "Saved" : "Save"}</button>` : ""}
 			<button data-job-apply="${job.id}" ${APPLICATION_STATUSES.includes(status) ? "disabled" : ""}>Mark applied</button>
+			${jobContactAction(job)}
 		</div>
 	</article>`;
 }
@@ -724,7 +733,7 @@ function renderApplications() {
 				<input id="application-dialog-id" type="hidden" />
 				<label>Stage<select id="application-dialog-stage">${jobStatusOptions("APPLIED")}</select></label>
 				<label>Private next step or notes<textarea id="application-dialog-notes" rows="5" maxlength="4000"></textarea></label>
-				<div class="dialog-links"><a id="application-dialog-job-link" class="button" target="_blank" rel="noopener">Open job posting</a><button type="button" id="application-dialog-network" class="secondary">Find people at this company</button></div>
+				<div class="dialog-links"><a id="application-dialog-job-link" class="button" target="_blank" rel="noopener">Open job posting</a><button type="button" id="application-dialog-network" class="secondary">People to contact</button></div>
 				<div class="actions"><button type="button" id="application-dialog-remove" class="danger">Remove from tracker</button><button type="button" id="application-dialog-save" class="primary">Save application</button></div>
 			</form>
 		</dialog>`;
@@ -736,10 +745,12 @@ function renderNetworking() {
 	const context = linkingEnabled && state.networkingJob
 		? `<section class="notice networking-context">
 				<div>
-					<strong>${searching ? "Finding people" : "Networking"} for ${escapeHtml(state.networkingJob.title)}</strong>
+					<strong>People to contact for ${escapeHtml(state.networkingJob.title)}</strong>
 					<span>${escapeHtml(state.networkingJob.company)} · ${escapeHtml(state.networkingJob.location || state.networkingJob.region || "Location not listed")}</span>
+					<p>Priority: entry-level in this function, then internship/new-grad recruiters, then other entry-level employees at this firm. Public evidence can be incomplete; no contact or vacancy ownership is guaranteed.</p>
+					<p>Opening this list only reads your saved contacts. A new provider search requires the Search button after reviewing costs.</p>
 				</div>
-				<button id="clear-networking-job" ${searching ? "disabled" : ""}>Clear job context</button>
+				<div class="actions"><button id="reload-job-contacts" ${state.networkingContacts.status === "loading" ? "disabled" : ""}>Reload saved contacts</button><button id="clear-networking-job" ${searching ? "disabled" : ""}>All networking</button></div>
 			</section>`
 		: "";
 	const previewNotice = linkingEnabled
@@ -758,7 +769,8 @@ function renderNetworking() {
 		).length,
 	};
 	const profileReady = isDraftProfileReady(state.session.settings);
-	const prospects = state.session.prospects
+	const people = networkingPeople();
+	const prospects = people
 		.filter((person) => {
 			const filterMatches =
 				state.networkingFilter === "ALL" ||
@@ -800,9 +812,17 @@ function renderNetworking() {
 				locationMatches
 			);
 		})
-		.sort((left, right) =>
-			String(right.updatedAt).localeCompare(String(left.updatedAt)),
-		);
+		.sort((left, right) => {
+			if (state.networkingJob) {
+				const a = jobContactFor(left);
+				const b = jobContactFor(right);
+				return (a?.tier ?? 4) - (b?.tier ?? 4) ||
+					(b?.score || 0) - (a?.score || 0) ||
+					left.fullName.localeCompare(right.fullName, "en") ||
+					left.id.localeCompare(right.id, "en");
+			}
+			return String(right.updatedAt).localeCompare(String(left.updatedAt));
+		});
 	const replies = state.session.prospects
 		.filter((person) => person.status === "REPLIED" && person.lastReplyAt)
 		.sort((left, right) =>
@@ -827,13 +847,15 @@ function renderNetworking() {
 			${referenceMetric(networking.sent, "Emails sent", "send")}
 			${referenceMetric(networking.replied, "Replies", "reply")}
 		</section>
-		${previewNotice}${context}${renderNetworkingSearchState()}
+		${previewNotice}${context}${state.networkingJob ? renderDiscoverySetup() : ""}${renderNetworkingSearchState()}
+		${state.networkingJob && state.networkingContacts.status === "loading" ? '<p class="notice" role="status">Loading saved contacts only. No provider search is running.</p>' : ""}
+		${state.networkingJob && state.networkingContacts.status === "error" ? `<p class="notice warning" role="alert">${escapeHtml(state.networkingContacts.message)} Use Reload saved contacts to retry without a provider search.</p>` : ""}
 		<div class="tracker-layout networking-layout">
 			<aside class="tracker-filters" aria-label="Networking filters">
 				<div class="tracker-filter-heading"><strong>Filters</strong><button class="text-button" data-network-filter="ALL">Clear all</button></div>
 				<fieldset>
 					<legend>Workflow stage</legend>
-					${networkFilterButton("ALL", "All", state.session.prospects.length)}
+					${networkFilterButton("ALL", "All", people.length)}
 					${networkFilterButton("TO_APPROVE", "To approve")}
 					${networkFilterButton("DRAFTS", "Drafts")}
 					${networkFilterButton("SENT", "Sent")}
@@ -852,17 +874,17 @@ function renderNetworking() {
 			</aside>
 			<section class="tracker-table-panel" data-tour="networking-review">
 				<div class="table-panel-heading">
-					<div><h2>Your network</h2><p>Keep approval, draft, send, and reply state visible in one compact workflow.</p></div>
+					<div><h2>${state.networkingJob ? "Saved contacts for this job" : "Your network"}</h2><p>${state.networkingJob ? "Ranked for this role using saved public evidence. Unconfirmed fits remain separate." : "Keep approval, draft, send, and reply state visible in one compact workflow."}</p></div>
 					<div class="table-tools"><button id="open-discovery-dialog-secondary" class="primary">${icon("search")} Find people</button></div>
 				</div>
 				${
 					prospects.length
 						? `<div class="responsive-table-wrap" tabindex="0" role="region" aria-label="Networking table. Scroll to view every column."><table class="data-table networking-table">
 								<caption class="sr-only">Your network and approval-first outreach workflow</caption>
-								<thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Company</th><th scope="col">Status</th><th scope="col">Match</th><th scope="col">Next step</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
-								<tbody>${prospects.map((person) => networkingTableRow(person, profileReady)).join("")}</tbody>
+								<thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Company</th><th scope="col">Status</th><th scope="col">${state.networkingJob ? "Contact priority" : "Match"}</th><th scope="col">Next step</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
+								<tbody>${prospects.map((person, index) => `${state.networkingJob && !jobContactFor(person)?.tier && (index === 0 || jobContactFor(prospects[index - 1])?.tier) ? '<tr class="unconfirmed-contacts"><th colspan="7">Unconfirmed fits - not part of the three ranked priorities. Review the public evidence before approaching.</th></tr>' : ""}${networkingTableRow(person, profileReady)}`).join("")}</tbody>
 							</table></div>`
-						: empty(state.session.prospects.length ? "No people match these filters." : "Use Find people to search public professional profiles.")
+						: empty(people.length ? "No people match these filters." : state.networkingJob ? "No saved contacts for this job yet. Choose Find people, review the costs, then explicitly search. Results are not guaranteed." : "Use Find people to search public professional profiles.")
 				}
 			</section>
 			<aside class="tracker-right-rail" aria-label="Networking activity">
@@ -896,7 +918,8 @@ function renderNetworking() {
 }
 
 function renderFind() {
-	const ready = state.session.credentials.TAVILY.configured;
+	const ready = state.session.credentials.TAVILY.configured &&
+		(!state.networkingJob || state.networkingContacts.status === "ready");
 	const job = state.networkingJob;
 	const criteria =
 		state.networkingCriteria ||
@@ -913,28 +936,47 @@ function renderFind() {
 	const searching = state.networkingSearch.status === "running";
 	return `
 		<section id="find-people-panel" aria-busy="${searching}">
-			${ready ? "" : '<p class="notice warning">Add a Tavily key under Settings before searching.</p>'}
-			<p class="notice">Submitting this form uses your Tavily account and may use your explicitly selected cited-search fallback. Provider search tools and tokens may incur charges or use quotas. It does not approve people, draft, or send.</p>
+			${renderDiscoverySetup()}
 			<form id="find-form" class="grid">
-				${textarea("roles", "Target roles", criteria.roles.join("\n"))}
+				${job ? `<div class="full job-search-target"><strong>${escapeHtml(job.title)} at ${escapeHtml(job.company)}</strong><p>The server keeps this job's employer and function fixed. It searches junior role peers, internship/new-grad recruiters, and other junior employees at this firm, in that order.</p><p>Generic recruiters and uncertain seniority are not promoted into a confirmed priority.</p></div>` : `${textarea("roles", "Target roles", criteria.roles.join("\n"))}
 				${textarea("industries", "Industries", criteria.industries.join("\n"))}
 				${textarea("companies", "Companies", criteria.companies.join("\n"))}
 				${textarea("locations", "Locations", criteria.locations.join("\n"))}
 				${textarea("keywords", "Keywords", criteria.keywords.join("\n"))}
-				${textarea("seniority", "Seniority", criteria.seniority.join("\n"))}
+				${textarea("seniority", "Seniority", criteria.seniority.join("\n"))}`}
 				<label class="full">Why you want to meet them
 					<textarea id="objective" rows="3">${escapeHtml(criteria.objective)}</textarea>
 				</label>
 				<label>Number of people
 					<input id="count" type="number" min="1" max="20" value="${Number(criteria.count || 5)}" />
 				</label>
+				<div class="full">${renderSearchCosts()}
+					${state.session.settings.peopleSearchFallbackProvider === "ANTHROPIC" ? `<label class="search-budget-choice"><input id="anthropic-expanded-search" type="checkbox" ${state.anthropicSearchMaxUses === 3 ? "checked" : ""} /><span>I authorize up to 3 Anthropic web searches for this search, with additional search and model-token charges to my own API account. Unchecked: at most 1 search.</span></label>` : ""}
+				</div>
 				<div class="actions full">
-					<button class="primary" ${ready && !searching ? "" : "disabled"}>
-						${searching ? '<span class="inline-spinner" aria-hidden="true"></span> Searching…' : "Find people"}
+					<button type="submit" class="primary" ${ready && !searching ? "" : "disabled"}>
+						${searching ? '<span class="inline-spinner" aria-hidden="true"></span> Searching…' : "Search public profiles"}
 					</button>
 				</div>
 			</form>
 		</section>`;
+}
+
+function renderDiscoverySetup() {
+	if (state.session.credentials?.TAVILY?.configured) return "";
+	return '<p class="notice warning">Saved contacts are available without a key. To run a new search, add your own Tavily key. <button type="button" class="secondary" data-nav="settings">Set up discovery in Settings</button></p>';
+}
+
+function renderSearchCosts() {
+	return `<p class="notice search-cost-notice"><strong>Before Search or Retry:</strong> Tavily usage follows <a href="https://docs.tavily.com/documentation/api-credits" target="_blank" rel="noopener">your Tavily API plan</a>. Only your selected fallback/key/model is used if needed. Anthropic can run <strong>up to 3 web searches, plus model-token usage</strong>, only when you authorize the higher budget below; the default is 1. These charges are billed to <strong>your own API account</strong>. Check <a href="https://platform.claude.com/docs/en/about-claude/pricing#web-search-tool" target="_blank" rel="noopener">official Anthropic pricing</a>. More searches may still return fewer or no results. Searching never approves, enriches, drafts or sends outreach.</p>`;
+}
+
+function networkingPeople() {
+	return state.networkingJob ? state.networkingContacts.prospects : state.session.prospects;
+}
+
+function jobContactFor(person) {
+	return person?.linkedJobs?.find((job) => job.id === state.networkingJob?.id)?.contactMatch;
 }
 
 function renderNetworkingSearchState() {
@@ -943,15 +985,16 @@ function renderNetworkingSearchState() {
 	if (search.status === "running") {
 		return `<section class="notice discovery-state" role="status">
 			<span class="inline-spinner" aria-hidden="true"></span>
-			<div><strong>Searching public professional profiles…</strong><span>This normally takes a few seconds. Duplicate actions are disabled.</span></div>
+			<div><strong>Searching public professional profiles…</strong><span>Duplicate search actions are disabled. No outreach is prepared or sent. Started provider work may still be billed if you stop waiting.</span></div>
+			<button id="cancel-people-search" class="secondary">Stop waiting</button>
 		</section>`;
 	}
 	const className = search.status === "success" ? "notice" : "notice warning";
 	return `<section class="${className} discovery-state" role="${search.status === "error" ? "alert" : "status"}">
-		<div><strong>${escapeHtml(search.status === "success" ? "People found" : search.status === "partial" ? "Partial results - search incomplete" : search.status === "empty" ? "No new people added" : "Search could not be completed")}</strong><span>${escapeHtml(search.message)}</span></div>
+		<div><strong>${escapeHtml(search.status === "success" ? "People found" : search.status === "partial" ? "Partial results - search incomplete" : search.status === "empty" ? state.networkingJob ? "No qualified matches confirmed" : "No new people added" : "Search could not be completed")}</strong><span>${escapeHtml(search.message)}</span></div>
 		${
 			["empty", "error", "partial"].includes(search.status)
-				? '<button id="retry-job-discovery" class="secondary">Retry search</button>'
+				? `<div>${renderSearchCosts()}<button id="retry-job-discovery" class="secondary">Review costs & retry</button></div>`
 				: ""
 		}
 	</section>`;
@@ -1165,7 +1208,7 @@ function renderSettings() {
 					<label>Gemini model<input id="gemini-model" value="${escapeAttr(settings.geminiModel)}" /></label>
 					<label>OpenAI model<input id="openai-model" value="${escapeAttr(settings.openAiModel)}" /></label>
 					<label>Anthropic model<input id="anthropic-model" value="${escapeAttr(settings.anthropicModel)}" /></label>
-					<label class="full">Cited people-search fallback<select id="people-search-fallback-provider"><option value="NONE" ${selected(settings.peopleSearchFallbackProvider, "NONE")}>Disabled</option><option value="GEMINI" ${selected(settings.peopleSearchFallbackProvider, "GEMINI")}>Gemini Google Search</option><option value="OPENAI" ${selected(settings.peopleSearchFallbackProvider, "OPENAI")}>OpenAI Web Search</option><option value="ANTHROPIC" ${selected(settings.peopleSearchFallbackProvider, "ANTHROPIC")}>Anthropic Web Search</option></select><small>Runs only when Tavily is insufficient. Provider web-search tools may incur charges.</small></label>
+					<label class="full">Cited people-search fallback<select id="people-search-fallback-provider"><option value="NONE" ${selected(settings.peopleSearchFallbackProvider, "NONE")}>Disabled</option><option value="GEMINI" ${selected(settings.peopleSearchFallbackProvider, "GEMINI")}>Gemini Google Search</option><option value="OPENAI" ${selected(settings.peopleSearchFallbackProvider, "OPENAI")}>OpenAI Web Search</option><option value="ANTHROPIC" ${selected(settings.peopleSearchFallbackProvider, "ANTHROPIC")}>Anthropic Web Search</option></select><small>Runs only when Tavily is insufficient. Provider web-search tools may incur charges. Anthropic defaults to 1 search; the search form can authorize up to 3 plus model-token usage, billed to your own API account. Results are not guaranteed. <a href="https://platform.claude.com/docs/en/about-claude/pricing#web-search-tool" target="_blank" rel="noopener">Official Anthropic pricing</a> · <a href="https://docs.tavily.com/documentation/api-credits" target="_blank" rel="noopener">Tavily API plan</a></small></label>
 					<label>Email word limit<input id="word-limit" type="number" min="60" max="250" value="${settings.emailWordLimit}" /></label>
 					<label class="check-row"><input id="reply-sync-enabled" type="checkbox" ${settings.replySyncEnabled ? "checked" : ""} /><span>Enable scheduled reply sync</span></label>
 					<label class="full">Outreach goal<textarea id="outreach-goal" rows="3">${escapeHtml(settings.outreachGoal)}</textarea></label>
@@ -1432,13 +1475,26 @@ function wireTab() {
 		document.getElementById(id)?.addEventListener("click", openProfileSettings);
 	}
 	document.getElementById("clear-networking-job")?.addEventListener("click", () => {
-		state.networkingJob = null;
-		state.networkingCriteria = null;
-		state.networkingSearch = { status: "idle", message: "", summary: null };
+		clearNetworkingContext();
+		syncViewToUrl();
 		render();
 	});
-	document.getElementById("retry-job-discovery")?.addEventListener("click", () => {
-		executeDiscovery(readDiscoveryCriteria());
+	document.getElementById("retry-job-discovery")?.addEventListener("click", openDiscoveryDialog);
+	document.getElementById("reload-job-contacts")?.addEventListener("click", async () => {
+		await loadNetworkingContacts();
+		render();
+	});
+	document.getElementById("cancel-people-search")?.addEventListener("click", () => {
+		state.discoveryRequest?.controller.abort();
+		state.discoveryRequest = null;
+		state.networkingSearch = {
+			status: "partial", summary: null,
+			message: "Stopped waiting. Provider work already started may still be billed and may save results. Reload saved contacts before starting another search.",
+		};
+		render();
+	});
+	document.getElementById("anthropic-expanded-search")?.addEventListener("change", (event) => {
+		state.anthropicSearchMaxUses = event.currentTarget.checked ? 3 : 1;
 	});
 	document.getElementById("complete-profile")?.addEventListener("click", () => {
 		navigate("settings");
@@ -1690,6 +1746,7 @@ function openApplicationEditor(id) {
 	networkingButton.disabled =
 		!jobOutreachLinkingEnabled() ||
 		state.networkingSearch.status === "running";
+	networkingButton.hidden = !jobOutreachLinkingEnabled();
 	document.getElementById("application-dialog")?.showModal();
 }
 
@@ -1736,10 +1793,11 @@ function openLegacyImport() {
 }
 
 function openDiscoveryDialog() {
+	if (state.networkingSearch.status === "running") return;
 	const dialogElement = document.getElementById("discovery-dialog");
 	if (!dialogElement || dialogElement.open) return;
 	dialogElement.showModal();
-	document.getElementById("roles")?.focus();
+	(document.getElementById("roles") || document.getElementById("count"))?.focus();
 }
 
 function openProfileSettings() {
@@ -1750,6 +1808,7 @@ function openProfileSettings() {
 }
 
 async function beginJobNetworking(id) {
+	if (!state.session?.authenticated) return showToast("Sign in to view your job-linked contacts.", true);
 	if (!jobOutreachLinkingEnabled()) {
 		return showToast(
 			"Job-linked outreach is not enabled yet. Use Networking for an independent search.",
@@ -1757,14 +1816,61 @@ async function beginJobNetworking(id) {
 		);
 	}
 	if (state.networkingSearch.status === "running") return;
-	const job = findJob(id);
-	if (!job) return;
+	if (!/^[a-f0-9]{64}$/.test(id)) return showToast("This job could not be opened.", true);
+	if (state.networkingJob?.id !== id) clearNetworkingContext();
+	const job = findJob(id) || { id, title: "Loading job...", company: "" };
 	state.networkingJob = job;
-	state.networkingCriteria = structuredClone(job.discoveryCriteria);
-	state.networkingSearch = { status: "idle", message: "", summary: null };
+	state.networkingCriteria = job.discoveryCriteria ? structuredClone(job.discoveryCriteria) : null;
+	state.networkingFilter = "ALL";
+	state.networkingQuality = "ALL";
+	state.networkingSearchText = "";
+	state.networkingCompanySearch = "";
+	state.networkingLocationSearch = "";
 	state.tab = "networking";
 	syncViewToUrl();
-	await executeDiscovery(state.networkingCriteria);
+	render();
+	await loadNetworkingContacts();
+	render();
+}
+
+function clearNetworkingContext() {
+	state.discoveryRequest?.controller.abort();
+	state.discoveryRequest = null;
+	state.networkingJob = null;
+	state.networkingCriteria = null;
+	state.networkingContacts = { status: "idle", prospects: [], message: "", request: state.networkingContacts.request + 1 };
+	state.anthropicSearchMaxUses = 1;
+	state.networkingSearch = { status: "idle", message: "", summary: null };
+}
+
+async function loadNetworkingContacts() {
+	const jobId = state.networkingJob?.id;
+	const identity = state.session?.user?.id;
+	if (!jobId || !identity || !jobOutreachLinkingEnabled()) return;
+	const request = state.networkingContacts.request + 1;
+	const current = () => state.networkingContacts.request === request &&
+		state.networkingJob?.id === jobId && state.session?.user?.id === identity;
+	state.networkingContacts = {
+		status: "loading",
+		prospects: state.networkingContacts.prospects.filter((person) =>
+			person.userId === identity && person.linkedJobs?.some((job) => job.id === jobId)),
+		message: "", request,
+	};
+	if (state.tab === "networking") render();
+	try {
+		const result = await api(`/api/jobs/${jobId}/prospects`);
+		if (!current()) return;
+		if (result.userId !== identity) throw new Error("The signed-in account changed. Reload the workspace to view its contacts.");
+		state.networkingJob = result.job;
+		state.networkingCriteria ||= structuredClone(result.job.discoveryCriteria);
+		state.networkingContacts = { status: "ready", prospects: result.prospects, message: "", request };
+	} catch (error) {
+		if (!current()) return;
+		state.networkingContacts = {
+			...state.networkingContacts, status: "error",
+			message: error instanceof Error ? error.message : "Saved contacts could not be loaded. Reload contacts to retry without a paid search.",
+		};
+	}
 }
 
 async function findPeople(event) {
@@ -1773,7 +1879,22 @@ async function findPeople(event) {
 }
 
 async function executeDiscovery(criteria) {
-	if (state.networkingSearch.status === "running" || !criteria) return;
+	if (state.discoveryRequest || state.networkingSearch.status === "running" || !criteria) return;
+	if (!state.session?.authenticated || !state.session.credentials?.TAVILY?.configured) {
+		return showToast("Add your Tavily key in Settings before searching. Opening saved contacts is free of provider calls.", true);
+	}
+	if (state.networkingJob && state.networkingContacts.status !== "ready") {
+		return showToast("Load this job's saved contacts before starting a search.", true);
+	}
+	const request = {
+		identity: state.session.user.id,
+		jobId: state.networkingJob?.id,
+		controller: new AbortController(),
+	};
+	state.discoveryRequest = request;
+	const current = () => state.discoveryRequest === request &&
+		state.session?.user?.id === request.identity &&
+		state.networkingJob?.id === request.jobId;
 	state.networkingCriteria = {
 		...criteria,
 		jobId:
@@ -1781,28 +1902,46 @@ async function executeDiscovery(criteria) {
 				? state.networkingJob.id
 				: undefined,
 	};
+	const body = { ...state.networkingCriteria, anthropicSearchMaxUses: criteria.anthropicSearchMaxUses === 3 ? 3 : 1 };
 	state.networkingSearch = {
 		status: "running",
 		message: "",
 		summary: null,
 	};
 	state.tab = "networking";
+	syncViewToUrl();
 	render();
 	document.getElementById("find-people-panel")?.scrollIntoView({
 		behavior: preferredScrollBehavior(),
 		block: "start",
 	});
+	let completed = false;
 	try {
 		const result = await api("/api/discovery", {
 			method: "POST",
-			body: state.networkingCriteria,
+			body,
+			signal: request.controller.signal,
 		});
-		state.session = await api("/api/session");
-		await Promise.all([
-			loadJobData(),
-			loadBetaAdminData(),
-			loadAnalyticsData(),
+		completed = true;
+		if (!current()) return;
+		const session = await api("/api/session", { signal: request.controller.signal });
+		if (!current()) return;
+		if (session.user?.id !== request.identity) {
+			clearNetworkingContext();
+			clearPrivateDialogs();
+			await refresh("networking");
+			return;
+		}
+		state.session = session;
+		const [jobs, trackedJobs, analytics] = await Promise.all([
+			fetchJobs(), fetchTrackedJobs(), api("/api/analytics", { signal: request.controller.signal }),
 		]);
+		if (!current()) return;
+		state.jobs = jobs;
+		state.trackedJobs = trackedJobs;
+		state.analytics = analytics;
+		if (request.jobId) await loadNetworkingContacts();
+		if (!current()) return;
 		const summary = result.summary || {
 			providerReturned: 0,
 			accepted: 0,
@@ -1853,28 +1992,36 @@ async function executeDiscovery(criteria) {
 			block: "start",
 		});
 	} catch (error) {
+		if (!current()) return;
 		state.networkingSearch = {
 			status: "error",
-			message:
+			message: completed
+				? "The search completed, but saved results could not be refreshed. Reload the workspace before starting another paid search."
+				:
 				error instanceof Error
 					? error.message
 					: "The search could not be completed.",
 			summary: null,
 		};
 		render();
+	} finally {
+		if (state.discoveryRequest === request) state.discoveryRequest = null;
 	}
 }
 
 function readDiscoveryCriteria() {
 	return {
-		roles: listValue("roles"),
-		industries: listValue("industries"),
-		companies: listValue("companies"),
-		locations: listValue("locations"),
-		keywords: listValue("keywords"),
-		seniority: listValue("seniority"),
+		...(state.networkingJob?.discoveryCriteria || {
+			roles: listValue("roles"),
+			industries: listValue("industries"),
+			companies: listValue("companies"),
+			locations: listValue("locations"),
+			keywords: listValue("keywords"),
+			seniority: listValue("seniority"),
+		}),
 		objective: value("objective"),
 		count: Number(value("count")),
+		anthropicSearchMaxUses: document.getElementById("anthropic-expanded-search")?.checked ? 3 : 1,
 	};
 }
 
@@ -1884,10 +2031,14 @@ function discoverySearchStatus(summary) {
 			? "partial"
 			: "error";
 	}
-	return summary.inserted > 0 ? "success" : "empty";
+	if (summary.jobQualified === 0) return "empty";
+	return summary.inserted > 0 || summary.jobQualified > 0 ? "success" : "empty";
 }
 
 function discoverySuccessMessage(summary) {
+	if (summary.jobQualified != null) {
+		return `${summary.jobQualified} qualified ${summary.jobQualified === 1 ? "contact" : "contacts"} matched this search's priorities; ${summary.jobUnconfirmed || 0} unconfirmed. ${summary.inserted} new, ${summary.duplicates} already tracked. Saved contacts are ranked for this job, not as confirmed hiring owners.${discoveryFallbackFailureMessage(summary) ? ` ${discoveryFallbackFailureMessage(summary)}` : ""}`;
+	}
 	const details = [];
 	if (summary.strongAccepted) {
 		details.push(
@@ -1920,6 +2071,9 @@ function discoverySuccessMessage(summary) {
 
 function discoveryEmptyMessage(summary) {
 	const fallbackFailure = discoveryFallbackFailureMessage(summary);
+	if (summary.jobQualified === 0) {
+		return `No qualified matches were confirmed in this search. ${summary.jobUnconfirmed || 0} company contacts have unconfirmed fit and are shown separately. Existing linked contacts remain available. A contact is not guaranteed for every job.${fallbackFailure ? ` ${fallbackFailure}` : ""}`;
+	}
 	if (summary.duplicates > 0) {
 		return `No new people were added. ${summary.duplicates} matching ${summary.duplicates === 1 ? "profile is" : "profiles are"} already tracked.${fallbackFailure ? ` ${fallbackFailure}` : " Edit the criteria to search for different roles."}`;
 	}
@@ -1959,7 +2113,8 @@ function discoveryFallbackFailureMessage(summary) {
 		summary.fallbackStatus === "SEARCH_LIMITED" ||
 		summary.fallbackReason === "max_uses_exceeded"
 	) {
-		message = `${provider} reached this request's one-search limit, not an API quota or key failure. Narrow the criteria before retrying, or choose another fallback provider. ${summary.fallbackAccepted > 0 ? "Only cited profiles that passed validation were retained." : "No usable fallback profiles were retained."}`;
+		const limit = summary.anthropicSearchMaxUses === 3 ? 3 : 1;
+		message = `${provider} reached this request's ${limit}-search limit, not an API quota or key failure. Review the search budget and costs before explicitly retrying; more searches may still return fewer or no results. ${summary.fallbackAccepted > 0 ? "Only cited profiles that passed validation were retained." : "No usable fallback profiles were retained."}`;
 	} else if (summary.fallbackReason === "invalid_tool_input") {
 		message = `${provider} could not run the search tool because its query input was invalid. Try fewer role, company, or location terms, or choose another fallback provider.`;
 	} else if (summary.fallbackReason === "query_too_long") {
@@ -2037,7 +2192,7 @@ async function regenerate(id) {
 }
 
 function openDraft(id) {
-	const prospect = state.session.prospects.find((item) => item.id === id);
+	const prospect = networkingPeople().find((item) => item.id === id);
 	if (!prospect) return;
 	document.getElementById("draft-id").value = prospect.id;
 	document.getElementById("draft-version").value = prospect.draftVersion;
@@ -2283,6 +2438,7 @@ async function initWorkspace() {
 
 async function logout() {
 	onboarding?.dispose();
+	clearNetworkingContext();
 	clearPrivateDialogs();
 	await run("Signing out…", async () => {
 		await api("/logout", { method: "POST" });
@@ -2310,9 +2466,8 @@ async function refresh(tab = state.tab) {
 		state.betaAdmin = null;
 		state.analytics = null;
 		state.analyticsError = "";
-		state.networkingJob = null;
-		state.networkingCriteria = null;
-		state.networkingSearch = { status: "idle", message: "", summary: null };
+		clearNetworkingContext();
+		syncViewToUrl();
 		render();
 	}
 	if (!betaLandingRequired()) {
@@ -2325,6 +2480,7 @@ async function refresh(tab = state.tab) {
 		state.betaAdmin = null;
 		state.analytics = null;
 	}
+	if (state.networkingJob) await loadNetworkingContacts();
 	render();
 }
 
@@ -2338,7 +2494,7 @@ async function loadJobData() {
 		pagination: { page: 1, pageSize: 100, total: 0, totalPages: 0 },
 	};
 	if (!jobOutreachLinkingEnabled()) {
-		state.networkingJob = null;
+		if (state.networkingJob) clearNetworkingContext();
 	}
 	if (state.networkingJob) {
 		state.networkingJob =
@@ -2480,6 +2636,8 @@ function navigate(view, options = {}) {
 
 function syncViewToUrl() {
 	const url = new URL(location.href);
+	if (state.session?.authenticated && state.networkingJob) url.searchParams.set("contactJob", state.networkingJob.id);
+	else url.searchParams.delete("contactJob");
 	url.hash = state.tab === "home" ? "" : state.tab;
 	history.replaceState(null, "", url);
 }
@@ -2591,6 +2749,7 @@ async function run(message, callback) {
 }
 
 async function api(path, options = {}) {
+	const identity = state.session?.user?.id;
 	const headers = { Accept: "application/json" };
 	const method = options.method || "GET";
 	const isFormData = options.body instanceof FormData;
@@ -2610,6 +2769,7 @@ async function api(path, options = {}) {
 					? options.body
 					: JSON.stringify(options.body),
 		credentials: "same-origin",
+		signal: options.signal,
 	});
 	let data;
 	try {
@@ -2618,7 +2778,8 @@ async function api(path, options = {}) {
 		throw new Error("The server response could not be read. Retry when connected.");
 	}
 	if (!response.ok) {
-		if (response.status === 401 && state.session?.authenticated) {
+		if (response.status === 401 && state.session?.authenticated && state.session.user?.id === identity) {
+			clearNetworkingContext();
 			state.session = { authenticated: false, betaAccessMode: state.session.betaAccessMode };
 			onboarding?.dispose();
 			clearPrivateDialogs();
@@ -2652,6 +2813,11 @@ function jobOutreachLinkingEnabled() {
 	return state.jobs.features?.jobOutreachLinking === true;
 }
 
+function jobContactAction(job) {
+	if (!state.session?.authenticated || !jobOutreachLinkingEnabled()) return "";
+	return `<button type="button" class="secondary job-contact-action" data-job-network="${job.id}" ${state.networkingSearch.status === "running" ? "disabled" : ""}>${icon("people")} People to contact</button>`;
+}
+
 function jobCard(job) {
 	const status = job.userState?.status;
 	const sourceLabel = JobSourceUi.sourceLabel(job.source);
@@ -2676,7 +2842,6 @@ function jobCard(job) {
 								<div class="job-more-menu">
 									<button data-job-apply="${job.id}" ${APPLICATION_STATUSES.includes(status) ? "disabled" : ""}>${icon("check")} Mark applied</button>
 									<label>Stage<select data-job-status="${job.id}">${jobStatusOptions(status)}</select></label>
-									${jobOutreachLinkingEnabled() ? `<button class="secondary" data-job-network="${job.id}" ${state.networkingSearch.status === "running" ? "disabled" : ""}>${icon("people")} Find people</button>` : ""}
 									${outreach ? `<p class="outreach-summary">${outreach.total} linked · ${outreach.draftReady} drafts · ${outreach.sent} sent · ${outreach.replied} replies</p>` : ""}
 								</div>
 							</details>`
@@ -2707,6 +2872,7 @@ function jobCard(job) {
 						: '<a class="button" href="/auth/google/login">Sign in to save</a>'
 			}
 			<a class="button primary" href="${escapeAttr(job.url)}" target="_blank" rel="noopener">View details</a>
+			${jobContactAction(job)}
 		</div>
 	</article>`;
 }
@@ -2720,7 +2886,7 @@ function applicationTableRow(job) {
 		<td><span class="status status-${status.toLowerCase()}">${formatStatus(status)}</span></td>
 		<td><time datetime="${escapeAttr(job.userState.updatedAt)}">${formatDateOnly(job.userState.updatedAt)}</time></td>
 		<td><span class="table-note">${escapeHtml(job.userState.notes?.trim() ? truncate(job.userState.notes, 54) : "—")}</span></td>
-		<td><button class="row-action-button" data-application-edit="${job.id}" aria-label="Edit ${escapeAttr(job.title)} at ${escapeAttr(job.company)}">${icon("more")}</button></td>
+		<td><div class="table-actions">${jobContactAction(job)}<button class="row-action-button" data-application-edit="${job.id}" aria-label="Edit ${escapeAttr(job.title)} at ${escapeAttr(job.company)}">${icon("more")}</button></div></td>
 	</tr>`;
 }
 
@@ -2734,7 +2900,7 @@ function applicationFilterButton(status, label, explicitCount) {
 }
 
 function networkFilterButton(filter, label, explicitCount) {
-	const prospects = state.session.prospects;
+	const prospects = networkingPeople();
 	const count =
 		explicitCount ??
 		prospects.filter((person) => {
@@ -2752,6 +2918,12 @@ function networkFilterButton(filter, label, explicitCount) {
 function networkingTableRow(person, profileReady) {
 	const profileUrl = person.linkedinUrl || person.sourceUrl;
 	const profileLabel = person.linkedinUrl ? "LinkedIn profile" : "Public profile";
+	const contact = state.networkingJob ? jobContactFor(person) : null;
+	const priority = state.networkingJob ? `<div class="job-contact-priority">
+		<strong>${escapeHtml(contact?.label || "Unconfirmed fit")}</strong>
+		<details><summary>Reason & public evidence</summary><p>${escapeHtml(contact?.reason || "This legacy link has no confirmed job-specific evidence.")}</p>${contact?.evidence ? `<blockquote>${escapeHtml(contact.evidence)}</blockquote>` : ""}${person.sourceUrl ? `<a href="${escapeAttr(person.sourceUrl)}" target="_blank" rel="noopener">Open public source</a>` : ""}</details>
+		${person.matchQuality === "BROADER_COMPANY" ? '<small>Broader company match - review role relevance.</small>' : ""}
+	</div>` : "";
 	let nextStep = "";
 	if (["DISCOVERED", "ERROR"].includes(person.status)) {
 		nextStep = `<button class="table-action primary" data-prepare="${person.id}" ${profileReady ? "" : "disabled"}>Approve & prepare</button><button class="table-action danger" data-reject="${person.id}">Reject</button>`;
@@ -2769,7 +2941,7 @@ function networkingTableRow(person, profileReady) {
 		<td>${escapeHtml(person.title || "Role not listed")}</td>
 		<td>${escapeHtml(person.company || "Company not listed")}</td>
 		<td><span class="status status-${person.status.toLowerCase()}">${formatStatus(person.status)}</span></td>
-		<td>${person.matchQuality === "BROADER_COMPANY" ? '<span class="chip chip-warning" title="Matches the company and a broader professional signal; review role relevance.">Broader</span>' : '<span class="chip chip-strong">Strong</span>'}</td>
+		<td>${priority || (person.matchQuality === "BROADER_COMPANY" ? '<span class="chip chip-warning" title="Matches the company and a broader professional signal; review role relevance.">Broader</span>' : '<span class="chip chip-strong">Strong</span>')}</td>
 		<td><div class="table-actions">${nextStep}</div>${person.errorMessage ? `<small class="row-error">${escapeHtml(person.errorMessage)}</small>` : ""}</td>
 		<td>${profileUrl ? `<a class="row-action-button" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" aria-label="${profileLabel} for ${escapeAttr(person.fullName)}">${icon("external")}</a>` : ""}</td>
 	</tr>`;

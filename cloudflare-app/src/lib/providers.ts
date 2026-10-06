@@ -6,18 +6,14 @@ import {
 	employerProfileDomains,
 	employerProfessionalTopics,
 	employerSearchAliases,
+	compareJobContactMatches,
+	rankJobContact,
+	sameEmployer,
+	type JobContactMatch,
+	type JobDiscoveryCriteria,
 } from "./job-discovery";
 
-export interface DiscoveryCriteria {
-	roles: string[];
-	industries: string[];
-	companies: string[];
-	locations: string[];
-	keywords: string[];
-	seniority: string[];
-	objective: string;
-	count: number;
-}
+export type DiscoveryCriteria = JobDiscoveryCriteria;
 
 export interface DiscoveredPerson {
 	firstName: string;
@@ -39,6 +35,7 @@ export interface DiscoveredPerson {
 	outreachObjective: string;
 	relevanceScore: number;
 	matchQuality: "STRONG" | "BROADER_COMPANY";
+	jobContact?: JobContactMatch;
 }
 
 export interface DiscoveryProviderResult {
@@ -75,6 +72,7 @@ export interface ResumeProfileSuggestions {
 export async function discoverWithTavily(
 	apiKey: string,
 	criteria: DiscoveryCriteria,
+	signal?: AbortSignal,
 ): Promise<DiscoveryProviderResult> {
 	const primary = await fetchJson<{
 		results?: Array<{ title?: string; url?: string; content?: string }>;
@@ -92,6 +90,7 @@ export async function discoverWithTavily(
 			safe_search: true,
 		},
 		attempts: 3,
+		signal,
 	});
 	const seen = new Set<string>();
 	const people: DiscoveredPerson[] = [];
@@ -102,11 +101,11 @@ export async function discoverWithTavily(
 		if (candidate.insufficientMatch) insufficientMatchRejected += 1;
 		const person = candidate.person;
 		if (!person) continue;
-		const key = person.linkedinUrl || person.sourceUrl;
+		const key = discoveryPersonKey(person, criteria);
 		if (seen.has(key)) continue;
 		seen.add(key);
 		people.push(person);
-		if (people.length >= criteria.count) {
+		if (!criteria.jobContext && people.length >= criteria.count) {
 			return {
 				providerReturned: primaryResults.length,
 				primaryProviderReturned: primaryResults.length,
@@ -120,13 +119,14 @@ export async function discoverWithTavily(
 		}
 	}
 
-	const primaryAccepted = people.length;
+	const primaryKeys = new Set(seen);
 	let fallbackResults: Array<{
 		title?: string;
 		url?: string;
 		content?: string;
 	}> = [];
-	if (people.length < criteria.count) {
+	const remaining = criteria.count - qualifiedDiscoveryCount(people, criteria);
+	if (remaining > 0) {
 		const fallback = await fetchJson<{
 			results?: Array<{ title?: string; url?: string; content?: string }>;
 		}>("https://api.tavily.com/search", {
@@ -136,13 +136,14 @@ export async function discoverWithTavily(
 				include_domains: professionalBioDomains(criteria),
 				include_domains_mode: "restrict",
 				search_depth: "basic",
-				max_results: Math.min((criteria.count - people.length) * 4, 20),
+				max_results: Math.min(remaining * 4, 20),
 				topic: "general",
 				include_answer: false,
 				include_raw_content: false,
 				safe_search: true,
 			},
 			attempts: 3,
+			signal,
 		});
 		fallbackResults = fallback.results ?? [];
 		for (const result of fallbackResults) {
@@ -152,23 +153,52 @@ export async function discoverWithTavily(
 				linkedIn.person ||
 				professionalBioPerson(result, criteria);
 			if (!person) continue;
-			const key = person.linkedinUrl || person.sourceUrl;
+			const key = discoveryPersonKey(person, criteria);
 			if (seen.has(key)) continue;
 			seen.add(key);
 			people.push(person);
-			if (people.length >= criteria.count) break;
+			if (!criteria.jobContext && people.length >= criteria.count) break;
 		}
 	}
+	const selected = selectDiscoveryPeople(people, criteria);
+	const primaryAccepted = selected.filter((person) =>
+		primaryKeys.has(discoveryPersonKey(person, criteria)),
+	).length;
 	return {
 		providerReturned: primaryResults.length + fallbackResults.length,
 		primaryProviderReturned: primaryResults.length,
 		primaryAccepted,
 		fallbackProviderReturned: fallbackResults.length,
-		fallbackAccepted: people.length - primaryAccepted,
+		fallbackAccepted: selected.length - primaryAccepted,
 		insufficientMatchRejected,
-		...matchQualityCounts(people),
-		people,
+		...matchQualityCounts(selected),
+		people: selected,
 	};
+}
+
+export function qualifiedDiscoveryCount(people: DiscoveredPerson[], criteria: DiscoveryCriteria): number {
+	return criteria.jobContext
+		? people.filter((person) => person.jobContact?.tier != null).length
+		: people.length;
+}
+
+export function discoveryPersonKey(person: DiscoveredPerson, criteria: DiscoveryCriteria): string {
+	if (criteria.jobContext && person.linkedinUrl) {
+		return `linkedin:${new URL(person.linkedinUrl).pathname.toLowerCase().replace(/\/+$/, "")}`;
+	}
+	return person.linkedinUrl || person.sourceUrl;
+}
+
+export function selectDiscoveryPeople(people: DiscoveredPerson[], criteria: DiscoveryCriteria): DiscoveredPerson[] {
+	if (!criteria.jobContext) return people.slice(0, criteria.count);
+	const job = criteria.jobContext;
+	return people.map((person) => ({
+		...person, jobContact: rankJobContact(person, job),
+	})).sort((left, right) =>
+		compareJobContactMatches(left.jobContact, right.jobContact) ||
+		left.fullName.localeCompare(right.fullName, "en") ||
+		left.sourceUrl.localeCompare(right.sourceUrl, "en"),
+	).slice(0, criteria.count);
 }
 
 export async function enrichWithHunter(
@@ -601,6 +631,7 @@ function parseJsonObject(text: string): Record<string, unknown> {
 }
 
 export function buildDiscoveryQuery(criteria: DiscoveryCriteria): string {
+	if (criteria.jobContext) return buildJobContactQuery(criteria);
 	const roleTopics = Array.from(
 		new Set([...criteria.roles, ...criteria.keywords]),
 	);
@@ -617,6 +648,12 @@ export function buildDiscoveryQuery(criteria: DiscoveryCriteria): string {
 export function buildProfessionalBioQuery(
 	criteria: DiscoveryCriteria,
 ): string {
+	if (criteria.jobContext) {
+		return buildBoundedQuery("", [
+			buildJobContactQuery(criteria),
+			queryGroup(["team", "bio", "profile"], 3),
+		]);
+	}
 	const roleTopics = Array.from(
 		new Set([
 			...criteria.keywords,
@@ -629,6 +666,14 @@ export function buildProfessionalBioQuery(
 		queryGroup(employerSearchAliases(criteria.companies), 8),
 		queryGroup(criteria.locations, 6),
 		queryGroup(["team", "bio", "profile", "leadership"], 4),
+	]);
+}
+
+function buildJobContactQuery(criteria: DiscoveryCriteria): string {
+	// One company-scoped query covers all three priorities; recruiters need not be junior.
+	return buildBoundedQuery("", [
+		queryGroup(employerSearchAliases([criteria.jobContext!.company]), 8),
+		queryGroup(criteria.roles, 12),
 	]);
 }
 
@@ -717,12 +762,26 @@ function linkedInPerson(
 	if (!isPersonName(parsed.fullName)) {
 		return { person: null, insufficientMatch: false };
 	}
+	if (criteria.jobContext && parsed.company && !sameEmployer(parsed.company, criteria.jobContext.company)) {
+		return { person: null, insufficientMatch: true };
+	}
 	const evidence = `${result.title || ""} ${result.content || ""}`;
 	const score = scoreEvidence(evidence, criteria);
-	const company = matchedRequestedCompany(evidence, criteria.companies);
+	let company = matchedRequestedCompany(evidence, criteria.companies);
 	const roleMatch = matchesRoleEvidence(evidence, criteria);
+	const sourceSnippet = cleanText(
+		criteria.jobContext ? `${result.title || ""}\n${result.content || ""}` : result.content || "",
+		2500,
+	);
+	const jobContact = criteria.jobContext ? rankJobContact({
+		...parsed, company, sourceSnippet, sourceUrl: linkedinUrl,
+	}, criteria.jobContext) : undefined;
 	let matchQuality: "STRONG" | "BROADER_COMPANY" = "STRONG";
-	if (criteria.companies.length) {
+	if (jobContact) {
+		if (!jobContact.currentCompany) return { person: null, insufficientMatch: true };
+		company = employerDisplayName(criteria.jobContext!.company);
+		matchQuality = jobContact.tier === 1 ? "STRONG" : "BROADER_COMPANY";
+	} else if (criteria.companies.length) {
 		if (!company) {
 			return { person: null, insufficientMatch: true };
 		}
@@ -758,7 +817,7 @@ function linkedInPerson(
 			linkedinUrl,
 			discoveryProvider: "TAVILY",
 			sourceUrl: linkedinUrl,
-			sourceSnippet: cleanText(result.content || "", 2500),
+			sourceSnippet,
 			whyRelevant:
 				[
 					...(matchQuality === "BROADER_COMPANY"
@@ -771,6 +830,7 @@ function linkedInPerson(
 			outreachObjective: cleanText(criteria.objective, 1000),
 			relevanceScore: score.value,
 			matchQuality,
+			...(jobContact ? { jobContact } : {}),
 		},
 		insufficientMatch: false,
 	};
@@ -807,8 +867,18 @@ export function professionalBioPerson(
 		...criteria,
 		companies: [company],
 	});
+	const sourceSnippet = cleanText(
+		criteria.jobContext ? `${result.title || ""}\n${result.content || ""}` : result.content || "",
+		2500,
+	);
+	const jobContact = criteria.jobContext ? rankJobContact({
+		...parsed, company, sourceSnippet, sourceUrl,
+	}, criteria.jobContext) : undefined;
 	let matchQuality: "STRONG" | "BROADER_COMPANY";
-	if (matchesRoleEvidence(evidence, criteria) && score.value >= 55) {
+	if (jobContact) {
+		if (!jobContact.currentCompany) return null;
+		matchQuality = jobContact.tier === 1 ? "STRONG" : "BROADER_COMPANY";
+	} else if (matchesRoleEvidence(evidence, criteria) && score.value >= 55) {
 		matchQuality = "STRONG";
 	} else if (
 		isBroaderCompanyMatch(parsed.title, evidence, criteria, score.value)
@@ -825,7 +895,7 @@ export function professionalBioPerson(
 		linkedinUrl: "",
 		discoveryProvider: "TAVILY",
 		sourceUrl,
-		sourceSnippet: cleanText(result.content || "", 2500),
+		sourceSnippet,
 		whyRelevant:
 			[
 				...(matchQuality === "BROADER_COMPANY"
@@ -840,6 +910,7 @@ export function professionalBioPerson(
 		outreachObjective: cleanText(criteria.objective, 1000),
 		relevanceScore: score.value,
 		matchQuality,
+		...(jobContact ? { jobContact } : {}),
 	};
 }
 

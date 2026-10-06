@@ -6,6 +6,7 @@ import type {
 } from "../types";
 import { safeMetadata } from "./log";
 import { prospectJobLinks } from "./jobs";
+import { compareJobContactMatches, rankJobContact, type JobContactMatch } from "./job-discovery";
 
 export interface PersonalContextItem {
 	category: string;
@@ -74,7 +75,7 @@ export interface Prospect {
 	errorMessage: string;
 	createdAt: string;
 	updatedAt: string;
-	linkedJobs: Array<{ id: string; title: string; company: string }>;
+	linkedJobs: Array<{ id: string; title: string; company: string; contactMatch?: JobContactMatch }>;
 }
 
 interface ProspectRow {
@@ -221,20 +222,32 @@ export async function setSpreadsheetId(
 export async function listProspects(
 	env: AppBindings,
 	userId: string,
+	jobId?: string,
 ): Promise<Prospect[]> {
 	const [result, links] = await Promise.all([
 		env.DB.prepare(
-			"SELECT * FROM prospects WHERE user_id = ? ORDER BY updated_at DESC LIMIT 500",
+			`SELECT * FROM prospects WHERE user_id = ?
+			 ${jobId ? "AND id IN (SELECT prospect_id FROM job_prospects WHERE user_id = ? AND job_id = ?)" : ""}
+			 ORDER BY updated_at DESC LIMIT 500`,
 		)
-			.bind(userId)
+			.bind(...(jobId ? [userId, userId, jobId] : [userId]))
 			.all<ProspectRow>(),
 		prospectJobLinks(env, userId),
 	]);
-	return result.results.map((row) => {
+	const prospects = result.results.map((row) => {
 		const prospect = mapProspect(row);
-		prospect.linkedJobs = links.get(prospect.id) ?? [];
+		prospect.linkedJobs = (links.get(prospect.id) ?? []).map((job) => ({
+			...job, contactMatch: rankJobContact(prospect, job),
+		}));
 		return prospect;
 	});
+	if (jobId) prospects.sort((left, right) => {
+		const leftMatch = left.linkedJobs.find((job) => job.id === jobId)?.contactMatch;
+		const rightMatch = right.linkedJobs.find((job) => job.id === jobId)?.contactMatch;
+		return (leftMatch && rightMatch ? compareJobContactMatches(leftMatch, rightMatch) : 0) ||
+			left.fullName.localeCompare(right.fullName, "en") || left.id.localeCompare(right.id, "en");
+	});
+	return prospects;
 }
 
 export async function getProspect(

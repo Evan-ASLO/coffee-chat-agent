@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	deriveJobDiscoveryCriteria,
 	employerDisplayName,
+	rankJobContact,
+	compareJobContactMatches,
 } from "../src/lib/job-discovery";
 import {
 	buildDiscoveryQuery,
@@ -26,7 +28,7 @@ describe("job-derived networking criteria", () => {
 		expect(employerDisplayName("Maple Ventures")).toBe("Maple Ventures");
 	});
 
-	it("derives investment professionals before recruiting roles", () => {
+	it("targets junior investment peers before early-career recruiting and other juniors", () => {
 		const criteria = deriveJobDiscoveryCriteria({
 			company: "bmo",
 			title: "Investment Team Intern - Winter 2027",
@@ -35,15 +37,17 @@ describe("job-derived networking criteria", () => {
 			industry: "Banking & Financial Services",
 		});
 		expect(criteria.companies).toEqual(["BMO Financial Group"]);
-		expect(criteria.roles.slice(0, 4)).toEqual([
-			"Investment Team",
-			"Investment Analyst",
-			"Portfolio Manager",
-			"Investment Professional",
+		expect(criteria.roles.slice(0, 3)).toEqual([
+			"Junior Investment Analyst",
+			"Investment Analyst I",
+			"Investment Intern",
 		]);
 		expect(criteria.roles).toEqual(
-			expect.arrayContaining(["Talent Acquisition", "Recruiter"]),
+			expect.arrayContaining(["Campus Recruiter", "New Graduate Recruiter", "Junior"]),
 		);
+		expect(criteria.roles.join(" ")).not.toMatch(/manager|director|leadership/i);
+		expect(criteria.seniority).toContain("Entry-level");
+		expect(criteria.jobContext).toEqual({ company: "BMO Financial Group", title: "Investment Team Intern - Winter 2027" });
 		expect(criteria.keywords).toEqual(["investment", "portfolio"]);
 		expect(criteria.keywords).not.toContain(
 			"Investment Team Intern - Winter 2027",
@@ -54,7 +58,7 @@ describe("job-derived networking criteria", () => {
 		expect(criteria.objective).toContain("BMO Financial Group");
 	});
 
-	it("falls back to hiring and recruiting roles without guessing a team", () => {
+	it("targets early-career recruiters and other juniors without guessing an unknown function", () => {
 		const criteria = deriveJobDiscoveryCriteria({
 			company: "Unknown Employer",
 			title: "Summer Intern",
@@ -63,12 +67,108 @@ describe("job-derived networking criteria", () => {
 			industry: null,
 		});
 		expect(criteria.roles).toEqual([
-			"Hiring Manager",
-			"Talent Acquisition",
-			"Recruiter",
+			"Campus Recruiter",
+			"University Recruiter",
+			"Early Careers Recruiter",
+			"New Graduate Recruiter",
+			"Junior",
+			"Entry-level",
+			"Graduate Trainee",
 		]);
 		expect(criteria.keywords).toEqual([]);
 		expect(criteria.industries).toEqual([]);
+	});
+});
+
+describe("job-specific contact priorities", () => {
+	const job = { company: "BMO Financial Group", title: "Investment Intern" };
+	const person = (title: string, sourceSnippet = `Alex Example is a ${title} at BMO Financial Group.`) => ({
+		fullName: "Alex Example", title, company: "BMO Financial Group", sourceSnippet,
+		sourceUrl: "https://www.linkedin.com/in/fictional-alex",
+	});
+
+	it("ranks by tier before score, with job-dependent function relevance", () => {
+		const peer = person("Junior Investment Analyst");
+		const campus = person("Senior Campus Recruiter");
+		const other = person("Junior Software Engineer");
+		expect(rankJobContact(peer, job)).toMatchObject({ tier: 1, currentCompany: true, roleRelevant: true });
+		expect(rankJobContact(campus, job)).toMatchObject({ tier: 2 });
+		expect(rankJobContact(other, job)).toMatchObject({ tier: 3, roleRelevant: false });
+		expect(rankJobContact(other, { ...job, title: "Software Engineering Intern" }).tier).toBe(1);
+		expect(rankJobContact(peer, { ...job, title: "Software Engineering Intern" }).tier).toBe(3);
+		expect(compareJobContactMatches({ ...rankJobContact(peer, job), score: 0 }, { ...rankJobContact(campus, job), score: 100 })).toBeLessThan(0);
+		expect(compareJobContactMatches({ ...rankJobContact(campus, job), score: 0 }, { ...rankJobContact(other, job), score: 100 })).toBeLessThan(0);
+	});
+
+	it.each([
+		"Senior Investment Analyst", "Lead Investment Analyst", "Associate Director of Investments",
+		"VP Investment Associate", "Principal Investment Analyst", "Investment Analyst II",
+		"Investment Analyst", "Investment Associate", "Recruiter",
+	])("keeps %s unconfirmed rather than manufacturing junior or campus evidence", (title) => {
+		expect(rankJobContact(person(title), job)).toMatchObject({ tier: null, currentCompany: true });
+	});
+
+	it("uses explicit recruitment remit, not recruiter age, seniority or university attendance", () => {
+		expect(rankJobContact(person("Recruiter", "Alex Example is a Recruiter at BMO Financial Group focused on new-graduate hiring."), job).tier).toBe(2);
+		expect(rankJobContact(person("Recruiter", "Alex Example is a Recruiter at BMO Financial Group. Studied at a university and looks young."), job).tier).toBeNull();
+		expect(rankJobContact(person("Junior Recruiter"), job).tier).toBe(3);
+		expect(rankJobContact(person("Investment Analyst", "Alex Example is an Investment Analyst at BMO Financial Group. Young face in a photo."), job).tier).toBeNull();
+		expect(rankJobContact(person("Recruiter", "Alex Example is a Recruiter at BMO Financial Group. Recruits for internships and new graduates."), job).tier).toBe(2);
+		expect(rankJobContact(person("Recruiter", "Alex Example is a Recruiter at BMO Financial Group, not a campus recruiter."), job).tier).toBeNull();
+		expect(rankJobContact(person("Recruiter", "Alex Example is a Recruiter and a new graduate at BMO Financial Group."), job).tier).toBeNull();
+		expect(rankJobContact(person("Recruiter", "Alex Example is a Recruiter at BMO Financial Group and is early in their career."), job).tier).toBeNull();
+		expect(rankJobContact(person("Recruiter", "Alex Example is a Recruiter at BMO Financial Group. Hiring new graduates and interns."), job).tier).toBe(2);
+	});
+
+	it("does not trust unsupported or contradictory role/seniority fields", () => {
+		expect(rankJobContact(person("Junior Investment Analyst", "Alex Example works at BMO Financial Group."), job).tier).toBeNull();
+		expect(rankJobContact(person("Junior Investment Analyst", "Alex Example - Junior Investment Analyst - BMO | LinkedIn\nAlex Example is a Senior Investment Analyst at BMO Financial Group."), job).tier).toBeNull();
+	});
+
+	it.each([
+		"Alex Example was a Junior Investment Analyst at BMO Financial Group.",
+		"Alex Example is a Junior Investment Analyst at Other Firm. Interested in BMO Financial Group.",
+		"Alex Example previously worked as a Junior Investment Analyst at BMO Financial Group; now at Other Firm.",
+		"Alex Example - Junior Investment Analyst - BMO | LinkedIn\nAlex Example currently works at Other Firm.",
+		"Alex Example - Junior Investment Analyst - BMO | LinkedIn\nJunior Investment Analyst at BMO, 2020 - 2022.",
+		"Junior Investment Analyst, BMO Financial Group", // A company keyword alone is not employment evidence.
+	])("rejects former, aspirational, ambiguous or wrong-employer evidence: %s", (evidence) => {
+		expect(rankJobContact(person("Junior Investment Analyst", evidence), job)).toMatchObject({ tier: null, currentCompany: false });
+	});
+
+	it("recognizes employer aliases, but still requires a supported source", () => {
+		const candidate = person("Investment Analyst I", "Alex Example is an Investment Analyst I at Bank of Montreal.");
+		expect(rankJobContact(candidate, job).tier).toBe(1);
+		expect(rankJobContact({ ...candidate, sourceUrl: "https://example.test/uncited" }, job).tier).toBeNull();
+		expect(rankJobContact({ ...candidate, sourceUrl: "https://www.bmo.com/careers/jobs/alex" }, job).tier).toBeNull();
+		expect(rankJobContact({ ...candidate, sourceUrl: "https://www.bmo.com/en/people" }, job).tier).toBeNull();
+	});
+
+	it("collects and ranks all returned candidates before truncating, without per-tier searches", async () => {
+		const criteria = deriveJobDiscoveryCriteria({
+			...job, company: "bmo", location: "Toronto", region: "Canada", industry: null,
+		});
+		const profiles = [
+			["Zed Example", "Junior Software Engineer", "BMO"],
+			["Casey Example", "Senior Campus Recruiter", "BMO"],
+			["Wrong Example", "Junior Investment Analyst", "Other Firm"],
+			["Senior Example", "Senior Investment Analyst", "BMO"],
+			["Amy Example", "Junior Investment Analyst", "BMO"],
+		].map(([name, title, company]) => ({
+			title: `${name} - ${title} - ${company} | LinkedIn`,
+			url: `https://www.linkedin.com/in/fictional-${name!.split(" ")[0]!.toLowerCase()}`,
+			content: `${name} is a ${title} at ${company}.`,
+		}));
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ results: profiles })));
+		const result = await discoverWithTavily("fake-tavily-key", { ...criteria, count: 3 });
+		expect(result.people.map((candidate) => candidate.fullName)).toEqual(["Amy Example", "Casey Example", "Zed Example"]);
+		expect(result.people.map((candidate) => candidate.jobContact?.tier)).toEqual([1, 2, 3]);
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		const query = JSON.parse(String(fetchSpy.mock.calls[0]![1]!.body)).query;
+		expect(query).toContain('"Campus Recruiter"');
+		expect(query).toContain('"Junior Investment Analyst"');
+		expect(query).not.toMatch(/manager|leadership/i);
+		expect(buildProfessionalBioQuery(criteria)).not.toMatch(/manager|leadership/i);
 	});
 });
 

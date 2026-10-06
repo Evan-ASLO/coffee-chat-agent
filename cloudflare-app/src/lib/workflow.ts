@@ -14,6 +14,9 @@ import {
 	createDraft,
 	discoverWithTavily,
 	enrichWithHunter,
+	discoveryPersonKey,
+	qualifiedDiscoveryCount,
+	selectDiscoveryPeople,
 	type DiscoveryCriteria,
 } from "./providers";
 import { readResumeAttachment } from "./resume";
@@ -41,6 +44,7 @@ import type { QueueMessage } from "../types";
 import {
 	discoverWithPeopleSearchFallback,
 	PeopleSearchFallbackError,
+	anthropicSearchLimit,
 	type PeopleSearchErrorCategory,
 	type PeopleSearchErrorReason,
 	type PeopleSearchFallbackProvider,
@@ -71,6 +75,9 @@ export interface DiscoverySummary {
 	fallbackHttpStatus: number | null;
 	fallbackReturned: number;
 	fallbackAccepted: number;
+	anthropicSearchMaxUses: 1 | 3;
+	jobQualified: number | null;
+	jobUnconfirmed: number | null;
 	inserted: number;
 	duplicates: number;
 	rejected: number;
@@ -103,6 +110,8 @@ export async function discoverProspects(
 	criteria: DiscoveryCriteria,
 	requestId: string,
 	jobId?: string,
+	authorizedAnthropicSearchMaxUses: number = 1,
+	signal?: AbortSignal,
 ): Promise<{ prospects: Prospect[]; summary: DiscoverySummary }> {
 	await enforceRateLimit(env, {
 		userId,
@@ -110,18 +119,22 @@ export async function discoverProspects(
 		limit: 20,
 		windowSeconds: 3600,
 	});
-	const tavilyKey = await readCredential(env, userId, "TAVILY");
+	const tavilyKey = await readOptionalCredential(env, userId, "TAVILY");
+	if (!tavilyKey) {
+		throw new ClientInputError("Add your Tavily API key in Settings before searching. Saved job contacts remain available without a key.");
+	}
 	const requestedCount = Math.min(
 		criteria.count,
 		Number(env.MAX_DISCOVERY_RESULTS || 20),
 	);
+	const anthropicSearchMaxUses = anthropicSearchLimit(authorizedAnthropicSearchMaxUses);
 	const providerResult = await discoverWithTavily(tavilyKey, {
 		...criteria,
 		count: requestedCount,
-	});
+	}, signal);
 	const discoveredByUrl = new Map(
 		providerResult.people.map((person) => [
-			person.linkedinUrl || person.sourceUrl,
+			discoveryPersonKey(person, criteria),
 			person,
 		]),
 	);
@@ -132,8 +145,9 @@ export async function discoverProspects(
 	let fallbackModel = "";
 	let fallbackHttpStatus: number | null = null;
 	let fallbackReturned = 0;
-	let groundedAccepted = 0;
-	if (discoveredByUrl.size < requestedCount) {
+	const remaining = requestedCount - qualifiedDiscoveryCount([...discoveredByUrl.values()], criteria);
+	if (remaining > 0) {
+		signal?.throwIfAborted();
 		const settings = await getSettings(env, userId);
 		fallbackProvider = settings.peopleSearchFallbackProvider;
 		if (fallbackProvider === "NONE") {
@@ -158,17 +172,18 @@ export async function discoverProspects(
 						apiKey: providerKey,
 						model: fallbackModel,
 						criteria,
-						count: requestedCount - discoveredByUrl.size,
+						count: remaining,
+						anthropicSearchMaxUses,
+						signal,
 					});
 					fallbackStatus = grounded.status;
 					fallbackReason = grounded.reason;
 					fallbackModel = grounded.model;
 					fallbackReturned = grounded.returned;
 					for (const person of grounded.people) {
-						const key = person.linkedinUrl || person.sourceUrl;
+						const key = discoveryPersonKey(person, criteria);
 						if (!discoveredByUrl.has(key)) {
 							discoveredByUrl.set(key, person);
-							groundedAccepted += 1;
 						}
 					}
 				} catch (error) {
@@ -183,13 +198,19 @@ export async function discoverProspects(
 			}
 		}
 	}
-	const discovered = [...discoveredByUrl.values()].slice(0, requestedCount);
+	const discovered = selectDiscoveryPeople([...discoveredByUrl.values()], {
+		...criteria, count: requestedCount,
+	});
+	const jobQualified = criteria.jobContext ? qualifiedDiscoveryCount(discovered, criteria) : null;
+	const jobUnconfirmed = jobQualified === null ? null : discovered.length - jobQualified;
+	const groundedAccepted = discovered.filter((person) => person.discoveryProvider !== "TAVILY").length;
 	const strongAccepted = discovered.filter(
 		(person) => person.matchQuality === "STRONG",
 	).length;
 	const broaderAccepted = discovered.filter(
 		(person) => person.matchQuality === "BROADER_COMPANY",
 	).length;
+	signal?.throwIfAborted();
 	const inserted = await insertProspects(env, userId, discovered);
 	if (jobId) {
 		const linkedProspectIds = new Set([
@@ -228,6 +249,9 @@ export async function discoverProspects(
 			fallbackHttpStatus,
 			fallbackReturned,
 			fallbackAccepted: groundedAccepted,
+			anthropicSearchMaxUses,
+			jobQualified,
+			jobUnconfirmed,
 			inserted: inserted.length,
 			duplicates: discovered.length - inserted.length,
 			rejected: Math.max(
@@ -269,6 +293,9 @@ export async function discoverProspects(
 			fallbackHttpStatus,
 			fallbackReturned,
 			fallbackAccepted: groundedAccepted,
+			anthropicSearchMaxUses,
+			jobQualified,
+			jobUnconfirmed,
 			inserted: inserted.length,
 			duplicates: discovered.length - inserted.length,
 			rejected: Math.max(

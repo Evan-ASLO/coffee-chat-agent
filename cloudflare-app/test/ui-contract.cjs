@@ -194,10 +194,15 @@ test("keeps networking approval-first in a compact table and discovery dialog", 
 
 test("preserves discovery recovery and cited-search provider safety", () => {
 	const app = read("public/app.js");
-	assert.match(
-		app,
-		/async function beginJobNetworking[\s\S]*await executeDiscovery\(state\.networkingCriteria\)/,
-	);
+	const openJob = app.slice(app.indexOf("async function beginJobNetworking"), app.indexOf("async function findPeople"));
+	assert.match(openJob, /await loadNetworkingContacts\(\)/);
+	assert.doesNotMatch(openJob, /executeDiscovery\(/);
+	assert.match(app, /addEventListener\("click", openDiscoveryDialog\)/);
+	assert.match(app, /I authorize up to 3 Anthropic web searches/);
+	assert.match(app, /People to contact/);
+	assert.match(app, /Reason & public evidence/);
+	assert.match(app, /Unconfirmed fits - not part of the three ranked priorities/);
+	assert.match(read("public/styles.css"), /\.discovery-state > div > strong,\s*\.discovery-state > div > span\s*\{\s*display: block;/);
 	assert.match(app, /Searching public professional profiles/);
 	assert.match(app, /retry-job-discovery/);
 	assert.match(app, /summary\.strongAccepted/);
@@ -214,11 +219,16 @@ test("preserves discovery recovery and cited-search provider safety", () => {
 function discoveryClient(summary) {
 	const source = read("public/app.js");
 	const client = {
-		state: { networkingSearch: { status: "idle" } },
+		state: {
+			session: { authenticated: true, user: { id: "fake-user" }, credentials: { TAVILY: { configured: true } } },
+			networkingSearch: { status: "idle" }, networkingJob: null,
+			networkingContacts: { status: "idle", prospects: [], request: 0 },
+		},
 		toasts: [],
 		api: async (url) => {
 			if (url === "/api/discovery") return { summary };
-			if (url === "/api/session") return {};
+			if (url === "/api/session") return client.state.session;
+			if (url === "/api/analytics") return {};
 			throw new Error(`Unexpected API path: ${url}`);
 		},
 		jobOutreachLinkingEnabled: () => false,
@@ -227,6 +237,11 @@ function discoveryClient(summary) {
 		loadJobData: async () => {},
 		loadBetaAdminData: async () => {},
 		loadAnalyticsData: async () => {},
+		fetchJobs: async () => ({}),
+		fetchTrackedJobs: async () => ({}),
+		syncViewToUrl: () => {},
+		AbortController,
+		structuredClone,
 		showToast: (message) => client.toasts.push(message),
 		escapeHtml: (value) => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;"),
 	};
@@ -234,6 +249,11 @@ function discoveryClient(summary) {
 		source.slice(source.indexOf("async function executeDiscovery("), source.indexOf("\nfunction readDiscoveryCriteria(")) +
 		source.slice(source.indexOf("function discoverySearchStatus("), source.indexOf("\nasync function prepare(")) +
 		source.slice(source.indexOf("function renderNetworkingSearchState("), source.indexOf("\nfunction renderApprove(")),
+		client,
+	);
+	vm.runInNewContext(
+		source.slice(source.indexOf("function renderSearchCosts("), source.indexOf("\nfunction networkingPeople(")) +
+		source.slice(source.indexOf("async function beginJobNetworking("), source.indexOf("\nasync function findPeople(")),
 		client,
 	);
 	return client;
@@ -258,7 +278,7 @@ test("discovery renders failed, partial, duplicate, and completed outcomes hones
 		const html = client.renderNetworkingSearchState();
 		assert.doesNotMatch(html, /No people found|Verify the configured model/);
 		if (summary.fallbackStatus === "SEARCH_LIMITED") {
-			assert.match(html, /one-search limit, not an API quota or key failure/);
+			assert.match(html, /1-search limit, not an API quota or key failure/);
 			assert.match(html, /notice warning/);
 			assert.match(html, /retry-job-discovery/);
 			assert.match(html, fixture.status === "error" ? /Search could not be completed/ : /Partial results - search incomplete/);
@@ -271,6 +291,91 @@ test("discovery renders failed, partial, duplicate, and completed outcomes hones
 		if (fixture.duplicates) assert.match(html, /already tracked/);
 		if (fixture.status === "empty") assert.match(html, /No new people added/);
 		if (fixture.status === "success") assert.match(html, /People found/);
+	}
+});
+
+test("job opening and missing keys perform only an owned saved-contact read", async () => {
+	const client = discoveryClient({});
+	const job = { id: "a".repeat(64), title: "Software Intern", company: "Example Firm", discoveryCriteria: { count: 5 } };
+	client.findJob = () => job;
+	client.jobOutreachLinkingEnabled = () => true;
+	client.state.session.credentials.TAVILY.configured = false;
+	const calls = [];
+	client.api = async (url) => {
+		calls.push(url);
+		assert.equal(url, `/api/jobs/${job.id}/prospects`);
+		return { job, userId: "fake-user", prospects: [] };
+	};
+	await client.beginJobNetworking(job.id);
+	assert.deepEqual(calls, [`/api/jobs/${job.id}/prospects`]);
+	assert.equal(client.state.networkingJob.id, job.id);
+	assert.equal(client.state.networkingContacts.status, "ready");
+	await client.executeDiscovery({ count: 3, anthropicSearchMaxUses: 3 });
+	assert.equal(calls.length, 1);
+	assert.match(client.toasts.at(-1), /Add your Tavily key/);
+});
+
+test("duplicate search clicks and stale job/account responses cannot cross contexts", async () => {
+	for (const stale of [false, "job", "account"]) {
+		const client = discoveryClient({ inserted: 1, accepted: 1 });
+		let resolve;
+		let calls = 0;
+		client.api = async (url) => {
+			if (url === "/api/discovery") {
+				calls++;
+				return new Promise((done) => { resolve = done; });
+			}
+			if (url === "/api/session") return client.state.session;
+			if (url === "/api/analytics") return {};
+			throw new Error(`Unexpected path ${url}`);
+		};
+		const pending = client.executeDiscovery({ count: 3, anthropicSearchMaxUses: 3 });
+		await client.executeDiscovery({ count: 3, anthropicSearchMaxUses: 3 });
+		assert.equal(calls, 1);
+		if (stale) {
+			client.clearNetworkingContext();
+			if (stale === "job") client.state.networkingJob = { id: "b".repeat(64) };
+			else client.state.session.user.id = "second-user";
+		}
+		resolve({ summary: { inserted: 1, accepted: 1 } });
+		await pending;
+		assert.equal(client.state.networkingSearch.status, stale ? "idle" : "success");
+		assert.equal(client.state.discoveryRequest, null);
+	}
+});
+
+test("three-search errors name the actual request limit and keep costs beside explicit retry", () => {
+	const client = discoveryClient({});
+	client.state.networkingSearch = {
+		status: "error",
+		message: client.discoveryFallbackFailureMessage({
+			fallbackProvider: "ANTHROPIC", fallbackStatus: "SEARCH_LIMITED", anthropicSearchMaxUses: 3,
+		}),
+	};
+	const html = client.renderNetworkingSearchState();
+	assert.match(html, /3-search limit, not an API quota or key failure/);
+	assert.match(html, /official Anthropic pricing/);
+	assert.match(html, /your own API account/);
+	assert.match(html, /Review costs & retry/);
+	assert.doesNotMatch(html, /one-search limit|1-search limit/);
+});
+
+test("saved-contact reads discard late responses for another job or signed-in account", async () => {
+	for (const changed of ["job", "account"]) {
+		const client = discoveryClient({});
+		client.jobOutreachLinkingEnabled = () => true;
+		const firstJob = { id: "a".repeat(64), discoveryCriteria: { count: 5 } };
+		client.state.networkingJob = firstJob;
+		let finish;
+		client.api = () => new Promise((resolve) => { finish = resolve; });
+		const pending = client.loadNetworkingContacts();
+		client.clearNetworkingContext();
+		if (changed === "job") client.state.networkingJob = { id: "b".repeat(64) };
+		else client.state.session.user.id = "second-user";
+		finish({ job: firstJob, userId: "fake-user", prospects: [{ id: "old-account-contact" }] });
+		await pending;
+		assert.equal(client.state.networkingContacts.prospects.length, 0);
+		assert.equal(client.state.networkingContacts.status, "idle");
 	}
 });
 

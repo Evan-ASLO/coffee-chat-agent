@@ -1148,6 +1148,7 @@ export async function prospectJobLinks(
 		`SELECT jp.prospect_id, j.id, j.title, j.company
 		   FROM job_prospects jp
 		   JOIN jobs j ON j.id = jp.job_id
+		   JOIN prospects p ON p.id = jp.prospect_id AND p.user_id = jp.user_id
 		  WHERE jp.user_id = ?
 		  ORDER BY jp.created_at DESC`,
 	)

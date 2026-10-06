@@ -51,11 +51,15 @@ Use this checklist for the Cloudflare preview and again before public cutover. R
 - [ ] User A cannot read, update, import, link, or unlink User B's data.
 - [ ] A zero-match legacy import remains retryable and returns only the caller's references.
 - [ ] A completed legacy import preserves existing server states and exact retries are idempotent.
-- [ ] With linking disabled, job cards omit **Find people at this company**, linked discovery/link/unlink return `FEATURE_DISABLED`, and independent Coffee Chat discovery remains available.
-- [ ] With linking enabled, a job CTA auto-starts one search, disables duplicates while running, reports provider/accepted/duplicate outcomes, preserves job context on zero/error, and links new or rediscovered LinkedIn/source-URL profiles once.
+- [ ] With linking disabled, job surfaces omit **People to contact**, linked discovery/read/link/unlink return `FEATURE_DISABLED`, and independent Coffee Chat discovery remains available.
+- [ ] With linking enabled, Jobs grid/list, Saved, Home recent roles and Applications offer **People to contact**, including without keys. Opening/navigation/refresh/tutorial/paging perform no provider search, enrichment, drafting or sending.
+- [ ] Saved links are ownership-scoped, reload without provider calls, deduplicate, survive refresh and retain job context. Missing keys offer Settings; duplicate clicks and stale job/account responses cannot start or replace another search.
+- [ ] Confident tiers are ordered lexicographically: same-function junior, internship/new-grad recruiter, other same-firm junior. Former/wrong-firm profiles are rejected; senior/ambiguous profiles remain unconfirmed. Analyst/associate alone and recruiter junior status are not evidence. Each job has its own reasons/evidence/source links and preserves broader-match warnings.
+- [ ] Search/Retry show the user's Tavily plan and official Anthropic pricing. Explicit authorization permits up to 3 web searches plus tokens; omitted/legacy clients stay at 1, invalid limits are rejected and the whole fallback has a hard cap of 3, not 3 per tier.
 - [ ] Cited people-search fallback defaults to `NONE`, persists independently per user, permits exactly one of Gemini/OpenAI/Anthropic, reads only the selected provider's encrypted key/model, runs one request only after Tavily shortfall, and never chains or retries providers.
 - [ ] Each provider adapter requires a direct canonical citation, rejects uncited/redirect/host-mismatched/job-page objects, and preserves accepted Tavily people on errors.
-- [ ] Selected-provider failures normalize to `RATE_LIMITED`, `AUTH`, `BAD_REQUEST`, `UNSUPPORTED`, `TIMEOUT`, `MALFORMED_RESPONSE`, or `PROVIDER_ERROR`; summaries/audits contain only provider/category/HTTP status/model/counts and never raw provider bodies/messages, prompts, results, URLs, or credentials.
+- [ ] `SEARCH_LIMITED` names the actual request limit, not quota/auth failure, preserves validated partials and keeps status heading/body visibly separated. Retry reopens the cost notice and never auto-searches.
+- [ ] Selected-provider failures normalize to `RATE_LIMITED`, `SEARCH_LIMITED`, `AUTH`, `BAD_REQUEST`, `UNSUPPORTED`, `TIMEOUT`, `MALFORMED_RESPONSE`, or `PROVIDER_ERROR`; summaries/audits contain only provider/category/HTTP status/model/counts/authorized cap/safe reason and never raw provider bodies/messages, prompts, results, URLs, or credentials.
 
 ## Google and encrypted-data smoke tests
 

@@ -3214,6 +3214,53 @@ body:has(dialog[open]) {
 	width: min(880px, calc(100% - 28px));
 }
 
+.discovery-state,
+.discovery-state > div,
+.networking-context > div,
+.job-contact-priority {
+	display: grid;
+	gap: 8px;
+	min-width: 0;
+}
+
+.discovery-state > div > strong,
+.discovery-state > div > span {
+	display: block;
+}
+
+.search-budget-choice {
+	display: flex;
+	align-items: flex-start;
+	gap: 12px;
+	line-height: 1.5;
+}
+
+.search-budget-choice input {
+	width: 20px;
+	height: 20px;
+	flex-shrink: 0;
+}
+
+.job-contact-priority {
+	min-width: 200px;
+	max-width: 360px;
+	white-space: normal;
+}
+
+.job-contact-priority blockquote {
+	margin: 8px 0;
+	padding-left: 12px;
+	border-left: 2px solid var(--line);
+}
+
+.unconfirmed-contacts th {
+	white-space: normal;
+}
+
+.job-controls .job-contact-action {
+	flex-basis: 100%;
+}
+
 .settings-editor-dialog {
 	width: min(920px, calc(100% - 28px));
 }

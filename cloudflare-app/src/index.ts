@@ -443,31 +443,16 @@ app.delete("/api/credentials/:provider", requireUser, async (c) => {
 app.post("/api/discovery", requireUser, async (c) => {
 	await protectMutation(c);
 	const input = discoverySchema.parse(await readJson(c));
-	const { jobId: linkedJobId, ...submittedCriteria } = input;
+	const { jobId: linkedJobId, anthropicSearchMaxUses, ...submittedCriteria } = input;
 	let criteria = submittedCriteria;
 	if (linkedJobId) {
 		requireJobOutreachLinking(c.env);
-		const job = await getJob(c.env, linkedJobId, c.get("user")!.id);
+		const job = await getJob(c.env, linkedJobId, c.get("user")!.id, true);
 		if (!job) throw new ClientInputError("Job was not found.");
 		const derived = job.discoveryCriteria;
 		criteria = {
-			...submittedCriteria,
-			roles: uniqueValues([...derived.roles, ...submittedCriteria.roles]),
-			industries: uniqueValues([
-				...derived.industries,
-				...submittedCriteria.industries,
-			]),
-			companies: uniqueValues([
-				...derived.companies,
-				...submittedCriteria.companies,
-			]),
-			locations: uniqueValues(
-				[...derived.locations, ...submittedCriteria.locations],
-			),
-			keywords: uniqueValues([
-				...derived.keywords,
-				...submittedCriteria.keywords,
-			]),
+			...derived,
+			count: submittedCriteria.count,
 			objective:
 				submittedCriteria.objective ||
 				derived.objective,
@@ -479,6 +464,8 @@ app.post("/api/discovery", requireUser, async (c) => {
 		criteria,
 		c.get("requestId"),
 		linkedJobId,
+		anthropicSearchMaxUses,
+		c.req.raw.signal,
 	);
 	return c.json(result);
 });
@@ -486,6 +473,14 @@ app.post("/api/discovery", requireUser, async (c) => {
 app.get("/api/prospects", requireUser, async (c) =>
 	c.json({ prospects: await listProspects(c.env, c.get("user")!.id) }),
 );
+
+app.get("/api/jobs/:id/prospects", requireUser, async (c) => {
+	requireJobOutreachLinking(c.env);
+	const id = jobId.parse(c.req.param("id"));
+	const job = await getJob(c.env, id, c.get("user")!.id, true);
+	if (!job) throw new ClientInputError("Job was not found.");
+	return c.json({ job, userId: c.get("user")!.id, prospects: await listProspects(c.env, c.get("user")!.id, id) });
+});
 
 app.post("/api/prospects/:id/prepare", requireUser, async (c) => {
 	await protectMutation(c);
@@ -708,6 +703,7 @@ const discoverySchema = z.object({
 	objective: z.string().trim().max(1000),
 	count: z.number().int().min(1).max(20),
 	jobId: jobId.optional(),
+	anthropicSearchMaxUses: z.union([z.literal(1), z.literal(3)]).default(1),
 });
 const draftEditSchema = z.object({
 	email: z.string().trim().max(320),
@@ -784,12 +780,6 @@ const jobStateListQuerySchema = z
 		pageSize: z.coerce.number().int().min(1).max(100).default(50),
 	})
 	.strict();
-
-function uniqueValues(values: string[]): string[] {
-	return Array.from(
-		new Set(values.map((value) => value.trim()).filter(Boolean)),
-	).slice(0, 20);
-}
 
 function jobOutreachLinkingEnabled(
 	env: AppEnvironment["Bindings"],

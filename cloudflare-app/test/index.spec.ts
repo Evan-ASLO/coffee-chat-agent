@@ -1744,8 +1744,8 @@ describe.sequential("internship jobs platform", () => {
 			},
 		});
 		expect(bmo.discoveryCriteria.roles.slice(0, 2)).toEqual([
-			"Investment Team",
-			"Investment Analyst",
+			"Junior Investment Analyst",
+			"Investment Analyst I",
 		]);
 		expect(
 			unfiltered.jobs.find((job) => job.id === structuredJobs[2]!.id)
@@ -2087,7 +2087,7 @@ describe.sequential("internship jobs platform", () => {
 			"Banking & Financial Services",
 		);
 		expect(primaryQuery.query).toContain(
-			'("Investment Team" OR "Investment Analyst"',
+			'("Junior Investment Analyst" OR "Investment Analyst I"',
 		);
 		expect(primaryQuery.query).toContain(" AND ");
 		fetchSpy.mockRestore();
@@ -2530,6 +2530,200 @@ describe.sequential("internship jobs platform", () => {
 		});
 		expect(fetchSpy).toHaveBeenCalledTimes(6);
 		fetchSpy.mockRestore();
+	});
+});
+
+describe("bounded ranked job contacts", () => {
+	let owner: Awaited<ReturnType<typeof authenticatedTestUser>>;
+	let other: Awaited<ReturnType<typeof authenticatedTestUser>>;
+	const jobIds = ["e".repeat(64), "f".repeat(64)];
+	const company = "Example Software Firm";
+	const discovery = {
+		roles: ["Senior Director"], industries: [], companies: ["Unrelated Company"],
+		locations: [], keywords: [], seniority: ["Senior"], objective: "", count: 5,
+		jobId: jobIds[0],
+	};
+	const bindings = () => ({ ...(env as unknown as AppBindings), ENABLE_JOB_OUTREACH_LINKING: "true" });
+	const profiles = [
+		["Zed Fictional", "Junior Marketing Specialist"],
+		["Casey Fictional", "Senior Campus Recruiter"],
+		["Alex Fictional", "Junior Software Engineer"],
+		["Senior Fictional", "Senior Software Engineer"],
+		["Unknown Fictional", "Software Engineer"],
+	].map(([fullName, title]) => ({
+		fullName, title, company, location: "Toronto",
+		sourceUrl: `https://www.linkedin.com/in/ranked-${fullName!.split(" ")[0]!.toLowerCase()}`,
+		evidence: `${fullName} is a ${title} at ${company}.`,
+	}));
+
+	beforeAll(async () => {
+		owner = await authenticatedTestUser("ranked-owner");
+		other = await authenticatedTestUser("ranked-other");
+		const runId = crypto.randomUUID();
+		const now = new Date().toISOString();
+		await env.DB.prepare(
+			`INSERT INTO job_import_runs(id,schema_version,snapshot_hash,content_hash,generated_at,generated_epoch,received_at,status,job_count)
+			 VALUES(?,1,?,?,?, ?,?,'APPLIED',2)`,
+		).bind(runId, jobIds[0], jobIds[1], now, Date.now(), now).run();
+		for (const [index, title] of ["Software Engineering Intern", "Marketing Intern"].entries()) {
+			await env.DB.prepare(
+				`INSERT INTO jobs(id,source,company,company_normalized,title,title_normalized,url,canonical_url,
+				 first_seen_at,last_seen_at,latest_import_run_id,created_at,updated_at,is_active)
+				 VALUES(?,'mock',?,?,?,?,'https://example.test/job','https://example.test/job',?,?,?,?,?,?)`,
+			).bind(jobIds[index], company, company.toLowerCase(), title, title.toLowerCase(), now, now, runId, now, now, index === 0 ? 1 : 0).run();
+		}
+		for (const provider of ["TAVILY", "ANTHROPIC"] as const) {
+			await saveCredential(bindings(), { userId: owner.user.id, provider, value: `fake-ranked-${provider}` });
+		}
+		await env.DB.prepare(
+			`UPDATE user_settings SET people_search_fallback_provider='ANTHROPIC',anthropic_model='chosen-only-model',
+			 enrichment_provider='NONE',draft_provider='TEMPLATE',sender_name='Fictional Sender',
+			 personal_context_json='[{"category":"Background summary","content":"I study software engineering."}]'
+			 WHERE user_id=?`,
+		).bind(owner.user.id).run();
+	});
+
+	it("rejects invalid budgets before any paid request and retains auth, CSRF and feature gates", async () => {
+		const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No outbound requests authorized."));
+		try {
+			for (const budget of [0, 2, 4, 100, "3", true, null]) {
+				const response = await authenticatedWorkerFetch(owner, "/api/discovery", {
+					method: "POST", body: { ...discovery, anthropicSearchMaxUses: budget },
+				}, bindings());
+				expect(response.status).toBe(400);
+			}
+			const unauthenticated = await workerRequest(bindings(), `/api/jobs/${jobIds[0]}/prospects`);
+			expect(unauthenticated.status).toBe(401);
+			const disabled = await authenticatedWorkerFetch(owner, `/api/jobs/${jobIds[0]}/prospects`, {}, {
+				...bindings(), ENABLE_JOB_OUTREACH_LINKING: "false",
+			});
+			expect(disabled.status).toBe(403);
+			const noCsrf = authenticatedRequest(owner, "/api/discovery", { method: "POST", body: discovery });
+			noCsrf.headers.delete("X-CSRF-Token");
+			const context = createExecutionContext();
+			const response = await worker.fetch(noCsrf, bindings(), context);
+			await waitOnExecutionContext(context);
+			expect(response.status).toBe(403);
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it("uses one selected Anthropic request for all tiers, with legacy 1 and explicit 3 caps", async () => {
+		for (const budget of [undefined, 3]) {
+			const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected outbound provider."));
+			spy.mockResolvedValueOnce(Response.json({ results: [] }))
+				.mockResolvedValueOnce(Response.json({ results: [] }))
+				.mockResolvedValueOnce(Response.json({
+					content: [
+						{
+							type: "text", text: JSON.stringify({ people: profiles }),
+							citations: profiles.map((person) => ({ type: "web_search_result_location", url: person.sourceUrl })),
+						},
+						{ type: "web_search_tool_result", content: { type: "web_search_tool_result_error", error_code: "max_uses_exceeded" } },
+					],
+				}));
+			try {
+				const response = await authenticatedWorkerFetch(owner, "/api/discovery", {
+					method: "POST", body: { ...discovery, ...(budget ? { anthropicSearchMaxUses: budget } : {}) },
+				}, bindings());
+				expect(response.status).toBe(200);
+				const payload = await response.json() as { summary: Record<string, unknown>; prospects: Prospect[] };
+				expect(payload.summary).toMatchObject({
+					anthropicSearchMaxUses: budget || 1,
+					fallbackStatus: "SEARCH_LIMITED", fallbackReason: "max_uses_exceeded",
+					fallbackModel: "chosen-only-model", fallbackAccepted: 5,
+					jobQualified: 3, jobUnconfirmed: 2,
+					inserted: budget ? 0 : 5, duplicates: budget ? 5 : 0,
+				});
+				expect(payload.prospects.every((person) => person.status === "DISCOVERED" && !person.email && !person.contactApprovedAt && !person.draftBody)).toBe(true);
+				expect(spy).toHaveBeenCalledTimes(3);
+				const primary = JSON.parse(String(spy.mock.calls[0]![1]!.body));
+				expect(primary.query).toContain(company);
+				expect(primary.query).not.toContain("Senior Director");
+				expect(primary.query).not.toContain("Unrelated Company");
+				const anthropic = JSON.parse(String(spy.mock.calls[2]![1]!.body));
+				expect(anthropic.tools[0].max_uses).toBe(budget || 1);
+				expect(anthropic.model).toBe("chosen-only-model");
+				expect(anthropic.messages[0].content).toContain("priorityOrder");
+				expect(anthropic.messages[0].content).not.toContain("I study software engineering");
+				const auditRow = await env.DB.prepare(
+					"SELECT metadata_json FROM audit_events WHERE user_id=? AND action='DISCOVERY_COMPLETED' ORDER BY created_at DESC LIMIT 1",
+				).bind(owner.user.id).first<{ metadata_json: string }>();
+				expect(JSON.parse(auditRow!.metadata_json).anthropicSearchMaxUses).toBe(budget || 1);
+				expect(auditRow!.metadata_json).not.toMatch(/fake-ranked|linkedin\.com|evidence/);
+			} finally {
+				spy.mockRestore();
+			}
+		}
+	});
+
+	it("reuses only owned persisted links, preserves deterministic job-dependent ranking and expired jobs", async () => {
+		const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Reading contacts must never call providers."));
+		try {
+			const response = await authenticatedWorkerFetch(owner, `/api/jobs/${jobIds[0]}/prospects`, {}, bindings());
+			expect(response.status).toBe(200);
+			const saved = await response.json() as { userId: string; prospects: Prospect[] };
+			expect(saved.userId).toBe(owner.user.id);
+			expect(saved.prospects.map((person) => person.fullName)).toEqual([
+				"Alex Fictional", "Casey Fictional", "Zed Fictional", "Senior Fictional", "Unknown Fictional",
+			]);
+			expect(saved.prospects.map((person) => person.linkedJobs[0]?.contactMatch?.tier)).toEqual([1, 2, 3, null, null]);
+			for (const person of saved.prospects) {
+				const linked = await authenticatedWorkerFetch(owner, `/api/jobs/${jobIds[1]}/prospects/${person.id}`, { method: "POST" }, bindings());
+				expect(linked.status).toBe(200);
+			}
+			const marketing = await authenticatedWorkerFetch(owner, `/api/jobs/${jobIds[1]}/prospects`, {}, bindings());
+			expect(marketing.status).toBe(200);
+			const marketingPayload = await marketing.json() as { prospects: Prospect[] };
+			expect(marketingPayload.prospects.slice(0, 3).map((person) => person.fullName)).toEqual([
+				"Zed Fictional", "Casey Fictional", "Alex Fictional",
+			]);
+			const forbiddenLink = await authenticatedWorkerFetch(other, `/api/jobs/${jobIds[0]}/prospects/${saved.prospects[0]!.id}`, { method: "POST" }, bindings());
+			expect(forbiddenLink.status).toBe(400);
+			const otherContacts = await authenticatedWorkerFetch(other, `/api/jobs/${jobIds[0]}/prospects`, {}, bindings());
+			expect(await otherContacts.json()).toMatchObject({ userId: other.user.id, prospects: [] });
+			const again = await authenticatedWorkerFetch(owner, `/api/jobs/${jobIds[0]}/prospects`, {}, bindings());
+			const againPayload = await again.json() as { prospects: Prospect[] };
+			expect(againPayload.prospects.map((person) => person.id)).toEqual(saved.prospects.map((person) => person.id));
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it("surfaces missing discovery keys without hiding saved contacts or starting fallback", async () => {
+		const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No configured discovery key."));
+		try {
+			const response = await authenticatedWorkerFetch(other, "/api/discovery", {
+				method: "POST", body: { ...discovery, anthropicSearchMaxUses: 3 },
+			}, bindings());
+			expect(response.status).toBe(400);
+			expect(await response.json()).toMatchObject({ message: expect.stringContaining("Tavily API key in Settings") });
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it("keeps preparation explicit and final sending blocked without an approved exact draft", async () => {
+		const saved = await authenticatedWorkerFetch(owner, `/api/jobs/${jobIds[0]}/prospects`, {}, bindings());
+		const { prospects } = await saved.json() as { prospects: Prospect[] };
+		const id = prospects[0]!.id;
+		const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No mail or enrichment is authorized."));
+		try {
+			const premature = await authenticatedWorkerFetch(owner, `/api/prospects/${id}/send`, {
+				method: "POST", body: { expectedVersion: 1, idempotencyKey: crypto.randomUUID() },
+			}, bindings());
+			expect(premature.status).not.toBe(200);
+			const prepared = await authenticatedWorkerFetch(owner, `/api/prospects/${id}/prepare`, { method: "POST" }, bindings());
+			expect(prepared.status).toBe(200);
+			expect(await prepared.json()).toMatchObject({ prospect: { status: "DRAFT_READY", draftVersion: 1, email: "" } });
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
 	});
 });
 

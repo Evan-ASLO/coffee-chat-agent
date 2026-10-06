@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
 	discoverWithPeopleSearchFallback,
 	PeopleSearchFallbackError,
+	anthropicSearchLimit,
 	type PeopleSearchFallbackProvider,
 } from "../src/lib/people-search-fallback";
 import type { DiscoveryCriteria } from "../src/lib/providers";
@@ -70,6 +71,49 @@ const providerCases: Array<{
 		discoveryProvider: "ANTHROPIC_GROUNDED",
 	},
 ];
+
+describe("request-scoped Anthropic web-search authorization", () => {
+	it.each([undefined, 1, 3, 2, 99, -1])("hard-bounds budget %s with a legacy default of one", async (budget) => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			groundedResponse("ANTHROPIC", { people: [], citations: [] }),
+		);
+		await discoverWithPeopleSearchFallback({
+			provider: "ANTHROPIC", apiKey: "fake-anthropic-key", model: "selected-model",
+			criteria, count: 3, anthropicSearchMaxUses: budget,
+		});
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+		const request = JSON.parse(String(fetchSpy.mock.calls[0]![1]!.body));
+		expect(request.model).toBe("selected-model");
+		expect(request.tools[0].max_uses).toBe(budget === 3 ? 3 : 1);
+		expect(anthropicSearchLimit("3")).toBe(1);
+	});
+
+	it.each([1, 3])("retains only cited validated partials at the %s-search cap without retrying", async (budget) => {
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(
+			groundedResponse("ANTHROPIC", {
+				people, citations: [citations[0]!], anthropicToolErrors: ["max_uses_exceeded"],
+			}),
+		);
+		const result = await discoverWithPeopleSearchFallback({
+			provider: "ANTHROPIC", apiKey: "fake-anthropic-key", model: "selected-model",
+			criteria, count: 3, anthropicSearchMaxUses: budget,
+		});
+		expect(result).toMatchObject({ status: "SEARCH_LIMITED", reason: "max_uses_exceeded", accepted: 1 });
+		expect(result.people[0]!.fullName).toBe(people[0]!.fullName);
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
+	});
+
+	it("does not start a provider request after cancellation", async () => {
+		const controller = new AbortController();
+		controller.abort();
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No request was authorized."));
+		await expect(discoverWithPeopleSearchFallback({
+			provider: "ANTHROPIC", apiKey: "fake-anthropic-key", model: "selected-model",
+			criteria, count: 3, anthropicSearchMaxUses: 3, signal: controller.signal,
+		})).rejects.toBeInstanceOf(PeopleSearchFallbackError);
+		expect(fetchSpy).not.toHaveBeenCalled();
+	});
+});
 
 function groundedResponse(
 	provider: PeopleSearchFallbackProvider,

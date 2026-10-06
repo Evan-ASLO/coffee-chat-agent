@@ -4,6 +4,7 @@ interface JsonRequest {
 	body?: unknown;
 	timeoutMs?: number;
 	attempts?: number;
+	signal?: AbortSignal;
 }
 
 export class ProviderHttpError extends Error {
@@ -38,7 +39,10 @@ export async function fetchJson<T>(
 	const attempts = Math.min(Math.max(options.attempts ?? 2, 1), 4);
 	let lastError: Error | undefined;
 	for (let attempt = 1; attempt <= attempts; attempt += 1) {
+		options.signal?.throwIfAborted();
 		const controller = new AbortController();
+		const abort = () => controller.abort(options.signal?.reason);
+		options.signal?.addEventListener("abort", abort, { once: true });
 		const timeout = setTimeout(
 			() => controller.abort(),
 			Math.min(Math.max(options.timeoutMs ?? 15000, 1000), 30000),
@@ -74,6 +78,7 @@ export async function fetchJson<T>(
 			lastError =
 				error instanceof Error ? error : new Error("Provider request failed.");
 			if (
+				options.signal?.aborted ||
 				attempt >= attempts ||
 				(!lastError.message.includes("aborted") &&
 					!lastError.message.includes("HTTP 5") &&
@@ -84,6 +89,7 @@ export async function fetchJson<T>(
 			await sleep(300 * 2 ** (attempt - 1));
 		} finally {
 			clearTimeout(timeout);
+			options.signal?.removeEventListener("abort", abort);
 		}
 	}
 	throw lastError ?? new Error("Provider request failed.");

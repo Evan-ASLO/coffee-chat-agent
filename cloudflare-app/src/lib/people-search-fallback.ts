@@ -3,12 +3,15 @@ import { fetchJson, ProviderHttpError } from "./fetch";
 import {
 	employerProfessionalTopics,
 	employerSearchAliases,
+	sameEmployer,
 } from "./job-discovery";
 import {
 	linkedInDiscoveryPerson,
 	normalizeProfessionalSourceUrl,
 	professionalBioDomains,
 	professionalBioPerson,
+	discoveryPersonKey,
+	selectDiscoveryPeople,
 	type DiscoveredPerson,
 	type DiscoveryCriteria,
 } from "./providers";
@@ -133,12 +136,18 @@ export class PeopleSearchFallbackError extends Error {
 	}
 }
 
+export function anthropicSearchLimit(value: unknown): 1 | 3 {
+	return value === 3 ? 3 : 1;
+}
+
 export async function discoverWithPeopleSearchFallback(input: {
 	provider: PeopleSearchFallbackProvider;
 	apiKey: string;
 	model: string;
 	criteria: DiscoveryCriteria;
 	count: number;
+	anthropicSearchMaxUses?: number;
+	signal?: AbortSignal;
 }): Promise<PeopleSearchFallbackResult> {
 	try {
 		const provider = input.provider;
@@ -157,6 +166,8 @@ export async function discoverWithPeopleSearchFallback(input: {
 			model,
 			prompt,
 			allowedDomains,
+			anthropicSearchMaxUses: anthropicSearchLimit(input.anthropicSearchMaxUses),
+			signal: input.signal,
 		});
 		let parsed: z.infer<typeof groundedResponseSchema>;
 		try {
@@ -178,29 +189,35 @@ export async function discoverWithPeopleSearchFallback(input: {
 		for (const candidate of parsed.people) {
 			const sourceUrl = normalizeProfessionalSourceUrl(candidate.sourceUrl);
 			if (!sourceUrl || !citedUrls.has(sourceUrl)) continue;
+			if (input.criteria.jobContext && !sameEmployer(candidate.company, input.criteria.jobContext.company)) continue;
 			const result = {
 				title: `${candidate.fullName} - ${candidate.title}`,
 				url: sourceUrl,
-				content: `${candidate.evidence} ${candidate.company} ${candidate.location}`,
+				content: input.criteria.jobContext
+					? candidate.evidence
+					: `${candidate.evidence} ${candidate.company} ${candidate.location}`,
 			};
 			const accepted =
 				linkedInDiscoveryPerson(result, input.criteria) ||
 				professionalBioPerson(result, input.criteria);
 			if (!accepted) continue;
-			people.set(accepted.linkedinUrl || accepted.sourceUrl, {
+			people.set(discoveryPersonKey(accepted, input.criteria), {
 				...accepted,
 				discoveryProvider: groundedDiscoveryProvider(provider),
 			});
-			if (people.size >= input.count) break;
+			if (!input.criteria.jobContext && people.size >= input.count) break;
 		}
+		const selected = selectDiscoveryPeople([...people.values()], {
+			...input.criteria, count: Math.min(Math.max(input.count, 1), 10),
+		});
 		return {
 			provider,
 			model,
 			status: output.searchLimited ? "SEARCH_LIMITED" : "SUCCESS",
 			reason: output.searchLimited ? "max_uses_exceeded" : null,
 			returned: parsed.people.length,
-			accepted: people.size,
-			people: [...people.values()],
+			accepted: selected.length,
+			people: selected,
 		};
 	} catch (error) {
 		throw classifyPeopleSearchError(error);
@@ -225,6 +242,8 @@ async function requestGroundedSearch(input: {
 	model: string;
 	prompt: string;
 	allowedDomains: string[];
+	anthropicSearchMaxUses: 1 | 3;
+	signal?: AbortSignal;
 }): Promise<GroundedOutput> {
 	switch (input.provider) {
 		case "GEMINI": {
@@ -246,6 +265,7 @@ async function requestGroundedSearch(input: {
 						},
 					},
 					attempts: 1,
+					signal: input.signal,
 					timeoutMs: 20000,
 				},
 			);
@@ -275,6 +295,7 @@ async function requestGroundedSearch(input: {
 						max_output_tokens: 1400,
 					},
 					attempts: 1,
+					signal: input.signal,
 					timeoutMs: 20000,
 				},
 			);
@@ -296,13 +317,14 @@ async function requestGroundedSearch(input: {
 							{
 								type: "web_search_20250305",
 								name: "web_search",
-								max_uses: 1,
+								max_uses: anthropicSearchLimit(input.anthropicSearchMaxUses),
 								allowed_domains: input.allowedDomains,
 							},
 						],
 						messages: [{ role: "user", content: input.prompt }],
 					},
 					attempts: 1,
+					signal: input.signal,
 					timeoutMs: 20000,
 				},
 			);
@@ -325,9 +347,24 @@ function groundedPrompt(
 			new Set([
 				...criteria.roles,
 				...criteria.keywords,
-				...employerProfessionalTopics(criteria.companies),
+				...(criteria.jobContext ? [] : employerProfessionalTopics(criteria.companies)),
 			]),
 		),
+		...(criteria.jobContext ? {
+			job: criteria.jobContext,
+			priorityOrder: [
+				"Entry-level employee currently in this job's role/function at this employer.",
+				"Recruiter for internships, campus, university or new-graduate hiring at this employer; recruiter seniority is irrelevant.",
+				"Another entry-level employee currently at this employer.",
+			],
+			jobRequirements: [
+				"All priorities require cited current-employer evidence; exclude former employees and other employers.",
+				"Evidence must state the person's current role and junior/entry-level status or explicit early-career recruiting remit.",
+				"Do not infer entry level from analyst/associate alone, age, photos or invented years; senior/lead/director/VP roles are not entry level.",
+				"A generic recruiter is not confirmed as a campus recruiter or as the hiring owner of this vacancy.",
+				"Prefer qualified profiles; leave uncertain evidence unconfirmed. Cover the priorities within this single request's tool budget, not separate searches per tier.",
+			],
+		} : {}),
 		location: criteria.locations,
 		approvedDomains: allowedDomains,
 		requirements: [

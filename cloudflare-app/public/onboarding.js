@@ -54,7 +54,7 @@
 			preference: "people-search-fallback-provider", action: "preferences", actionLabel: "Inspect fallback preference",
 			body: (session) => `<p><strong>Cited people-search fallback is optional and off by default.</strong> It runs only after Tavily returns too few usable people, and uses only the one provider and model you explicitly select.</p>
 				<p>Current choice: <strong>${escapeHtml(session.settings.peopleSearchFallbackProvider || "NONE")}</strong>. Saving a key or advancing this tour never enables fallback, switches providers, or chains providers.</p>
-				<p>Search tools and model tokens may have separate charges. Grounding, model availability, and quotas depend on your provider account. Confirm those before choosing a fallback in Preferences.</p>`,
+				<p>Search tools and model tokens may have separate charges. Anthropic defaults to 1 web search; you can explicitly authorize up to 3 per search, plus model-token usage, billed to your own API account. More searches may still return fewer or no results. Review <a href="https://platform.claude.com/docs/en/about-claude/pricing#web-search-tool" target="_blank" rel="noopener">official Anthropic pricing</a> and your Tavily API plan before Search or Retry.</p>`,
 		},
 		{
 			id: "personal-context", chapter: 0, view: "settings", target: "profile",
@@ -99,13 +99,13 @@
 			title: "Your shortlist lives in Jobs",
 			body: () => `<p>Save a role with its bookmark or Save button; find it in the <strong>Saved</strong> collection here. View details opens the original posting in a new tab.</p>
 				<p>The More tracking actions menu lets you mark Applied or change the stage. Applied roles appear in Applications. These account-scoped actions do not need provider keys.</p>
-				<p>If enabled, <strong>Find people</strong> at a job's company immediately starts a provider-backed search. It may incur costs; this tutorial never clicks it. If there are no roles, continue safely and return when the catalog has data.</p>`,
+				<p>If enabled, <strong>People to contact</strong> opens that job's saved contacts, ordered by entry-level role peers, internship/new-grad recruiters, then other entry-level employees at the firm. Opening the list does not search. Review costs and explicitly choose Search public profiles to run a provider search. If there are no roles, continue safely and return when the catalog has data.</p>`,
 		},
 		{
 			id: "applications", chapter: 1, view: "applications", target: "applications",
 			title: "Applications: record your real next step",
 			body: () => `<p>Filter by stage, company, or location, search the table, and sort by update time or company. The row action opens the actual <strong>Edit application</strong> dialog.</p>
-				<p>There you can save a stage and private next-step notes, open the job posting, or remove tracking. Job-linked networking, when enabled, starts a provider search only if you choose it.</p>
+				<p>There you can save a stage and private next-step notes, open the job posting, or remove tracking. People to contact, when enabled, opens saved job contacts; only a later, cost-disclosed Search action calls providers.</p>
 				<p>No applications yet? Mark a role Applied in Jobs when you have actually applied. Dates are recorded updates, not invented deadlines or reminders.</p>`,
 		},
 		{

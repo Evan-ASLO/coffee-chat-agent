@@ -214,6 +214,7 @@ Job cards normalize source names for display without exposing publisher credenti
 - `DELETE /api/jobs/:id/state`: authenticated/CSRF-protected removal.
 - `POST /api/job-states/import-legacy`: authenticated one-time import.
 - `POST|DELETE /api/jobs/:jobId/prospects/:prospectId`: authenticated ownership-checked job/prospect linkage.
+- `GET /api/jobs/:id/prospects`: authenticated, feature-gated saved contacts for this job (including inactive tracked jobs), ownership-checked and deterministically ranked using persisted public evidence. Reading never calls a provider.
 - `GET /api/beta/admin/access`: environment-admin-only pending/access list.
 - `POST /api/beta/admin/requests/:id/approve|deny`: environment-admin-only request decisions.
 - `POST /api/beta/admin/access/approve|revoke`: environment-admin-only invite, re-approve, and revoke actions.
@@ -226,11 +227,23 @@ Catalog freshness becomes stale when the publisher's latest `generatedAt` is mor
 
 `ENABLE_JOB_OUTREACH_LINKING` is an explicit normal environment variable, not a secret. It is disabled when absent or set to any value other than `true`. While disabled:
 
-- job cards do not show **Find people at this company**;
+- job cards do not show **People to contact**;
 - discovery without a `jobId` remains available as the independent Coffee Chat workflow; and
 - discovery with a `jobId` plus direct job/prospect link or unlink mutations return `FEATURE_DISABLED`.
 
 Enable it only after the catalog satisfies [`docs/PARALLEL_RUN_CRITERIA.md`](docs/PARALLEL_RUN_CRITERIA.md). For a reviewed rollout, set `ENABLE_JOB_OUTREACH_LINKING` to `true` in the target Worker's environment configuration and redeploy; set it back to `false` (or remove it) to stop new linking without disabling public jobs or core Coffee Chat networking.
+
+When enabled, **People to contact** is visible on Jobs grid/list, Saved, Home recent roles, and Applications rows/details even without a discovery key. It opens only the user's saved, linked contacts. A missing Tavily key offers Settings instead of hiding the action. The job context survives refresh via a job ID in the URL; no private contact data or API budget is stored in browser storage.
+
+The server fixes the employer and function from the selected job, targets junior peers and early-career recruiters rather than managers, and ranks lexicographically:
+
+1. A current employee with explicit junior/entry-level evidence in this job's role/function.
+2. A current recruiter with explicit campus, internship or new-graduate recruiting evidence (not recruiter age/juniority and not a confirmed owner of the vacancy).
+3. Another current entry-level employee at the same firm.
+
+Employer aliases and cited current-employment statements/headlines are required. Analyst/associate titles alone, age, photos and invented experience are not seniority evidence. Senior/lead/director/VP indicators prevent entry-level qualification. Ambiguous profiles appear separately as **Unconfirmed fit**; former/wrong-firm candidates are rejected from new job-linked discovery. Each job link gets its own reason, supporting public evidence and source link, computed from existing persisted fields without a new migration. Existing `BROADER_COMPANY` warnings and both outreach approvals remain. Results and links deduplicate; no contact is promised for every job.
+
+Opening/rendering/navigating/paging/tutorial steps never search, enrich, draft or send. **Find people** opens a form; **Search public profiles** explicitly starts discovery after the visible cost notice. **Review costs & retry** returns to that form, not a hidden retry. Concurrent clicks are disabled; late results cannot replace another job/account. **Stop waiting** cancels the browser request and propagates cancellation where supported, but already-started provider work can still be billed or finish; reload saved contacts before starting again.
 
 ### Optional cited people-search fallback
 
@@ -238,15 +251,17 @@ Each user has one disabled-by-default `peopleSearchFallbackProvider` setting: `N
 
 - Gemini Interactions API with `google_search`, `store: false`, and a supported configured `gemini-3.8-flash` or `gemini-3.7-flash` model;
 - OpenAI Responses API with `web_search`, low search context, and `filters.allowed_domains`; or
-- Anthropic Messages API with `web_search_20250305`, `max_uses: 1`, and `allowed_domains`.
+- Anthropic Messages API with `web_search_20250305`, `allowed_domains`, and request-scoped `max_uses: 1` or `3`.
+
+`POST /api/discovery` accepts only numeric `anthropicSearchMaxUses: 1 | 3`, defaulting to **1** for old clients or omitted consent. Other values are rejected before provider calls; the adapter also clamps unsupported values to 1. The UI's unchecked-by-default authorization control permits **up to 3 web searches plus model-token usage**, billed to the user's own API account. The cap applies to the entire single fallback invocation, never per tier, with one API attempt and a bounded timeout. No automatic provider/model change or recursive retry is added.
 
 There is no provider chain, automatic retry, or silent model substitution. Selected-provider failures are reduced to `RATE_LIMITED`, `SEARCH_LIMITED`, `AUTH`, `BAD_REQUEST`, `UNSUPPORTED`, `TIMEOUT`, `MALFORMED_RESPONSE`, or `PROVIDER_ERROR`. Audit and API summaries retain only the provider, category, numeric HTTP rejection status when available, configured model, aggregate counts, and `fallbackReason`: a whitelisted Anthropic tool error code (`max_uses_exceeded`, `invalid_tool_input`, `query_too_long`, `request_too_large`, `too_many_requests`, `unavailable`), `unknown_tool_error`, or `null`. Raw provider bodies/messages, prompts, results, URLs, and credentials are never stored in these diagnostics. Every failure preserves accepted Tavily results.
 
-Anthropic tool errors arrive inside HTTP 200 responses, so their `fallbackHttpStatus` remains `null`; actual HTTP 400/422 rejections retain their numeric status. `max_uses_exceeded` means this request hit the one-search cap, not API quota exhaustion or an invalid key/model. Only for that error, a complete valid result object may still supply profiles through the same citation and acceptance checks below; the status stays `SEARCH_LIMITED`, even when profiles are retained. Missing/malformed output retains no fallback profiles, and any other tool error prevents salvage. The UI distinguishes partial results, failed searches, and completed searches with no new profiles. For a provider-reported unsupported/disabled search capability, an organization admin can check [Claude Console capabilities](https://platform.claude.com/settings/capabilities); a generic request/tool error does not establish a model or credential problem.
+Anthropic tool errors arrive inside HTTP 200 responses, so their `fallbackHttpStatus` remains `null`; actual HTTP 400/422 rejections retain their numeric status. `max_uses_exceeded` means this request hit its authorized cap, not API quota exhaustion or an invalid key/model. API/audit summaries include `anthropicSearchMaxUses`; the UI names the actual 1- or 3-search limit with a visibly separated status heading and message. Only for that error, a complete valid result object may still supply profiles through the same citation and acceptance checks below; the status stays `SEARCH_LIMITED`, even when profiles are retained. Missing/malformed output retains no fallback profiles, and any other tool error prevents salvage. The UI distinguishes partial results, failed searches, and completed searches with no qualified/new profiles. For a provider-reported unsupported/disabled search capability, an organization admin can check [Claude Console capabilities](https://platform.claude.com/settings/capabilities); a generic request/tool error does not establish a model or credential problem.
 
 Every accepted object must be strict JSON whose canonical `sourceUrl` exactly matches a direct provider citation and passes the existing LinkedIn/approved-host, page-type, company, role, location, and STRONG/BROADER quality checks. Google redirect citation URLs are rejected rather than resolved or trusted. The prompt contains only public company aliases, role/topics, location, approved domains, and requested count; it never includes the user's profile, resume, email, drafts, personal context, or credentials.
 
-Provider web search and model tokens may be billable. Gemini can execute multiple billable searches within its one API request; OpenAI bills web-search tool usage and tokens under the selected model; Anthropic documents web search at $10 per 1,000 searches plus token charges. Availability and pricing can change, so users must confirm that their selected model/account supports the required search tool before enabling it.
+Provider web search and model tokens may be billable. Gemini can execute multiple billable searches within its one API request; OpenAI bills web-search tool usage and tokens under the selected model. Search/retry and onboarding link [official Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing#web-search-tool) and explain the user's [Tavily API plan](https://docs.tavily.com/documentation/api-credits), without promising free usage or guaranteed results. Availability and pricing can change, so users must confirm their selected model/account's capabilities and costs.
 
 Legacy import v1 is strict:
 
@@ -273,6 +288,29 @@ Matching uses canonical URL first and normalized company/title second, and is ba
 npm run check
 npm audit
 ```
+
+### Fictional ranked-contacts review
+
+In a fresh isolated checkout with dependencies already available:
+
+```powershell
+node scripts\prepare-contacts-preview.mjs
+npm run preview:onboarding
+# In another terminal:
+node test\browser\contacts.mjs
+```
+
+This reuses the tutorial's local-only preparation/serving patterns on **8805**,
+refuses an existing `.d1` database or occupied port, and never touches other
+previews. Open `http://127.0.0.1:8805/__review/existing` for five fictional linked
+contacts, or `/__review/second` for a separate account without keys or contacts.
+The test-only `local-contacts-preview.ts` is not in production configuration:
+it requires the loopback origin and review flag, blocks network egress,
+provider/search/Google/CRM/draft/send/key actions at entry, and only permits
+authenticated tutorial-progress writes. The browser test intercepts explicitly
+requested searches with fake results, checks desktop/phone priorities, costs,
+partial/error/retry, refresh, account isolation and final-send cancellation.
+`CONTACTS_EVIDENCE_DIR` selects a screenshot/network-receipt folder.
 
 ### Isolated, read-only layout review
 
