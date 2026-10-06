@@ -18,7 +18,7 @@ function reviewResponse(response: Response): Response {
 export default {
 	async fetch(request: Request, env: ReviewBindings, context: ExecutionContext) {
 		const url = new URL(request.url);
-		if (env.LOCAL_CONTACTS_PREVIEW !== "true" || env.APP_ORIGIN !== "http://127.0.0.1:8805" || url.origin !== env.APP_ORIGIN) {
+		if (env.LOCAL_CONTACTS_PREVIEW !== "true" || url.protocol !== "http:" || url.hostname !== "127.0.0.1" || url.origin !== env.APP_ORIGIN) {
 			return reviewResponse(new Response("Loopback contacts review only.", { status: 403 }));
 		}
 		if (url.pathname === "/__review/health" && request.method === "GET") {

@@ -66,10 +66,11 @@ const state = {
 	networkingJob: null,
 	networkingCriteria: null,
 	networkingContacts: { status: "idle", prospects: [], message: "", request: 0 },
-	anthropicSearchMaxUses: 1,
 	discoveryRequest: null,
+	tavilySearch: null,
 	networkingSearch: {
 		status: "idle",
+		mode: "TAVILY",
 		message: "",
 		summary: null,
 	},
@@ -847,7 +848,7 @@ function renderNetworking() {
 			${referenceMetric(networking.sent, "Emails sent", "send")}
 			${referenceMetric(networking.replied, "Replies", "reply")}
 		</section>
-		${previewNotice}${context}${state.networkingJob ? renderDiscoverySetup() : ""}${renderNetworkingSearchState()}
+		${previewNotice}${context}${state.networkingJob ? renderDiscoverySetup() : ""}${renderNetworkingSearchState()}${renderAiDiscovery()}
 		${state.networkingJob && state.networkingContacts.status === "loading" ? '<p class="notice" role="status">Loading saved contacts only. No provider search is running.</p>' : ""}
 		${state.networkingJob && state.networkingContacts.status === "error" ? `<p class="notice warning" role="alert">${escapeHtml(state.networkingContacts.message)} Use Reload saved contacts to retry without a provider search.</p>` : ""}
 		<div class="tracker-layout networking-layout">
@@ -950,9 +951,7 @@ function renderFind() {
 				<label>Number of people
 					<input id="count" type="number" min="1" max="20" value="${Number(criteria.count || 5)}" />
 				</label>
-				<div class="full">${renderSearchCosts()}
-					${state.session.settings.peopleSearchFallbackProvider === "ANTHROPIC" ? `<label class="search-budget-choice"><input id="anthropic-expanded-search" type="checkbox" ${state.anthropicSearchMaxUses === 3 ? "checked" : ""} /><span>I authorize up to 3 Anthropic web searches for this search, with additional search and model-token charges to my own API account. Unchecked: at most 1 search.</span></label>` : ""}
-				</div>
+				<div class="full">${renderSearchCosts()}</div>
 				<div class="actions full">
 					<button type="submit" class="primary" ${ready && !searching ? "" : "disabled"}>
 						${searching ? '<span class="inline-spinner" aria-hidden="true"></span> Searching…' : "Search public profiles"}
@@ -968,7 +967,35 @@ function renderDiscoverySetup() {
 }
 
 function renderSearchCosts() {
-	return `<p class="notice search-cost-notice"><strong>Before Search or Retry:</strong> Tavily usage follows <a href="https://docs.tavily.com/documentation/api-credits" target="_blank" rel="noopener">your Tavily API plan</a>. Only your selected fallback/key/model is used if needed. Anthropic can run <strong>up to 3 web searches, plus model-token usage</strong>, only when you authorize the higher budget below; the default is 1. These charges are billed to <strong>your own API account</strong>. Check <a href="https://platform.claude.com/docs/en/about-claude/pricing#web-search-tool" target="_blank" rel="noopener">official Anthropic pricing</a>. More searches may still return fewer or no results. Searching never approves, enriches, drafts or sends outreach.</p>`;
+	return `<p class="notice search-cost-notice"><strong>Search and Retry use Tavily only.</strong> Usage follows <a href="https://docs.tavily.com/documentation/api-credits" target="_blank" rel="noopener">your Tavily API plan</a>. No Gemini, OpenAI or Anthropic search runs, even with few or no results. Review the results first; the separate <strong>Find more with AI</strong> action is optional. Searching never approves, enriches, drafts or sends outreach.</p>`;
+}
+
+function renderAiDiscovery() {
+	if (!state.networkingCriteria || state.networkingSearch.status === "running" ||
+		(state.networkingSearch.status === "idle" && !state.networkingJob)) return "";
+	const provider = state.session.settings.peopleSearchFallbackProvider;
+	const label = fallbackProviderLabel(provider);
+	const configured = provider !== "NONE" && state.session.credentials?.[provider]?.configured;
+	const ready = configured && (!state.networkingJob || state.networkingContacts.status === "ready");
+	const model = state.session.settings[{ GEMINI: "geminiModel", OPENAI: "openAiModel", ANTHROPIC: "anthropicModel" }[provider]] || "";
+	const retry = state.networkingSearch.mode === "AI_SUPPLEMENT" &&
+		["error", "partial"].includes(state.networkingSearch.status);
+	return `<section class="panel ai-discovery" aria-labelledby="ai-discovery-title">
+		<div class="panel-head"><div><h2 id="ai-discovery-title">Optional: find more with AI</h2><p>Keep your saved contacts and Tavily results. This separate action uses the same criteria, never reruns Tavily, and may find only duplicates or no new people.</p></div></div>
+		${provider === "NONE" ? '<p class="notice warning">AI discovery is disabled. Choose an optional AI discovery provider in Settings to enable this action. Tavily Search remains separate.</p>' : `<p>Selected provider: <strong>${escapeHtml(label)}</strong> · Saved model: <strong>${escapeHtml(model)}</strong>. At most ${Math.min(Number(state.networkingCriteria.count || 5), 10)} candidate profiles per request; evidence checks still apply.</p>`}
+		${provider !== "NONE" && !configured ? `<p class="notice warning">No API key is configured for ${escapeHtml(label)}. Add your own key in Settings; no other provider will be used.</p>` : ""}
+		${state.networkingJob && state.networkingContacts.status !== "ready" ? '<p class="notice warning">Reload saved contacts before starting another search.</p>' : ""}
+		<p class="notice ai-search-cost-notice"><strong>Before ${retry ? "Retry with AI" : "Find more with AI"}:</strong> ${provider === "ANTHROPIC"
+			? 'Anthropic defaults to at most <strong>1 web search</strong>. Only the unchecked authorization below permits <strong>up to 3 web searches, plus model-token usage</strong>. Check <a href="https://platform.claude.com/docs/en/about-claude/pricing#web-search-tool" target="_blank" rel="noopener">official Anthropic pricing</a>.'
+			: provider === "GEMINI"
+				? "Gemini may run multiple billable Google searches within its single API request, plus model-token usage. Check your selected model's Search grounding pricing and quotas."
+				: provider === "OPENAI"
+					? "OpenAI charges for Web Search tool usage and model tokens within its single API request. Check your selected model's pricing and limits."
+					: "Provider web-search tools and model tokens may incur charges. Review your chosen provider's pricing before enabling this action."}
+			Charges belong to <strong>your own API account</strong>. Each click authorizes one new selected-provider request, without automatic retries or provider switches. More searches do not guarantee new contacts. This never approves, enriches, drafts or sends outreach.</p>
+		${provider === "ANTHROPIC" ? `<label class="search-budget-choice"><input id="anthropic-expanded-search" type="checkbox" ${ready ? "" : "disabled"} /><span>I authorize up to 3 Anthropic web searches for this AI request, with additional search and model-token charges to my own API account. Unchecked: at most 1 search. This consent resets after every request or context change.</span></label>` : ""}
+		<div class="actions"><button type="button" id="find-more-ai" class="secondary" ${ready ? "" : "disabled"}>${retry ? "Retry with AI" : "Find more with AI"}</button>${!configured ? '<button type="button" class="secondary" data-nav="settings">Configure AI discovery</button>' : ""}</div>
+	</section>`;
 }
 
 function networkingPeople() {
@@ -981,20 +1008,26 @@ function jobContactFor(person) {
 
 function renderNetworkingSearchState() {
 	const search = state.networkingSearch;
+	return `${search.mode === "AI_SUPPLEMENT" && state.tavilySearch ? renderDiscoveryOutcome(state.tavilySearch) : ""}${renderDiscoveryOutcome(search)}`;
+}
+
+function renderDiscoveryOutcome(search) {
 	if (search.status === "idle") return "";
+	const ai = search.mode === "AI_SUPPLEMENT";
+	const phase = ai ? "AI supplement" : "Tavily search";
 	if (search.status === "running") {
-		return `<section class="notice discovery-state" role="status">
+		return `<section class="notice discovery-state" data-discovery-mode="${search.mode}" role="status">
 			<span class="inline-spinner" aria-hidden="true"></span>
-			<div><strong>Searching public professional profiles…</strong><span>Duplicate search actions are disabled. No outreach is prepared or sent. Started provider work may still be billed if you stop waiting.</span></div>
+			<div><strong>${phase}: searching public professional profiles…</strong><span>${ai ? "One selected AI provider request; Tavily is not running." : "Tavily only; no AI provider will be called automatically."} Duplicate actions are disabled. Existing contacts stay visible. Started provider work may still be billed if you stop waiting.</span></div>
 			<button id="cancel-people-search" class="secondary">Stop waiting</button>
 		</section>`;
 	}
 	const className = search.status === "success" ? "notice" : "notice warning";
-	return `<section class="${className} discovery-state" role="${search.status === "error" ? "alert" : "status"}">
-		<div><strong>${escapeHtml(search.status === "success" ? "People found" : search.status === "partial" ? "Partial results - search incomplete" : search.status === "empty" ? state.networkingJob ? "No qualified matches confirmed" : "No new people added" : "Search could not be completed")}</strong><span>${escapeHtml(search.message)}</span></div>
+	return `<section class="${className} discovery-state" data-discovery-mode="${search.mode}" role="${search.status === "error" ? "alert" : "status"}">
+		<div><strong>${phase}: ${escapeHtml(search.status === "success" ? "People found" : search.status === "partial" ? "Partial results - search incomplete" : search.status === "empty" ? search.summary?.jobQualified === 0 ? "No qualified matches confirmed" : "No new people added" : "Search could not be completed")}</strong><span>${escapeHtml(search.message)}</span></div>
 		${
-			["empty", "error", "partial"].includes(search.status)
-				? `<div>${renderSearchCosts()}<button id="retry-job-discovery" class="secondary">Review costs & retry</button></div>`
+			!ai && search === state.networkingSearch && ["empty", "error", "partial"].includes(search.status)
+				? `<div>${renderSearchCosts()}<button id="retry-job-discovery" class="secondary">Review costs & retry Tavily</button></div>`
 				: ""
 		}
 	</section>`;
@@ -1143,7 +1176,7 @@ function renderSettings() {
 				<div class="settings-card-heading"><span>${icon("settings")}</span><div><h2>Preferences</h2><p>Only controls backed by current product behavior.</p></div><button id="open-profile-settings-secondary" class="secondary">Edit</button></div>
 				<ul class="settings-summary-list">
 					<li><span>${icon("edit")}<b>Draft provider</b><small>${escapeHtml(formatStatus(settings.draftProvider))}</small></span></li>
-					<li><span>${icon("search")}<b>People-search fallback</b><small>${escapeHtml(fallbackProviderLabel(settings.peopleSearchFallbackProvider))}</small></span></li>
+					<li><span>${icon("search")}<b>Optional AI discovery</b><small>${escapeHtml(fallbackProviderLabel(settings.peopleSearchFallbackProvider))}</small></span></li>
 					<li><span>${icon("document")}<b>Email word limit</b><small>${settings.emailWordLimit} words</small></span></li>
 					<li><span>${icon("reply")}<b>Reply sync</b><small>${settings.replySyncEnabled ? "Enabled" : "Disabled"}</small></span></li>
 				</ul>
@@ -1208,7 +1241,7 @@ function renderSettings() {
 					<label>Gemini model<input id="gemini-model" value="${escapeAttr(settings.geminiModel)}" /></label>
 					<label>OpenAI model<input id="openai-model" value="${escapeAttr(settings.openAiModel)}" /></label>
 					<label>Anthropic model<input id="anthropic-model" value="${escapeAttr(settings.anthropicModel)}" /></label>
-					<label class="full">Cited people-search fallback<select id="people-search-fallback-provider"><option value="NONE" ${selected(settings.peopleSearchFallbackProvider, "NONE")}>Disabled</option><option value="GEMINI" ${selected(settings.peopleSearchFallbackProvider, "GEMINI")}>Gemini Google Search</option><option value="OPENAI" ${selected(settings.peopleSearchFallbackProvider, "OPENAI")}>OpenAI Web Search</option><option value="ANTHROPIC" ${selected(settings.peopleSearchFallbackProvider, "ANTHROPIC")}>Anthropic Web Search</option></select><small>Runs only when Tavily is insufficient. Provider web-search tools may incur charges. Anthropic defaults to 1 search; the search form can authorize up to 3 plus model-token usage, billed to your own API account. Results are not guaranteed. <a href="https://platform.claude.com/docs/en/about-claude/pricing#web-search-tool" target="_blank" rel="noopener">Official Anthropic pricing</a> · <a href="https://docs.tavily.com/documentation/api-credits" target="_blank" rel="noopener">Tavily API plan</a></small></label>
+					<label class="full">Optional AI discovery provider<select id="people-search-fallback-provider"><option value="NONE" ${selected(settings.peopleSearchFallbackProvider, "NONE")}>Disabled</option><option value="GEMINI" ${selected(settings.peopleSearchFallbackProvider, "GEMINI")}>Gemini Google Search</option><option value="OPENAI" ${selected(settings.peopleSearchFallbackProvider, "OPENAI")}>OpenAI Web Search</option><option value="ANTHROPIC" ${selected(settings.peopleSearchFallbackProvider, "ANTHROPIC")}>Anthropic Web Search</option></select><small>Runs only when you click Find more with AI or Retry with AI, never automatically after Tavily. Search and ordinary Retry use Tavily only. Provider web-search tools may incur charges. Anthropic defaults to 1 search; each AI action can authorize up to 3 plus model-token usage, billed to your own API account. Results are not guaranteed. <a href="https://platform.claude.com/docs/en/about-claude/pricing#web-search-tool" target="_blank" rel="noopener">Official Anthropic pricing</a> · <a href="https://docs.tavily.com/documentation/api-credits" target="_blank" rel="noopener">Tavily API plan</a></small></label>
 					<label>Email word limit<input id="word-limit" type="number" min="60" max="250" value="${settings.emailWordLimit}" /></label>
 					<label class="check-row"><input id="reply-sync-enabled" type="checkbox" ${settings.replySyncEnabled ? "checked" : ""} /><span>Enable scheduled reply sync</span></label>
 					<label class="full">Outreach goal<textarea id="outreach-goal" rows="3">${escapeHtml(settings.outreachGoal)}</textarea></label>
@@ -1419,6 +1452,10 @@ function wireTab() {
 		?.addEventListener("click", () =>
 			document.getElementById("discovery-dialog")?.close(),
 		);
+	document.getElementById("discovery-dialog")?.addEventListener("close", () => {
+		resetAiConsent();
+		render();
+	});
 	document.querySelectorAll("[data-journey-target]").forEach((button) =>
 		button.addEventListener("click", () =>
 			openJourneyDetail(button.dataset.journeyTarget, true),
@@ -1461,6 +1498,9 @@ function wireTab() {
 		),
 	);
 	document.getElementById("find-form")?.addEventListener("submit", findPeople);
+	document.getElementById("find-form")?.addEventListener("input", () => {
+		updateDiscoveryCriteria(readDiscoveryCriteria());
+	});
 	document.getElementById("settings-form")?.addEventListener("submit", saveSettings);
 	document.getElementById("legacy-import-form")?.addEventListener("submit", importLegacyState);
 	document.getElementById("beta-approve-email-form")?.addEventListener("submit", approveBetaEmailForm);
@@ -1480,21 +1520,21 @@ function wireTab() {
 		render();
 	});
 	document.getElementById("retry-job-discovery")?.addEventListener("click", openDiscoveryDialog);
+	document.getElementById("find-more-ai")?.addEventListener("click", () => {
+		const budget = document.getElementById("anthropic-expanded-search")?.checked ? 3 : 1;
+		executeDiscovery(state.networkingCriteria, "AI_SUPPLEMENT", budget);
+	});
 	document.getElementById("reload-job-contacts")?.addEventListener("click", async () => {
 		await loadNetworkingContacts();
 		render();
 	});
 	document.getElementById("cancel-people-search")?.addEventListener("click", () => {
-		state.discoveryRequest?.controller.abort();
-		state.discoveryRequest = null;
+		cancelDiscovery();
 		state.networkingSearch = {
-			status: "partial", summary: null,
+			status: "partial", mode: state.networkingSearch.mode, summary: null,
 			message: "Stopped waiting. Provider work already started may still be billed and may save results. Reload saved contacts before starting another search.",
 		};
 		render();
-	});
-	document.getElementById("anthropic-expanded-search")?.addEventListener("change", (event) => {
-		state.anthropicSearchMaxUses = event.currentTarget.checked ? 3 : 1;
 	});
 	document.getElementById("complete-profile")?.addEventListener("click", () => {
 		navigate("settings");
@@ -1794,6 +1834,7 @@ function openLegacyImport() {
 
 function openDiscoveryDialog() {
 	if (state.networkingSearch.status === "running") return;
+	resetAiConsent();
 	const dialogElement = document.getElementById("discovery-dialog");
 	if (!dialogElement || dialogElement.open) return;
 	dialogElement.showModal();
@@ -1834,16 +1875,41 @@ async function beginJobNetworking(id) {
 }
 
 function clearNetworkingContext() {
-	state.discoveryRequest?.controller.abort();
-	state.discoveryRequest = null;
+	cancelDiscovery();
 	state.networkingJob = null;
 	state.networkingCriteria = null;
 	state.networkingContacts = { status: "idle", prospects: [], message: "", request: state.networkingContacts.request + 1 };
-	state.anthropicSearchMaxUses = 1;
-	state.networkingSearch = { status: "idle", message: "", summary: null };
+	state.tavilySearch = null;
+	state.networkingSearch = { status: "idle", mode: "TAVILY", message: "", summary: null };
 }
 
-async function loadNetworkingContacts() {
+function resetAiConsent() {
+	const checkbox = document.getElementById("anthropic-expanded-search");
+	if (checkbox) checkbox.checked = false;
+}
+
+function cancelDiscovery() {
+	state.discoveryRequest?.controller.abort();
+	state.discoveryRequest = null;
+	resetAiConsent();
+}
+
+function updateDiscoveryCriteria(criteria) {
+	cancelDiscovery();
+	state.networkingCriteria = criteria;
+	state.networkingSearch = { status: "idle", mode: "TAVILY", message: "", summary: null };
+	state.tavilySearch = null;
+}
+
+function mergeDiscoveryProspects(existing, incoming, identity) {
+	const people = new Map();
+	for (const person of [...(existing || []), ...(incoming || [])]) {
+		if (person.userId === identity) people.set(person.id, person);
+	}
+	return [...people.values()];
+}
+
+async function loadNetworkingContacts(merge = false) {
 	const jobId = state.networkingJob?.id;
 	const identity = state.session?.user?.id;
 	if (!jobId || !identity || !jobOutreachLinkingEnabled()) return;
@@ -1861,9 +1927,13 @@ async function loadNetworkingContacts() {
 		const result = await api(`/api/jobs/${jobId}/prospects`);
 		if (!current()) return;
 		if (result.userId !== identity) throw new Error("The signed-in account changed. Reload the workspace to view its contacts.");
+		if (result.job?.id !== jobId) throw new Error("The job context changed. Reload its saved contacts.");
 		state.networkingJob = result.job;
 		state.networkingCriteria ||= structuredClone(result.job.discoveryCriteria);
-		state.networkingContacts = { status: "ready", prospects: result.prospects, message: "", request };
+		const prospects = merge
+			? mergeDiscoveryProspects(state.networkingContacts.prospects, result.prospects, identity)
+			: result.prospects;
+		state.networkingContacts = { status: "ready", prospects, message: "", request };
 	} catch (error) {
 		if (!current()) return;
 		state.networkingContacts = {
@@ -1878,10 +1948,19 @@ async function findPeople(event) {
 	await executeDiscovery(readDiscoveryCriteria());
 }
 
-async function executeDiscovery(criteria) {
+async function executeDiscovery(criteria, mode = "TAVILY", authorizedBudget = 1) {
+	resetAiConsent();
 	if (state.discoveryRequest || state.networkingSearch.status === "running" || !criteria) return;
-	if (!state.session?.authenticated || !state.session.credentials?.TAVILY?.configured) {
+	if (!state.session?.authenticated) return showToast("Sign in before searching.", true);
+	if (!["TAVILY", "AI_SUPPLEMENT"].includes(mode)) return showToast("Choose a valid discovery action.", true);
+	if (mode === "TAVILY" && !state.session.credentials?.TAVILY?.configured) {
 		return showToast("Add your Tavily key in Settings before searching. Opening saved contacts is free of provider calls.", true);
+	}
+	const provider = state.session.settings.peopleSearchFallbackProvider;
+	if (mode === "AI_SUPPLEMENT" && (provider === "NONE" || !state.session.credentials?.[provider]?.configured)) {
+		return showToast(provider === "NONE"
+			? "AI discovery is disabled. Choose a provider in Settings."
+			: `Add your ${fallbackProviderLabel(provider)} API key in Settings. No other provider will be used.`, true);
 	}
 	if (state.networkingJob && state.networkingContacts.status !== "ready") {
 		return showToast("Load this job's saved contacts before starting a search.", true);
@@ -1891,10 +1970,6 @@ async function executeDiscovery(criteria) {
 		jobId: state.networkingJob?.id,
 		controller: new AbortController(),
 	};
-	state.discoveryRequest = request;
-	const current = () => state.discoveryRequest === request &&
-		state.session?.user?.id === request.identity &&
-		state.networkingJob?.id === request.jobId;
 	state.networkingCriteria = {
 		...criteria,
 		jobId:
@@ -1902,9 +1977,20 @@ async function executeDiscovery(criteria) {
 				? state.networkingJob.id
 				: undefined,
 	};
-	const body = { ...state.networkingCriteria, anthropicSearchMaxUses: criteria.anthropicSearchMaxUses === 3 ? 3 : 1 };
+	request.criteria = state.networkingCriteria;
+	state.discoveryRequest = request;
+	const current = () => state.discoveryRequest === request &&
+		state.session?.user?.id === request.identity &&
+		state.networkingJob?.id === request.jobId &&
+		state.networkingCriteria === request.criteria;
+	const body = {
+		...state.networkingCriteria, mode,
+		anthropicSearchMaxUses: mode === "AI_SUPPLEMENT" && provider === "ANTHROPIC" && authorizedBudget === 3 ? 3 : 1,
+	};
+	if (mode === "TAVILY") state.tavilySearch = null;
 	state.networkingSearch = {
 		status: "running",
+		mode,
 		message: "",
 		summary: null,
 	};
@@ -1924,14 +2010,17 @@ async function executeDiscovery(criteria) {
 		});
 		completed = true;
 		if (!current()) return;
+		if (!result.summary || result.summary.mode !== mode) throw new Error("The discovery summary could not be read.");
 		const session = await api("/api/session", { signal: request.controller.signal });
 		if (!current()) return;
-		if (session.user?.id !== request.identity) {
+		if (result.userId !== request.identity || session.user?.id !== request.identity) {
 			clearNetworkingContext();
 			clearPrivateDialogs();
 			await refresh("networking");
 			return;
 		}
+		session.prospects = mergeDiscoveryProspects(state.session.prospects,
+			[...(result.prospects || []), ...(session.prospects || [])], request.identity);
 		state.session = session;
 		const [jobs, trackedJobs, analytics] = await Promise.all([
 			fetchJobs(), fetchTrackedJobs(), api("/api/analytics", { signal: request.controller.signal }),
@@ -1940,37 +2029,18 @@ async function executeDiscovery(criteria) {
 		state.jobs = jobs;
 		state.trackedJobs = trackedJobs;
 		state.analytics = analytics;
-		if (request.jobId) await loadNetworkingContacts();
+		if (request.jobId) await loadNetworkingContacts(true);
 		if (!current()) return;
-		const summary = result.summary || {
-			providerReturned: 0,
-			accepted: 0,
-			primaryProviderReturned: 0,
-			primaryAccepted: 0,
-			professionalBioProviderReturned: 0,
-			professionalBioAccepted: 0,
-			insufficientMatchRejected: 0,
-			strongAccepted: 0,
-			broaderAccepted: 0,
-			fallbackProvider: "NONE",
-			fallbackAttempted: false,
-			fallbackStatus: "NOT_NEEDED",
-			fallbackReason: null,
-			fallbackModel: "",
-			fallbackHttpStatus: null,
-			fallbackReturned: 0,
-			fallbackAccepted: 0,
-			inserted: result.prospects?.length || 0,
-			duplicates: 0,
-			rejected: 0,
-		};
+		if (request.jobId && state.networkingContacts.status !== "ready") throw new Error("Saved job contacts could not be refreshed.");
+		const summary = result.summary;
 		const status = discoverySearchStatus(summary);
 		if (summary.inserted > 0) {
 			state.networkingSearch = {
-				status,
+				status, mode,
 				message: discoverySuccessMessage(summary),
 				summary,
 			};
+			if (mode === "TAVILY") state.tavilySearch = state.networkingSearch;
 			render();
 			showToast(
 				`${status === "partial" ? "Partial search: found" : "Found"} ${summary.inserted} new ${summary.inserted === 1 ? "person" : "people"} to review.`,
@@ -1982,10 +2052,11 @@ async function executeDiscovery(criteria) {
 			return;
 		}
 		state.networkingSearch = {
-			status,
+			status, mode,
 			message: discoveryEmptyMessage(summary),
 			summary,
 		};
+		if (mode === "TAVILY") state.tavilySearch = state.networkingSearch;
 		render();
 		document.getElementById("find-people-panel")?.scrollIntoView({
 			behavior: preferredScrollBehavior(),
@@ -1994,7 +2065,7 @@ async function executeDiscovery(criteria) {
 	} catch (error) {
 		if (!current()) return;
 		state.networkingSearch = {
-			status: "error",
+			status: "error", mode,
 			message: completed
 				? "The search completed, but saved results could not be refreshed. Reload the workspace before starting another paid search."
 				:
@@ -2003,6 +2074,10 @@ async function executeDiscovery(criteria) {
 					: "The search could not be completed.",
 			summary: null,
 		};
+		state.networkingSearch.message += mode === "TAVILY"
+			? " No AI search was requested. Existing contacts were kept."
+			: " Tavily was not rerun. Existing contacts were kept.";
+		if (mode === "TAVILY") state.tavilySearch = state.networkingSearch;
 		render();
 	} finally {
 		if (state.discoveryRequest === request) state.discoveryRequest = null;
@@ -2021,7 +2096,6 @@ function readDiscoveryCriteria() {
 		}),
 		objective: value("objective"),
 		count: Number(value("count")),
-		anthropicSearchMaxUses: document.getElementById("anthropic-expanded-search")?.checked ? 3 : 1,
 	};
 }
 
@@ -2032,7 +2106,7 @@ function discoverySearchStatus(summary) {
 			: "error";
 	}
 	if (summary.jobQualified === 0) return "empty";
-	return summary.inserted > 0 || summary.jobQualified > 0 ? "success" : "empty";
+	return summary.inserted > 0 ? "success" : "empty";
 }
 
 function discoverySuccessMessage(summary) {
@@ -2078,11 +2152,8 @@ function discoveryEmptyMessage(summary) {
 		return `No new people were added. ${summary.duplicates} matching ${summary.duplicates === 1 ? "profile is" : "profiles are"} already tracked.${fallbackFailure ? ` ${fallbackFailure}` : " Edit the criteria to search for different roles."}`;
 	}
 	if (fallbackFailure) return fallbackFailure;
-	if (summary.fallbackStatus === "DISABLED") {
-		return "Tavily found no usable public professional profiles. The optional cited provider fallback is disabled in Settings.";
-	}
 	if (summary.providerReturned === 0) {
-		return "The search provider returned no profiles. Edit the roles, company, or location below and retry.";
+		return `${summary.mode === "AI_SUPPLEMENT" ? fallbackProviderLabel(summary.fallbackProvider) : "Tavily"} returned no profiles. Existing contacts are unchanged. ${summary.mode === "AI_SUPPLEMENT" ? "Another AI request may also return no new people." : "Edit the criteria and retry Tavily, or explicitly choose Find more with AI."}`;
 	}
 	if (summary.insufficientMatchRejected > 0) {
 		return `${summary.insufficientMatchRejected} ${summary.insufficientMatchRejected === 1 ? "candidate was" : "candidates were"} rejected because the profile did not match both the requested company and a professional role/topic. Edit the role terms or location and retry.`;
@@ -2105,56 +2176,57 @@ function discoveryEmptyMessage(summary) {
 }
 
 function discoveryFallbackFailureMessage(summary) {
+	if (summary.mode !== "AI_SUPPLEMENT") return "";
 	const provider = fallbackProviderLabel(summary.fallbackProvider);
 	let message = "";
-	if (summary.fallbackStatus === "MISSING_KEY") {
-		message = `The cited ${provider} fallback is selected, but no API key is configured for it. Add your key under Settings or disable the fallback.`;
+	if (summary.fallbackStatus === "DISABLED") {
+		message = "AI discovery is disabled. Choose an optional AI discovery provider in Settings. No provider was called.";
+	} else if (summary.fallbackStatus === "MISSING_KEY") {
+		message = `${provider} is selected, but no API key is configured for it. Add your key under Settings. No other provider was called.`;
 	} else if (
 		summary.fallbackStatus === "SEARCH_LIMITED" ||
 		summary.fallbackReason === "max_uses_exceeded"
 	) {
 		const limit = summary.anthropicSearchMaxUses === 3 ? 3 : 1;
-		message = `${provider} reached this request's ${limit}-search limit, not an API quota or key failure. Review the search budget and costs before explicitly retrying; more searches may still return fewer or no results. ${summary.fallbackAccepted > 0 ? "Only cited profiles that passed validation were retained." : "No usable fallback profiles were retained."}`;
+		message = `${provider} reached this request's ${limit}-search limit, not an API quota or key failure. Review the search budget and costs before explicitly retrying; more searches may still return fewer or no results. ${summary.fallbackAccepted > 0 ? "Only cited profiles that passed validation were retained." : "No usable AI profiles were retained."}`;
 	} else if (summary.fallbackReason === "invalid_tool_input") {
-		message = `${provider} could not run the search tool because its query input was invalid. Try fewer role, company, or location terms, or choose another fallback provider.`;
+		message = `${provider} could not run the search tool because its query input was invalid. Try fewer role, company, or location terms, or choose another AI discovery provider.`;
 	} else if (summary.fallbackReason === "query_too_long") {
 		message = `${provider}'s search-tool query was too long. Reduce the role, company, or location terms before retrying.`;
 	} else if (summary.fallbackReason === "request_too_large") {
-		message = `${provider}'s search-tool request was too large. Search fewer companies at a time to reduce the domain filters, or choose another fallback provider.`;
+		message = `${provider}'s search-tool request was too large. Search fewer companies at a time to reduce the domain filters, or choose another AI discovery provider.`;
 	} else if (summary.fallbackReason === "too_many_requests") {
-		message = `${provider}'s search tool was rate limited. Wait before retrying, or choose another fallback provider.`;
+		message = `${provider}'s search tool was rate limited. Wait before retrying, or choose another AI discovery provider.`;
 	} else if (summary.fallbackReason === "unavailable") {
-		message = `${provider}'s search tool was unavailable. Retry later or choose another fallback provider.`;
+		message = `${provider}'s search tool was unavailable. Retry later or choose another AI discovery provider.`;
 	} else if (summary.fallbackStatus === "RATE_LIMITED") {
 		if (summary.fallbackProvider === "GEMINI") {
 			message =
-				"Gemini Search quota or rate limit was reached. Check the API project's billing and Search grounding quota, wait for reset, or choose another fallback provider.";
+				"Gemini Search quota or rate limit was reached. Check the API project's billing and Search grounding quota, wait for reset, or choose another AI discovery provider.";
 		} else if (summary.fallbackProvider === "OPENAI") {
 			message =
-				"OpenAI Web Search quota or rate limit was reached. Check the API project's billing and Web Search limits, wait for reset, or choose another fallback provider.";
+				"OpenAI Web Search quota or rate limit was reached. Check the API project's billing and Web Search limits, wait for reset, or choose another AI discovery provider.";
 		} else if (summary.fallbackProvider === "ANTHROPIC") {
 			message =
-				"Anthropic Web Search quota or rate limit was reached. Check the API account's billing and Web Search limits, wait for reset, or choose another fallback provider.";
+				"Anthropic Web Search quota or rate limit was reached. Check the API account's billing and Web Search limits, wait for reset, or choose another AI discovery provider.";
 		}
 	} else if (summary.fallbackStatus === "AUTH") {
-		message = `${provider} denied API access. Check the key's validity and account permissions in Settings, or choose another fallback provider.`;
+		message = `${provider} denied API access. Check the key's validity and account permissions in Settings, or choose another AI discovery provider.`;
 	} else if (summary.fallbackStatus === "BAD_REQUEST") {
 		message = [400, 422].includes(summary.fallbackHttpStatus)
-			? `${provider} rejected the API request (HTTP ${summary.fallbackHttpStatus}). Retry with narrower criteria; if it persists, report this request error or choose another fallback provider.`
-			: `${provider} could not complete the request or search tool. The available diagnostic does not identify which failed. Try narrower criteria or choose another fallback provider.`;
+			? `${provider} rejected the API request (HTTP ${summary.fallbackHttpStatus}). Retry with narrower criteria; if it persists, report this request error or choose another AI discovery provider.`
+			: `${provider} could not complete the request or search tool. The available diagnostic does not identify which failed. Try narrower criteria or choose another AI discovery provider.`;
 	} else if (summary.fallbackStatus === "UNSUPPORTED") {
-		message = `The configured ${provider} model or account does not support the required web-search tool. Check model support and account capabilities, or choose another fallback provider.${summary.fallbackProvider === "ANTHROPIC" ? " An organization admin can check Web Search at platform.claude.com/settings/capabilities." : ""}`;
+		message = `The configured ${provider} model or account does not support the required web-search tool. Check model support and account capabilities, or choose another AI discovery provider.${summary.fallbackProvider === "ANTHROPIC" ? " An organization admin can check Web Search at platform.claude.com/settings/capabilities." : ""}`;
 	} else if (summary.fallbackStatus === "TIMEOUT") {
-		message = `${provider} timed out before returning cited profiles. Retry once later or choose another fallback provider.`;
+		message = `${provider} timed out before returning cited profiles. Retry once later or choose another AI discovery provider.`;
 	} else if (summary.fallbackStatus === "MALFORMED_RESPONSE") {
-		message = `${provider} returned an unusable cited-profile response. Retry once or choose another fallback provider.`;
+		message = `${provider} returned an unusable cited-profile response. Retry once or choose another AI discovery provider.`;
 	} else if (summary.fallbackStatus === "PROVIDER_ERROR") {
 		message = `${provider} could not complete the cited search. Check the provider's service and web-search availability before retrying.`;
 	}
 	if (!message) return "";
-	const tavilyAccepted =
-		(summary.primaryAccepted || 0) + (summary.professionalBioAccepted || 0);
-	return `${message} ${tavilyAccepted > 0 ? "Accepted Tavily profiles were preserved." : "No usable Tavily profiles were available."}`;
+	return `${message} Existing saved contacts and Tavily results were kept. Tavily was not rerun.`;
 }
 
 function fallbackProviderLabel(provider) {
@@ -2455,6 +2527,7 @@ function clearPrivateDialogs() {
 }
 
 async function refresh(tab = state.tab) {
+	resetAiConsent();
 	const previousIdentity = state.session?.user?.id;
 	state.session = await api("/api/session");
 	state.tab = state.session.authenticated ? tab : "jobs";
@@ -2623,6 +2696,14 @@ function navigate(view, options = {}) {
 		state.session?.authenticated && PRIMARY_VIEWS.includes(view)
 			? view
 			: "jobs";
+	resetAiConsent();
+	if (state.discoveryRequest && allowed !== state.tab) {
+		cancelDiscovery();
+		state.networkingSearch = {
+			status: "partial", mode: state.networkingSearch.mode, summary: null,
+			message: "Stopped waiting after navigation. Started provider work may still be billed. Reload saved contacts before searching again.",
+		};
+	}
 	state.tab = allowed;
 	state.mobileNavOpen = false;
 	syncViewToUrl();

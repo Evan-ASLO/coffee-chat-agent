@@ -203,7 +203,7 @@ test("preserves discovery recovery and cited-search provider safety", () => {
 	assert.match(app, /Reason & public evidence/);
 	assert.match(app, /Unconfirmed fits - not part of the three ranked priorities/);
 	assert.match(read("public/styles.css"), /\.discovery-state > div > strong,\s*\.discovery-state > div > span\s*\{\s*display: block;/);
-	assert.match(app, /Searching public professional profiles/);
+	assert.match(app, /searching public professional profiles/);
 	assert.match(app, /retry-job-discovery/);
 	assert.match(app, /summary\.strongAccepted/);
 	assert.match(app, /summary\.broaderAccepted/);
@@ -220,13 +220,16 @@ function discoveryClient(summary) {
 	const source = read("public/app.js");
 	const client = {
 		state: {
-			session: { authenticated: true, user: { id: "fake-user" }, credentials: { TAVILY: { configured: true } } },
-			networkingSearch: { status: "idle" }, networkingJob: null,
+			session: { authenticated: true, user: { id: "fake-user" }, prospects: [],
+				settings: { peopleSearchFallbackProvider: "ANTHROPIC", anthropicModel: "saved-model" },
+				credentials: { TAVILY: { configured: true }, ANTHROPIC: { configured: true } } },
+			networkingSearch: { status: "idle", mode: "TAVILY" }, networkingJob: null,
+			tavilySearch: null, tab: "networking",
 			networkingContacts: { status: "idle", prospects: [], request: 0 },
 		},
 		toasts: [],
-		api: async (url) => {
-			if (url === "/api/discovery") return { summary };
+		api: async (url, options) => {
+			if (url === "/api/discovery") return { userId: "fake-user", prospects: [], summary: { mode: options.body.mode, ...summary } };
 			if (url === "/api/session") return client.state.session;
 			if (url === "/api/analytics") return {};
 			throw new Error(`Unexpected API path: ${url}`);
@@ -240,6 +243,9 @@ function discoveryClient(summary) {
 		fetchJobs: async () => ({}),
 		fetchTrackedJobs: async () => ({}),
 		syncViewToUrl: () => {},
+		PRIMARY_VIEWS: ["home", "jobs", "applications", "networking", "analytics", "settings"],
+		requestAnimationFrame: (callback) => callback(),
+		window: { scrollTo: () => {} },
 		AbortController,
 		structuredClone,
 		showToast: (message) => client.toasts.push(message),
@@ -253,7 +259,8 @@ function discoveryClient(summary) {
 	);
 	vm.runInNewContext(
 		source.slice(source.indexOf("function renderSearchCosts("), source.indexOf("\nfunction networkingPeople(")) +
-		source.slice(source.indexOf("async function beginJobNetworking("), source.indexOf("\nasync function findPeople(")),
+		source.slice(source.indexOf("async function beginJobNetworking("), source.indexOf("\nasync function findPeople(")) +
+		source.slice(source.indexOf("function navigate("), source.indexOf("\nfunction syncViewToUrl(")),
 		client,
 	);
 	return client;
@@ -268,21 +275,22 @@ test("discovery renders failed, partial, duplicate, and completed outcomes hones
 		{ inserted: 1, accepted: 1, duplicates: 0, fallbackStatus: "SUCCESS", fallbackReason: null, status: "success" },
 	]) {
 		const summary = {
-			fallbackProvider: "ANTHROPIC", fallbackStatus: "SEARCH_LIMITED",
+			mode: "AI_SUPPLEMENT", fallbackProvider: "ANTHROPIC", fallbackStatus: "SEARCH_LIMITED",
 			fallbackReason: "max_uses_exceeded", fallbackHttpStatus: null,
 			providerReturned: 0, ...fixture,
 		};
 		const client = discoveryClient(summary);
-		await client.executeDiscovery({ count: 3 });
+		await client.executeDiscovery({ count: 3 }, "AI_SUPPLEMENT");
 		assert.equal(client.state.networkingSearch.status, fixture.status);
-		const html = client.renderNetworkingSearchState();
+		const html = client.renderNetworkingSearchState() + client.renderAiDiscovery();
 		assert.doesNotMatch(html, /No people found|Verify the configured model/);
 		if (summary.fallbackStatus === "SEARCH_LIMITED") {
 			assert.match(html, /1-search limit, not an API quota or key failure/);
 			assert.match(html, /notice warning/);
-			assert.match(html, /retry-job-discovery/);
+			assert.match(html, /find-more-ai/);
 			assert.match(html, fixture.status === "error" ? /Search could not be completed/ : /Partial results - search incomplete/);
-			assert.match(html, fixture.primaryAccepted ? /Accepted Tavily profiles were preserved/ : /No usable Tavily profiles were available/);
+			assert.match(html, /Existing saved contacts and Tavily results were kept/);
+			assert.doesNotMatch(html, /No usable Tavily profiles were available/);
 		}
 		if (fixture.inserted > 0 && fixture.status === "partial") {
 			assert.match(client.toasts[0], /^Partial search:/);
@@ -315,8 +323,9 @@ test("job opening and missing keys perform only an owned saved-contact read", as
 	assert.match(client.toasts.at(-1), /Add your Tavily key/);
 });
 
-test("duplicate search clicks and stale job/account responses cannot cross contexts", async () => {
-	for (const stale of [false, "job", "account"]) {
+test("both discovery modes suppress duplicate clicks and discard stale job/account/criteria/logout/navigation responses", async () => {
+	for (const mode of ["TAVILY", "AI_SUPPLEMENT"]) {
+	for (const stale of [false, "job", "account", "criteria", "logout", "navigation"]) {
 		const client = discoveryClient({ inserted: 1, accepted: 1 });
 		let resolve;
 		let calls = 0;
@@ -329,34 +338,41 @@ test("duplicate search clicks and stale job/account responses cannot cross conte
 			if (url === "/api/analytics") return {};
 			throw new Error(`Unexpected path ${url}`);
 		};
-		const pending = client.executeDiscovery({ count: 3, anthropicSearchMaxUses: 3 });
-		await client.executeDiscovery({ count: 3, anthropicSearchMaxUses: 3 });
+		const pending = client.executeDiscovery({ count: 3 }, mode, 3);
+		await client.executeDiscovery({ count: 3 }, mode, 3);
 		assert.equal(calls, 1);
 		if (stale) {
-			client.clearNetworkingContext();
-			if (stale === "job") client.state.networkingJob = { id: "b".repeat(64) };
-			else client.state.session.user.id = "second-user";
+			if (stale === "criteria") client.updateDiscoveryCriteria({ count: 7 });
+			else if (stale === "navigation") client.navigate("jobs");
+			else {
+				client.clearNetworkingContext();
+				if (stale === "job") client.state.networkingJob = { id: "b".repeat(64) };
+				else if (stale === "logout") client.state.session = { authenticated: false };
+				else client.state.session.user.id = "second-user";
+			}
 		}
-		resolve({ summary: { inserted: 1, accepted: 1 } });
+		resolve({ userId: "fake-user", summary: { mode, inserted: 1, accepted: 1 } });
 		await pending;
-		assert.equal(client.state.networkingSearch.status, stale ? "idle" : "success");
+		assert.equal(client.state.networkingSearch.status, stale === "navigation" ? "partial" : stale ? "idle" : "success");
 		assert.equal(client.state.discoveryRequest, null);
+	}
 	}
 });
 
 test("three-search errors name the actual request limit and keep costs beside explicit retry", () => {
 	const client = discoveryClient({});
 	client.state.networkingSearch = {
-		status: "error",
+		status: "error", mode: "AI_SUPPLEMENT",
 		message: client.discoveryFallbackFailureMessage({
-			fallbackProvider: "ANTHROPIC", fallbackStatus: "SEARCH_LIMITED", anthropicSearchMaxUses: 3,
+			mode: "AI_SUPPLEMENT", fallbackProvider: "ANTHROPIC", fallbackStatus: "SEARCH_LIMITED", anthropicSearchMaxUses: 3,
 		}),
 	};
-	const html = client.renderNetworkingSearchState();
+	client.state.networkingCriteria = { count: 3 };
+	const html = client.renderNetworkingSearchState() + client.renderAiDiscovery();
 	assert.match(html, /3-search limit, not an API quota or key failure/);
 	assert.match(html, /official Anthropic pricing/);
 	assert.match(html, /your own API account/);
-	assert.match(html, /Review costs & retry/);
+	assert.match(html, /Retry with AI/);
 	assert.doesNotMatch(html, /one-search limit|1-search limit/);
 });
 
@@ -399,7 +415,7 @@ test("discovery distinguishes safe tool reasons from HTTP and account errors", (
 		["MISSING_KEY", null, null, /no API key is configured/],
 	]) {
 		const summary = {
-			fallbackProvider: "ANTHROPIC", fallbackStatus: status,
+			mode: "AI_SUPPLEMENT", fallbackProvider: "ANTHROPIC", fallbackStatus: status,
 			fallbackReason: reason, fallbackHttpStatus: http, inserted: 0,
 		};
 		const message = client.discoveryFallbackFailureMessage(summary);
@@ -407,6 +423,104 @@ test("discovery distinguishes safe tool reasons from HTTP and account errors", (
 		assert.doesNotMatch(message, /PRIVATE PROMPT|SECRET-DO-NOT-STORE|Verify the configured model/);
 		assert.equal(client.discoverySearchStatus(summary), "error");
 		assert.equal(client.discoverySearchStatus({ ...summary, inserted: 1 }), "partial");
+	}
+});
+
+test("Tavily outcomes ignore optional-provider problems and ordinary Retry cannot opt in to AI", async () => {
+	const client = discoveryClient({
+		inserted: 1, accepted: 1, fallbackProvider: "ANTHROPIC",
+		fallbackStatus: "MISSING_KEY",
+	});
+	const calls = [];
+	const api = client.api;
+	client.api = async (url, options) => { calls.push({ url, body: options?.body }); return api(url, options); };
+	await client.executeDiscovery({ count: 3, anthropicSearchMaxUses: 3 });
+	await client.executeDiscovery(client.state.networkingCriteria);
+	assert.equal(client.state.networkingSearch.status, "success");
+	assert.equal(client.discoveryFallbackFailureMessage({ mode: "TAVILY", fallbackStatus: "MISSING_KEY" }), "");
+	assert.deepEqual(calls.filter(({ url }) => url === "/api/discovery").map(({ body }) => [body.mode, body.anthropicSearchMaxUses]), [
+		["TAVILY", 1], ["TAVILY", 1],
+	]);
+	assert.match(client.renderSearchCosts(), /Search and Retry use Tavily only/);
+	assert.doesNotMatch(client.renderSearchCosts(), /model-token|Anthropic pricing|authorize up to 3/);
+});
+
+test("AI consent is per action, defaults back to one, and does not require a Tavily key", async () => {
+	const client = discoveryClient({ inserted: 0, accepted: 0, fallbackStatus: "SUCCESS" });
+	client.state.session.credentials.TAVILY.configured = false;
+	const checkbox = { checked: true };
+	client.document.getElementById = (id) => id === "anthropic-expanded-search" ? checkbox : null;
+	const calls = [];
+	const api = client.api;
+	client.api = async (url, options) => { if (url === "/api/discovery") calls.push(options.body); return api(url, options); };
+	await client.executeDiscovery({ count: 3 }, "AI_SUPPLEMENT", 3);
+	assert.equal(checkbox.checked, false);
+	await client.executeDiscovery(client.state.networkingCriteria, "AI_SUPPLEMENT");
+	assert.deepEqual(calls.map((body) => [body.mode, body.anthropicSearchMaxUses]), [["AI_SUPPLEMENT", 3], ["AI_SUPPLEMENT", 1]]);
+	checkbox.checked = true;
+	client.updateDiscoveryCriteria({ count: 4 });
+	assert.equal(checkbox.checked, false);
+	checkbox.checked = true;
+	client.navigate("settings");
+	assert.equal(checkbox.checked, false);
+	checkbox.checked = true;
+	client.clearNetworkingContext();
+	assert.equal(checkbox.checked, false);
+});
+
+test("AI failure/empty/duplicates and partial refreshes keep existing owned contacts in both entry surfaces", async () => {
+	for (const jobLinked of [false, true]) {
+		for (const outcome of ["failed", "empty", "duplicate", "partial", "added"]) {
+			const client = discoveryClient({});
+			const job = { id: "a".repeat(64), discoveryCriteria: { count: 3 } };
+			const old = { id: "old", userId: "fake-user", fullName: "Saved Tavily", linkedJobs: [{ id: job.id }], discoveryProvider: "TAVILY" };
+			const added = { id: "new", userId: "fake-user", fullName: "New cited AI", linkedJobs: [{ id: job.id }], discoveryProvider: "ANTHROPIC_GROUNDED" };
+			client.state.session.prospects = [old];
+			if (jobLinked) {
+				client.jobOutreachLinkingEnabled = () => true;
+				client.state.networkingJob = job;
+				client.state.networkingContacts = { status: "ready", prospects: [old], request: 0 };
+			}
+			client.state.tavilySearch = { status: "success", mode: "TAVILY", message: "Saved Tavily phase", summary: {} };
+			const newPeople = ["added", "partial"].includes(outcome) ? [added] : [];
+			client.api = async (url) => {
+				if (url === "/api/discovery") {
+					if (outcome === "failed") throw new Error("AI request failed.");
+					return { userId: "fake-user", prospects: newPeople, summary: {
+						mode: "AI_SUPPLEMENT", fallbackProvider: "ANTHROPIC",
+						fallbackStatus: outcome === "partial" ? "SEARCH_LIMITED" : "SUCCESS",
+						accepted: outcome === "duplicate" ? 1 : newPeople.length,
+						inserted: newPeople.length, duplicates: outcome === "duplicate" ? 1 : 0,
+					} };
+				}
+				if (url === "/api/session") return { ...client.state.session, prospects: newPeople };
+				if (url === "/api/analytics") return {};
+				if (url === `/api/jobs/${job.id}/prospects`) return { userId: "fake-user", job, prospects: newPeople };
+				throw new Error(`Unexpected request: ${url}`);
+			};
+			await client.executeDiscovery({ count: 3 }, "AI_SUPPLEMENT");
+			assert.deepEqual(Array.from(client.state.session.prospects, (person) => person.id), ["old", ...newPeople.map((person) => person.id)]);
+			if (jobLinked) assert.deepEqual(Array.from(client.state.networkingContacts.prospects, (person) => person.id), ["old", ...newPeople.map((person) => person.id)]);
+			assert.match(client.renderNetworkingSearchState(), /Saved Tavily phase/);
+			assert.equal(client.state.networkingSearch.status, outcome === "failed" ? "error" : outcome === "partial" ? "partial" : outcome === "added" ? "success" : "empty");
+		}
+	}
+});
+
+test("disabled/missing AI guidance cannot issue discovery and never changes saved preferences", async () => {
+	for (const provider of ["NONE", "ANTHROPIC", "GEMINI", "OPENAI"]) {
+		const client = discoveryClient({});
+		client.state.session.settings.peopleSearchFallbackProvider = provider;
+		client.state.session.credentials = {};
+		client.state.networkingCriteria = { count: 3 };
+		client.state.networkingSearch.status = "empty";
+		client.api = () => { throw new Error("No provider call authorized."); };
+		const html = client.renderAiDiscovery();
+		assert.match(html, /id="find-more-ai"[^>]*disabled/);
+		assert.match(html, provider === "NONE" ? /AI discovery is disabled/ : /No API key is configured/);
+		await client.executeDiscovery(client.state.networkingCriteria, "AI_SUPPLEMENT", 3);
+		assert.equal(client.state.session.settings.peopleSearchFallbackProvider, provider);
+		assert.match(client.toasts.at(-1), /Settings/);
 	}
 });
 

@@ -60,7 +60,8 @@ changing the reference artwork or replacing page layouts.
   cleared on disposal, cancellation, successful save, account changes, and logout.
 - Provider preferences change only through the real explicit Save settings
   workflow. Template/manual paths are available; saving a key never enables
-  search fallback. Use your own provider accounts and check their current API
+  AI discovery. Only Find more with AI authorizes a supplemental search.
+  Use your own provider accounts and check their current API
   billing, grounding/model availability, costs, and quotas.
 - Tutorial navigation never searches, prepares a person, drafts/regenerates,
   sends, analyzes a resume, starts OAuth, or creates a CRM. User-opened native
@@ -243,25 +244,27 @@ The server fixes the employer and function from the selected job, targets junior
 
 Employer aliases and cited current-employment statements/headlines are required. Analyst/associate titles alone, age, photos and invented experience are not seniority evidence. Senior/lead/director/VP indicators prevent entry-level qualification. Ambiguous profiles appear separately as **Unconfirmed fit**; former/wrong-firm candidates are rejected from new job-linked discovery. Each job link gets its own reason, supporting public evidence and source link, computed from existing persisted fields without a new migration. Existing `BROADER_COMPANY` warnings and both outreach approvals remain. Results and links deduplicate; no contact is promised for every job.
 
-Opening/rendering/navigating/paging/tutorial steps never search, enrich, draft or send. **Find people** opens a form; **Search public profiles** explicitly starts discovery after the visible cost notice. **Review costs & retry** returns to that form, not a hidden retry. Concurrent clicks are disabled; late results cannot replace another job/account. **Stop waiting** cancels the browser request and propagates cancellation where supported, but already-started provider work can still be billed or finish; reload saved contacts before starting again.
+Opening/rendering/navigating/paging/tutorial steps never search, enrich, draft or send. **Find people** opens a form; **Search public profiles** explicitly starts **Tavily-only** discovery after the Tavily plan notice. **Review costs & retry Tavily** returns to that form, not a hidden retry. Full, partial, empty, duplicate-only and unconfirmed results, errors, and missing Tavily keys never trigger AI. Concurrent clicks are disabled; late results cannot replace changed criteria, another job/account, or logout state. **Stop waiting** and navigation cancel the browser request and propagate cancellation where supported, but already-started provider work can still be billed or finish; reload saved contacts before starting again.
 
-### Optional cited people-search fallback
+### Optional, explicitly requested AI discovery
 
-Each user has one disabled-by-default `peopleSearchFallbackProvider` setting: `NONE`, `GEMINI`, `OPENAI`, or `ANTHROPIC`. Job networking always runs Tavily's LinkedIn and approved-domain public-bio searches first. Only when those stages return fewer usable people than requested does the Worker read the selected provider's encrypted user key and make one bounded request with the user's configured model:
+Each user retains the disabled-by-default `peopleSearchFallbackProvider` setting (`NONE`, `GEMINI`, `OPENAI`, or `ANTHROPIC`), now labelled **Optional AI discovery provider**. Existing preferences are preserved. **Search public profiles** uses Tavily's bounded LinkedIn pass and, if needed, approved-domain public-bio pass. After reviewing results, **Find more with AI** is a separate, cost-disclosed action. It preserves saved/Tavily contacts and merges new validated contacts with their existing job links and ranking. It may return only duplicates or no new contacts.
+
+`POST /api/discovery` accepts `mode: "TAVILY" | "AI_SUPPLEMENT"`; omitted mode (including legacy clients) safely defaults to **TAVILY**, and invalid modes return `INVALID_REQUEST` before provider calls. `AI_SUPPLEMENT` never calls Tavily or reads its credential. It reads only the selected AI provider's encrypted user key and saved model and makes one bounded request (at most 10 candidate profiles, still capped by the discovery count):
 
 - Gemini Interactions API with `google_search`, `store: false`, and a supported configured `gemini-3.8-flash` or `gemini-3.7-flash` model;
 - OpenAI Responses API with `web_search`, low search context, and `filters.allowed_domains`; or
 - Anthropic Messages API with `web_search_20250305`, `allowed_domains`, and request-scoped `max_uses: 1` or `3`.
 
-`POST /api/discovery` accepts only numeric `anthropicSearchMaxUses: 1 | 3`, defaulting to **1** for old clients or omitted consent. Other values are rejected before provider calls; the adapter also clamps unsupported values to 1. The UI's unchecked-by-default authorization control permits **up to 3 web searches plus model-token usage**, billed to the user's own API account. The cap applies to the entire single fallback invocation, never per tier, with one API attempt and a bounded timeout. No automatic provider/model change or recursive retry is added.
+`POST /api/discovery` accepts only numeric `anthropicSearchMaxUses: 1 | 3`, defaulting to **1** for omitted consent. Other values are rejected before provider calls; the adapter also clamps unsupported values to 1. Tavily mode ignores any higher AI budget and reports 1 without making an AI call. Beside the AI action, an unchecked-by-default authorization control permits **up to 3 web searches plus model-token usage**, billed to the user's own API account. Consent resets after each request, criteria change, navigation, dialog opening, or account/context change; it is not a saved preference. **Retry with AI** is another explicit, newly billed action with a fresh default of 1. The cap applies to the entire single AI invocation, never per tier, with one API attempt and a bounded timeout.
 
-There is no provider chain, automatic retry, or silent model substitution. Selected-provider failures are reduced to `RATE_LIMITED`, `SEARCH_LIMITED`, `AUTH`, `BAD_REQUEST`, `UNSUPPORTED`, `TIMEOUT`, `MALFORMED_RESPONSE`, or `PROVIDER_ERROR`. Audit and API summaries retain only the provider, category, numeric HTTP rejection status when available, configured model, aggregate counts, and `fallbackReason`: a whitelisted Anthropic tool error code (`max_uses_exceeded`, `invalid_tool_input`, `query_too_long`, `request_too_large`, `too_many_requests`, `unavailable`), `unknown_tool_error`, or `null`. Raw provider bodies/messages, prompts, results, URLs, and credentials are never stored in these diagnostics. Every failure preserves accepted Tavily results.
+There is no automatic top-up, provider chain, AI retry, or silent model substitution. Disabled/missing-key AI actions return the existing safe `DISABLED`/`MISSING_KEY` summary with zero provider calls. Selected-provider failures are reduced to `RATE_LIMITED`, `SEARCH_LIMITED`, `AUTH`, `BAD_REQUEST`, `UNSUPPORTED`, `TIMEOUT`, `MALFORMED_RESPONSE`, or `PROVIDER_ERROR`. `DISCOVERY_COMPLETED` and its existing aggregate fields are retained, with `mode` and `tavilyAttempted` added. Tavily-only summaries use `fallbackStatus: "NOT_REQUESTED"` and no selected AI provider; AI-only summaries have zero Tavily-stage counts and `tavilyAttempted: false`. Audit and API summaries retain only these mode indicators, provider, category, numeric HTTP rejection status when available, configured model, aggregate counts, and `fallbackReason`: a whitelisted Anthropic tool error code (`max_uses_exceeded`, `invalid_tool_input`, `query_too_long`, `request_too_large`, `too_many_requests`, `unavailable`), `unknown_tool_error`, or `null`. Raw provider bodies/messages, prompts, results, URLs, and credentials are never stored in these diagnostics. Every failure preserves existing saved/Tavily results.
 
 Anthropic tool errors arrive inside HTTP 200 responses, so their `fallbackHttpStatus` remains `null`; actual HTTP 400/422 rejections retain their numeric status. `max_uses_exceeded` means this request hit its authorized cap, not API quota exhaustion or an invalid key/model. API/audit summaries include `anthropicSearchMaxUses`; the UI names the actual 1- or 3-search limit with a visibly separated status heading and message. Only for that error, a complete valid result object may still supply profiles through the same citation and acceptance checks below; the status stays `SEARCH_LIMITED`, even when profiles are retained. Missing/malformed output retains no fallback profiles, and any other tool error prevents salvage. The UI distinguishes partial results, failed searches, and completed searches with no qualified/new profiles. For a provider-reported unsupported/disabled search capability, an organization admin can check [Claude Console capabilities](https://platform.claude.com/settings/capabilities); a generic request/tool error does not establish a model or credential problem.
 
 Every accepted object must be strict JSON whose canonical `sourceUrl` exactly matches a direct provider citation and passes the existing LinkedIn/approved-host, page-type, company, role, location, and STRONG/BROADER quality checks. Google redirect citation URLs are rejected rather than resolved or trusted. The prompt contains only public company aliases, role/topics, location, approved domains, and requested count; it never includes the user's profile, resume, email, drafts, personal context, or credentials.
 
-Provider web search and model tokens may be billable. Gemini can execute multiple billable searches within its one API request; OpenAI bills web-search tool usage and tokens under the selected model. Search/retry and onboarding link [official Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing#web-search-tool) and explain the user's [Tavily API plan](https://docs.tavily.com/documentation/api-credits), without promising free usage or guaranteed results. Availability and pricing can change, so users must confirm their selected model/account's capabilities and costs.
+Provider web search and model tokens may be billable. Gemini can execute multiple billable searches within its one API request; OpenAI bills web-search tool usage and tokens under the selected model. AI-action costs are adjacent to that action, including [official Anthropic pricing](https://platform.claude.com/docs/en/about-claude/pricing#web-search-tool) when selected. Tavily-only Search/Retry show only the user's [Tavily API plan](https://docs.tavily.com/documentation/api-credits), without suggesting an AI charge. Availability and pricing can change, so users must confirm their selected model/account's capabilities and costs.
 
 Legacy import v1 is strict:
 
@@ -300,7 +303,9 @@ npm run preview:onboarding
 node test\browser\contacts.mjs
 ```
 
-This reuses the tutorial's local-only preparation/serving patterns on **8805**,
+Set `$env:CONTACTS_PREVIEW_PORT = "8807"` in both preparation and browser-test
+terminals to use a separate unused port instead of the default **8805**.
+This reuses the tutorial's local-only preparation/serving patterns,
 refuses an existing `.d1` database or occupied port, and never touches other
 previews. Open `http://127.0.0.1:8805/__review/existing` for five fictional linked
 contacts, or `/__review/second` for a separate account without keys or contacts.
@@ -308,8 +313,9 @@ The test-only `local-contacts-preview.ts` is not in production configuration:
 it requires the loopback origin and review flag, blocks network egress,
 provider/search/Google/CRM/draft/send/key actions at entry, and only permits
 authenticated tutorial-progress writes. The browser test intercepts explicitly
-requested searches with fake results, checks desktop/phone priorities, costs,
-partial/error/retry, refresh, account isolation and final-send cancellation.
+requested Tavily/AI actions with fake results, checks desktop/phone priorities,
+separate costs, consent reset, partial/error/duplicate merges, explicit retries,
+refresh, account isolation and final-send cancellation.
 `CONTACTS_EVIDENCE_DIR` selects a screenshot/network-receipt folder.
 
 ### Isolated, read-only layout review

@@ -160,14 +160,15 @@
 					Sheets; Tavily for public-web discovery; Hunter for email enrichment;
 					and your selected AI provider for drafting or resume analysis. PDF
 					resume analysis uses the user's configured Gemini credential. If you
-					explicitly select cited Gemini, OpenAI, or Anthropic people search, the
+					explicitly click Find more with AI using Gemini, OpenAI, or Anthropic, the
 					application may send only public job-networking criteria (company,
 					professional role/topics, location, approved source domains, and result
 					count) to that selected provider using your encrypted provider key and
 					configured model. It does not send your profile, resume, email, drafts,
 					personal context, or credentials in that prompt. Only one provider is
-					called, after Tavily is insufficient, and direct source citations are
-					required. Those providers process information under their own terms
+					called per explicit AI action, without rerunning Tavily, and direct
+					source citations are required. Search and ordinary Retry use Tavily
+					only; a shortfall never triggers AI automatically. Those providers process information under their own terms
 					and privacy policies.
 				</p>
 				<p>

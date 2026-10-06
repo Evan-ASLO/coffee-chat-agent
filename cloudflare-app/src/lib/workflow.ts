@@ -14,10 +14,11 @@ import {
 	createDraft,
 	discoverWithTavily,
 	enrichWithHunter,
-	discoveryPersonKey,
 	qualifiedDiscoveryCount,
 	selectDiscoveryPeople,
+	type DiscoveredPerson,
 	type DiscoveryCriteria,
+	type DiscoveryProviderResult,
 } from "./providers";
 import { readResumeAttachment } from "./resume";
 import {
@@ -51,13 +52,17 @@ import {
 } from "./people-search-fallback";
 
 type PeopleSearchFallbackStatus =
-	| "NOT_NEEDED"
+	| "NOT_REQUESTED"
 	| "DISABLED"
 	| "MISSING_KEY"
 	| "SUCCESS"
 	| PeopleSearchErrorCategory;
 
+export type DiscoveryMode = "TAVILY" | "AI_SUPPLEMENT";
+
 export interface DiscoverySummary {
+	mode: DiscoveryMode;
+	tavilyAttempted: boolean;
 	providerReturned: number;
 	accepted: number;
 	primaryProviderReturned: number;
@@ -112,6 +117,7 @@ export async function discoverProspects(
 	jobId?: string,
 	authorizedAnthropicSearchMaxUses: number = 1,
 	signal?: AbortSignal,
+	mode: DiscoveryMode = "TAVILY",
 ): Promise<{ prospects: Prospect[]; summary: DiscoverySummary }> {
 	await enforceRateLimit(env, {
 		userId,
@@ -119,34 +125,36 @@ export async function discoverProspects(
 		limit: 20,
 		windowSeconds: 3600,
 	});
-	const tavilyKey = await readOptionalCredential(env, userId, "TAVILY");
-	if (!tavilyKey) {
-		throw new ClientInputError("Add your Tavily API key in Settings before searching. Saved job contacts remain available without a key.");
-	}
 	const requestedCount = Math.min(
 		criteria.count,
 		Number(env.MAX_DISCOVERY_RESULTS || 20),
 	);
-	const anthropicSearchMaxUses = anthropicSearchLimit(authorizedAnthropicSearchMaxUses);
-	const providerResult = await discoverWithTavily(tavilyKey, {
-		...criteria,
-		count: requestedCount,
-	}, signal);
-	const discoveredByUrl = new Map(
-		providerResult.people.map((person) => [
-			discoveryPersonKey(person, criteria),
-			person,
-		]),
-	);
+	const anthropicSearchMaxUses = mode === "AI_SUPPLEMENT"
+		? anthropicSearchLimit(authorizedAnthropicSearchMaxUses) : 1;
+	let providerResult: DiscoveryProviderResult | null = null;
+	let people: DiscoveredPerson[] = [];
 	let fallbackProvider: "NONE" | PeopleSearchFallbackProvider = "NONE";
 	let fallbackAttempted = false;
-	let fallbackStatus: PeopleSearchFallbackStatus = "NOT_NEEDED";
+	let fallbackStatus: PeopleSearchFallbackStatus = "NOT_REQUESTED";
 	let fallbackReason: PeopleSearchErrorReason | null = null;
 	let fallbackModel = "";
 	let fallbackHttpStatus: number | null = null;
 	let fallbackReturned = 0;
-	const remaining = requestedCount - qualifiedDiscoveryCount([...discoveredByUrl.values()], criteria);
-	if (remaining > 0) {
+	if (mode === "TAVILY") {
+		const tavilyKey = await readOptionalCredential(env, userId, "TAVILY");
+		if (!tavilyKey) {
+			throw new ClientInputError("Add your Tavily API key in Settings before searching. Saved contacts remain available without a key.");
+		}
+		try {
+			providerResult = await discoverWithTavily(tavilyKey, {
+				...criteria, count: requestedCount,
+			}, signal);
+			people = providerResult.people;
+		} catch {
+			signal?.throwIfAborted();
+			throw new Error("Tavily discovery failed. No AI search was requested.");
+		}
+	} else if (mode === "AI_SUPPLEMENT") {
 		signal?.throwIfAborted();
 		const settings = await getSettings(env, userId);
 		fallbackProvider = settings.peopleSearchFallbackProvider;
@@ -172,7 +180,7 @@ export async function discoverProspects(
 						apiKey: providerKey,
 						model: fallbackModel,
 						criteria,
-						count: remaining,
+						count: requestedCount,
 						anthropicSearchMaxUses,
 						signal,
 					});
@@ -180,12 +188,7 @@ export async function discoverProspects(
 					fallbackReason = grounded.reason;
 					fallbackModel = grounded.model;
 					fallbackReturned = grounded.returned;
-					for (const person of grounded.people) {
-						const key = discoveryPersonKey(person, criteria);
-						if (!discoveredByUrl.has(key)) {
-							discoveredByUrl.set(key, person);
-						}
-					}
+					people = grounded.people;
 				} catch (error) {
 					if (error instanceof PeopleSearchFallbackError) {
 						fallbackStatus = error.category;
@@ -197,8 +200,10 @@ export async function discoverProspects(
 				}
 			}
 		}
+	} else {
+		throw new ClientInputError("Choose a valid discovery mode.");
 	}
-	const discovered = selectDiscoveryPeople([...discoveredByUrl.values()], {
+	const discovered = selectDiscoveryPeople(people, {
 		...criteria, count: requestedCount,
 	});
 	const jobQualified = criteria.jobContext ? qualifiedDiscoveryCount(discovered, criteria) : null;
@@ -223,45 +228,40 @@ export async function discoverProspects(
 		]);
 		await linkProspectsToJob(env, userId, jobId, [...linkedProspectIds]);
 	}
+	const summary: DiscoverySummary = {
+		mode,
+		tavilyAttempted: mode === "TAVILY",
+		providerReturned: (providerResult?.providerReturned ?? 0) + fallbackReturned,
+		accepted: discovered.length,
+		primaryProviderReturned: providerResult?.primaryProviderReturned ?? 0,
+		primaryAccepted: providerResult?.primaryAccepted ?? 0,
+		professionalBioProviderReturned: providerResult?.fallbackProviderReturned ?? 0,
+		professionalBioAccepted: providerResult?.fallbackAccepted ?? 0,
+		insufficientMatchRejected: providerResult?.insufficientMatchRejected ?? 0,
+		strongAccepted,
+		broaderAccepted,
+		fallbackProvider,
+		fallbackAttempted,
+		fallbackStatus,
+		fallbackReason,
+		fallbackModel,
+		fallbackHttpStatus,
+		fallbackReturned,
+		fallbackAccepted: groundedAccepted,
+		anthropicSearchMaxUses,
+		jobQualified,
+		jobUnconfirmed,
+		inserted: inserted.length,
+		duplicates: discovered.length - inserted.length,
+		rejected: Math.max(0, (providerResult?.providerReturned ?? 0) -
+			(providerResult?.people.length ?? 0) + fallbackReturned - groundedAccepted),
+	};
 	await audit(env, {
 		userId,
 		action: "DISCOVERY_COMPLETED",
 		entityType: "prospect",
 		requestId,
-		metadata: {
-			providerReturned:
-				providerResult.providerReturned + fallbackReturned,
-			accepted: discovered.length,
-			primaryProviderReturned: providerResult.primaryProviderReturned,
-			primaryAccepted: providerResult.primaryAccepted,
-			professionalBioProviderReturned:
-				providerResult.fallbackProviderReturned,
-			professionalBioAccepted: providerResult.fallbackAccepted,
-			insufficientMatchRejected:
-				providerResult.insufficientMatchRejected,
-			strongAccepted,
-			broaderAccepted,
-			fallbackProvider,
-			fallbackAttempted,
-			fallbackStatus,
-			fallbackReason,
-			fallbackModel,
-			fallbackHttpStatus,
-			fallbackReturned,
-			fallbackAccepted: groundedAccepted,
-			anthropicSearchMaxUses,
-			jobQualified,
-			jobUnconfirmed,
-			inserted: inserted.length,
-			duplicates: discovered.length - inserted.length,
-			rejected: Math.max(
-				0,
-				providerResult.providerReturned -
-					providerResult.people.length +
-					fallbackReturned -
-					groundedAccepted,
-			),
-		},
+		metadata: { ...summary },
 	});
 	for (const prospect of inserted) {
 		await env.MAIL_QUEUE.send({
@@ -270,43 +270,7 @@ export async function discoverProspects(
 			prospectId: prospect.id,
 		} satisfies QueueMessage);
 	}
-	return {
-		prospects: inserted,
-		summary: {
-			providerReturned:
-				providerResult.providerReturned + fallbackReturned,
-			accepted: discovered.length,
-			primaryProviderReturned: providerResult.primaryProviderReturned,
-			primaryAccepted: providerResult.primaryAccepted,
-			professionalBioProviderReturned:
-				providerResult.fallbackProviderReturned,
-			professionalBioAccepted: providerResult.fallbackAccepted,
-			insufficientMatchRejected:
-				providerResult.insufficientMatchRejected,
-			strongAccepted,
-			broaderAccepted,
-			fallbackProvider,
-			fallbackAttempted,
-			fallbackStatus,
-			fallbackReason,
-			fallbackModel,
-			fallbackHttpStatus,
-			fallbackReturned,
-			fallbackAccepted: groundedAccepted,
-			anthropicSearchMaxUses,
-			jobQualified,
-			jobUnconfirmed,
-			inserted: inserted.length,
-			duplicates: discovered.length - inserted.length,
-			rejected: Math.max(
-				0,
-				providerResult.providerReturned -
-					providerResult.people.length +
-					fallbackReturned -
-					groundedAccepted,
-			),
-		},
-	};
+	return { prospects: inserted, summary };
 }
 
 function peopleSearchModel(

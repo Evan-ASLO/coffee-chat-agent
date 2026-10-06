@@ -25,7 +25,7 @@
 		{
 			id: "tavily", chapter: 0, view: "settings", target: "credential-TAVILY",
 			title: "Tavily: discover public profiles",
-			body: (session) => `<p>A Tavily key is needed only when you actually <strong>Find people</strong>. Jobs and website navigation do not need it.</p>
+			body: (session) => `<p>A Tavily key is needed only when you submit <strong>Search public profiles</strong>. That Search and its ordinary Retry use Tavily only, even with few or no results. Jobs and website navigation do not need it.</p>
 				<ol><li>Sign in or create your own Tavily account.</li><li>Copy the API key from its dashboard.</li><li>Enter it in the highlighted password field and choose <strong>Save</strong>.</li></ol>
 				${keyLinks("TAVILY")}${credentialSummary(session, "TAVILY")}
 				<p>Discovery uses publicly indexed profiles. It does not scrape LinkedIn, sign into LinkedIn, or send LinkedIn messages. Check your account's current pricing and quotas.</p>`,
@@ -51,10 +51,10 @@
 		},
 		{
 			id: "search-fallback", chapter: 0, view: "settings", target: "preferences",
-			preference: "people-search-fallback-provider", action: "preferences", actionLabel: "Inspect fallback preference",
-			body: (session) => `<p><strong>Cited people-search fallback is optional and off by default.</strong> It runs only after Tavily returns too few usable people, and uses only the one provider and model you explicitly select.</p>
-				<p>Current choice: <strong>${escapeHtml(session.settings.peopleSearchFallbackProvider || "NONE")}</strong>. Saving a key or advancing this tour never enables fallback, switches providers, or chains providers.</p>
-				<p>Search tools and model tokens may have separate charges. Anthropic defaults to 1 web search; you can explicitly authorize up to 3 per search, plus model-token usage, billed to your own API account. More searches may still return fewer or no results. Review <a href="https://platform.claude.com/docs/en/about-claude/pricing#web-search-tool" target="_blank" rel="noopener">official Anthropic pricing</a> and your Tavily API plan before Search or Retry.</p>`,
+			preference: "people-search-fallback-provider", action: "preferences", actionLabel: "Inspect AI discovery preference",
+			body: (session) => `<p><strong>AI discovery is optional and off by default.</strong> Review Tavily's results first. Only clicking <strong>Find more with AI</strong> runs your selected AI provider and saved model. It keeps existing contacts and never reruns Tavily. A shortfall never starts AI automatically.</p>
+				<p>Current choice: <strong>${escapeHtml(session.settings.peopleSearchFallbackProvider || "NONE")}</strong>. Saving a key or advancing this tour never enables AI discovery, switches providers, or chains providers.</p>
+				<p>Search tools and model tokens may have separate charges. Anthropic defaults to 1 web search; you can explicitly authorize up to 3 per AI request, plus model-token usage, billed to your own API account. Consent resets after each request or context change. More searches may still return duplicates or no results. Review <a href="https://platform.claude.com/docs/en/about-claude/pricing#web-search-tool" target="_blank" rel="noopener">official Anthropic pricing</a> before Find more with AI or Retry with AI. Tavily Search has its own plan notice.</p>`,
 		},
 		{
 			id: "personal-context", chapter: 0, view: "settings", target: "profile",
@@ -113,7 +113,7 @@
 			title: "Networking: inspect before searching",
 			action: "discovery", actionLabel: "Inspect the search form (no search)",
 			body: () => `<p><strong>Find people</strong> on this page opens the search form. Set target roles, companies, industries, locations, keywords, seniority, objective, and count.</p>
-				<p>Submitting that form calls Tavily and may use your explicitly selected fallback if Tavily is insufficient. Check costs and your own keys first. Merely opening the form does not search, prepare, draft, or send.</p>`,
+				<p>Submitting that form calls <strong>Tavily only</strong>. Review the results before deciding whether to click the separate, cost-disclosed <strong>Find more with AI</strong> action. It uses only your selected AI provider, does not rerun Tavily, and keeps your saved contacts. Merely opening the form does not search, prepare, draft, or send.</p>`,
 		},
 		{
 			id: "networking-review", chapter: 1, view: "networking", target: "networking-review",
@@ -316,7 +316,7 @@
 					<ol class="tutorial-chapters" aria-label="Tutorial chapters">${CHAPTERS.map((chapter, chapterNumber) => `<li ${step.chapter === chapterNumber ? 'aria-current="step"' : ""}><span aria-hidden="true">${chapterNumber + 1}</span>${chapter}</li>`).join("")}</ol>
 					<p id="tutorial-progress" class="tutorial-progress">Chapter ${step.chapter + 1} of 2 · Step ${chapterIndex + 1} of ${chapterSteps.length}</p>
 					<progress max="${STEPS.length}" value="${index + 1}" aria-label="Overall tutorial progress"></progress>
-					<div class="tutorial-content"><h2 id="tutorial-title" tabindex="-1">${escapeHtml(step.title || { "private-data": "Your private data", "google-connections": "Sign-in is not Gmail authorization", "personal-context": "Keep your experience factual", "search-fallback": "Search fallback: your explicit choice", drafting: "One drafting provider, or Template" }[step.id])}</h2>
+					<div class="tutorial-content"><h2 id="tutorial-title" tabindex="-1">${escapeHtml(step.title || { "private-data": "Your private data", "google-connections": "Sign-in is not Gmail authorization", "personal-context": "Keep your experience factual", "search-fallback": "AI discovery: your explicit choice", drafting: "One drafting provider, or Template" }[step.id])}</h2>
 						${step.body(options.getSession())}
 						<p class="tutorial-context-note" ${otherPage ? "" : "hidden"}>You're exploring another page. <button class="text-button" data-tutorial-action="return">Return to this step</button>, or continue the guide from here.</p>
 						<p id="tutorial-target-note" class="tutorial-context-note" hidden>This control is not visible in the current layout or empty state. Try <button class="text-button" data-tutorial-action="return">Return to this step</button>, or continue safely.</p>

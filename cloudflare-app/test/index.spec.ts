@@ -4,7 +4,7 @@ import {
 	SELF,
 	waitOnExecutionContext,
 } from "cloudflare:test";
-import { beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import worker from "../src";
 import {
 	decryptBytes,
@@ -55,6 +55,11 @@ beforeAll(async () => {
 	) as string[];
 	await env.DB.batch(statements.map((statement) => env.DB.prepare(statement)));
 });
+
+beforeEach(() => {
+	vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected outbound request in Worker tests."));
+});
+afterEach(() => vi.restoreAllMocks());
 
 describe("security boundaries", () => {
 	it("returns no authenticated data without a valid session", async () => {
@@ -465,13 +470,22 @@ describe("people-search fallback provider selection", () => {
 				],
 			}, { status: testCase.http }));
 		try {
+			const criteria = {
+				roles: ["Investment Analyst"], companies: ["BMO Financial Group"],
+				locations: ["Toronto"], industries: [], keywords: [], seniority: [],
+				objective: "PRIVATE USER OBJECTIVE", count: 3,
+			};
+			const tavily = await authenticatedWorkerFetch(auth, "/api/discovery", {
+				method: "POST", body: criteria,
+			}, bindings);
+			expect(tavily.status).toBe(200);
+			expect(await tavily.json()).toMatchObject({ summary: {
+				mode: "TAVILY", inserted: testCase.tavily, fallbackAttempted: false,
+				fallbackStatus: "NOT_REQUESTED",
+			} });
+			expect(fetchSpy).toHaveBeenCalledTimes(2);
 			const response = await authenticatedWorkerFetch(auth, "/api/discovery", {
-				method: "POST",
-				body: {
-					roles: ["Investment Analyst"], companies: ["BMO Financial Group"],
-					locations: ["Toronto"], industries: [], keywords: [], seniority: [],
-					objective: "PRIVATE USER OBJECTIVE", count: 3,
-				},
+				method: "POST", body: { ...criteria, mode: "AI_SUPPLEMENT" },
 			}, bindings);
 			expect(response.status).toBe(200);
 			const payload = await response.json() as {
@@ -481,18 +495,23 @@ describe("people-search fallback provider selection", () => {
 			const partial = testCase.output && testCase.code === "max_uses_exceeded";
 			const reason = testCase.status === "PROVIDER_ERROR" ? "unknown_tool_error" : testCase.code;
 			expect(payload.summary).toMatchObject({
+				mode: "AI_SUPPLEMENT", tavilyAttempted: false,
 				fallbackProvider: "ANTHROPIC", fallbackAttempted: true,
 				fallbackModel: "claude-haiku-4-5", fallbackStatus: testCase.status,
 				fallbackReason: reason, fallbackHttpStatus: testCase.http === 200 ? null : testCase.http,
-				primaryAccepted: testCase.tavily,
+				primaryAccepted: 0,
 				fallbackReturned: partial ? 2 : 0,
-				fallbackAccepted: partial ? 1 : 0,
-				inserted: testCase.tavily + (partial ? 1 : 0),
+				fallbackAccepted: partial ? 2 : 0,
+				inserted: partial ? 1 : 0,
+				duplicates: partial ? 1 : 0,
 			});
 			expect(payload.prospects.map((person) => person.discoveryProvider)).toEqual([
-				...(testCase.tavily ? ["TAVILY"] : []),
 				...(partial ? ["ANTHROPIC_GROUNDED"] : []),
 			]);
+			const saved = await authenticatedWorkerFetch(auth, "/api/prospects", {}, bindings);
+			expect(await saved.json()).toMatchObject({ prospects: expect.arrayContaining([
+				...(testCase.tavily ? [expect.objectContaining({ fullName: "Tavily Example", discoveryProvider: "TAVILY" })] : []),
+			]) });
 			expect(payload.prospects.every((person) => person.status === "DISCOVERED")).toBe(true);
 			const auditRow = await env.DB.prepare(
 				"SELECT metadata_json FROM audit_events WHERE user_id = ? AND action = 'DISCOVERY_COMPLETED' ORDER BY created_at DESC LIMIT 1",
@@ -1904,7 +1923,7 @@ describe.sequential("internship jobs platform", () => {
 		});
 	});
 
-	it("summarizes fallback discovery, deduplicates source URLs, and links once", async () => {
+	it("summarizes Tavily-only discovery, deduplicates source URLs, and links once", async () => {
 		await saveCredential(env as unknown as AppBindings, {
 			userId: userA.user.id,
 			provider: "TAVILY",
@@ -1966,7 +1985,7 @@ describe.sequential("internship jobs platform", () => {
 				],
 			},
 		];
-		const fetchSpy = vi.spyOn(globalThis, "fetch");
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No other provider is authorized."));
 		for (const response of providerResponses) {
 			fetchSpy.mockResolvedValueOnce(
 				new Response(JSON.stringify(response), {
@@ -1996,7 +2015,7 @@ describe.sequential("internship jobs platform", () => {
 				professionalBioAccepted: 1,
 				fallbackProvider: "NONE",
 				fallbackAttempted: false,
-				fallbackStatus: "DISABLED",
+				fallbackStatus: "NOT_REQUESTED",
 				fallbackReturned: 0,
 				fallbackAccepted: 0,
 				inserted: 1,
@@ -2031,7 +2050,7 @@ describe.sequential("internship jobs platform", () => {
 				professionalBioAccepted: 1,
 				fallbackProvider: "NONE",
 				fallbackAttempted: false,
-				fallbackStatus: "DISABLED",
+				fallbackStatus: "NOT_REQUESTED",
 				fallbackReturned: 0,
 				fallbackAccepted: 0,
 				inserted: 0,
@@ -2108,26 +2127,13 @@ describe.sequential("internship jobs platform", () => {
 				job: { id: string; discoveryCriteria: Record<string, unknown> };
 			}
 		).job;
-		const fetchSpy = vi
-			.spyOn(globalThis, "fetch")
-			.mockResolvedValueOnce(
-				new Response(JSON.stringify({ results: [] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				}),
-			)
-			.mockResolvedValueOnce(
-				new Response(JSON.stringify({ results: [] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				}),
-			);
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Missing keys cannot call providers."));
 		const response = await authenticatedWorkerFetch(
 			userA,
 			"/api/discovery",
 			{
 				method: "POST",
-				body: { ...job.discoveryCriteria, jobId: job.id },
+				body: { ...job.discoveryCriteria, jobId: job.id, mode: "AI_SUPPLEMENT" },
 			},
 			{
 				...(env as unknown as AppBindings),
@@ -2146,7 +2152,7 @@ describe.sequential("internship jobs platform", () => {
 				fallbackAccepted: 0,
 			},
 		});
-		expect(fetchSpy).toHaveBeenCalledTimes(2);
+		expect(fetchSpy).not.toHaveBeenCalled();
 		await env.DB.prepare(
 			"UPDATE user_settings SET people_search_fallback_provider = 'NONE' WHERE user_id = ?",
 		)
@@ -2206,18 +2212,7 @@ describe.sequential("internship jobs platform", () => {
 		});
 		const fetchSpy = vi
 			.spyOn(globalThis, "fetch")
-			.mockResolvedValueOnce(
-				new Response(JSON.stringify({ results: [] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				}),
-			)
-			.mockResolvedValueOnce(
-				new Response(JSON.stringify({ results: [] }), {
-					status: 200,
-					headers: { "Content-Type": "application/json" },
-				}),
-			)
+			.mockRejectedValue(new Error("Only the selected AI provider is authorized."))
 			.mockResolvedValueOnce(
 				new Response(JSON.stringify(grounded), {
 					status: 200,
@@ -2229,7 +2224,7 @@ describe.sequential("internship jobs platform", () => {
 			"/api/discovery",
 			{
 				method: "POST",
-				body: { ...job.discoveryCriteria, jobId: job.id, count: 1 },
+				body: { ...job.discoveryCriteria, jobId: job.id, count: 1, mode: "AI_SUPPLEMENT" },
 			},
 			{
 				...(env as unknown as AppBindings),
@@ -2254,11 +2249,9 @@ describe.sequential("internship jobs platform", () => {
 			},
 		});
 		expect(fetchSpy.mock.calls.map(([url]) => url)).toEqual([
-			"https://api.tavily.com/search",
-			"https://api.tavily.com/search",
 			"https://api.openai.com/v1/responses",
 		]);
-		const openAiHeaders = fetchSpy.mock.calls[2]![1]!
+		const openAiHeaders = fetchSpy.mock.calls[0]![1]!
 			.headers as Record<string, string>;
 		expect(openAiHeaders.Authorization).toBe(
 			["Bearer", "selected-openai-key"].join(" "),
@@ -2293,6 +2286,7 @@ describe.sequential("internship jobs platform", () => {
 		).job;
 		const fetchSpy = vi
 			.spyOn(globalThis, "fetch")
+			.mockRejectedValue(new Error("Only explicit discovery is authorized."))
 			.mockResolvedValueOnce(
 				new Response(
 					JSON.stringify({
@@ -2332,7 +2326,7 @@ describe.sequential("internship jobs platform", () => {
 					},
 				),
 			);
-		const response = await authenticatedWorkerFetch(
+		const tavily = await authenticatedWorkerFetch(
 			userB,
 			"/api/discovery",
 			{
@@ -2344,20 +2338,25 @@ describe.sequential("internship jobs platform", () => {
 				ENABLE_JOB_OUTREACH_LINKING: "true",
 			},
 		);
+		expect(tavily.status).toBe(200);
+		expect(await tavily.json()).toMatchObject({
+			summary: { mode: "TAVILY", inserted: 1, fallbackAttempted: false },
+		});
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
+		const response = await authenticatedWorkerFetch(userB, "/api/discovery", {
+			method: "POST",
+			body: { ...job.discoveryCriteria, jobId: job.id, count: 2, mode: "AI_SUPPLEMENT" },
+		}, { ...(env as unknown as AppBindings), ENABLE_JOB_OUTREACH_LINKING: "true" });
 		expect(response.status).toBe(200);
 		const payload = (await response.json()) as {
 			prospects: Array<{ fullName: string }>;
 			summary: Record<string, unknown>;
 		};
 		expect(payload).toMatchObject({
-			prospects: [
-				{
-					fullName: "Tavily Example",
-					discoveryProvider: "TAVILY",
-				},
-			],
+			prospects: [],
 			summary: {
-				inserted: 1,
+				mode: "AI_SUPPLEMENT", tavilyAttempted: false,
+				inserted: 0,
 				fallbackProvider: "GEMINI",
 				fallbackAttempted: true,
 				fallbackStatus: "RATE_LIMITED",
@@ -2367,6 +2366,10 @@ describe.sequential("internship jobs platform", () => {
 				fallbackAccepted: 0,
 			},
 		});
+		const saved = await authenticatedWorkerFetch(userB, "/api/prospects", {}, env as unknown as AppBindings);
+		expect(await saved.json()).toMatchObject({ prospects: expect.arrayContaining([
+			expect.objectContaining({ fullName: "Tavily Example", discoveryProvider: "TAVILY" }),
+		]) });
 		expect(JSON.stringify(payload.summary)).not.toMatch(
 			/private prompt|private\.example|SECRET-DO-NOT-STORE/i,
 		);
@@ -2436,13 +2439,9 @@ describe.sequential("internship jobs platform", () => {
 				"https://privatewealth.bmo.com/en/people/alexander-spark",
 			],
 		});
-		const fetchSpy = vi.spyOn(globalThis, "fetch");
+		const fetchSpy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Only explicit AI discovery is authorized."));
 		for (const providerResponse of [
-			{ results: [] },
-			{ results: [] },
 			grounded,
-			{ results: [] },
-			{ results: [] },
 			grounded,
 		]) {
 			fetchSpy.mockResolvedValueOnce(
@@ -2456,7 +2455,7 @@ describe.sequential("internship jobs platform", () => {
 			...(env as unknown as AppBindings),
 			ENABLE_JOB_OUTREACH_LINKING: "true",
 		};
-		const body = { ...job.discoveryCriteria, jobId: job.id, count: 1 };
+		const body = { ...job.discoveryCriteria, jobId: job.id, count: 1, mode: "AI_SUPPLEMENT" };
 		const first = await authenticatedWorkerFetch(
 			groundedUser,
 			"/api/discovery",
@@ -2528,7 +2527,7 @@ describe.sequential("internship jobs platform", () => {
 			fallbackReturned: 1,
 			fallbackAccepted: 1,
 		});
-		expect(fetchSpy).toHaveBeenCalledTimes(6);
+		expect(fetchSpy).toHaveBeenCalledTimes(2);
 		fetchSpy.mockRestore();
 	});
 });
@@ -2583,6 +2582,216 @@ describe("bounded ranked job contacts", () => {
 		).bind(owner.user.id).run();
 	});
 
+	const independentCriteria = {
+		roles: ["Software Engineer"], industries: [], companies: [company],
+		locations: [], keywords: [], seniority: [], objective: "", count: 2,
+	};
+	for (const surface of ["general", "job"] as const) {
+		for (const mode of [undefined, "TAVILY"] as const) {
+			it.each(["full", "partial", "zero", "unconfirmed", "duplicates", "error", "bio-error", "missing-key"])(
+				`${surface} ${mode || "legacy"} discovery keeps %s results Tavily-only`,
+				async (outcome) => {
+					const auth = await authenticatedTestUser("tavily-only");
+					await saveCredential(bindings(), { userId: auth.user.id, provider: "ANTHROPIC", value: "fake-available-ai-key" });
+					await env.DB.prepare("UPDATE user_settings SET people_search_fallback_provider='ANTHROPIC' WHERE user_id=?")
+						.bind(auth.user.id).run();
+					if (outcome !== "missing-key") {
+						await saveCredential(bindings(), { userId: auth.user.id, provider: "TAVILY", value: "fake-tavily-only-key" });
+					}
+					const candidate = profiles[2]!;
+					const asTavily = (person: typeof candidate) => ({
+						title: `${person.fullName} - ${person.title} - ${company} | LinkedIn`,
+						url: person.sourceUrl, content: person.evidence,
+					});
+					if (outcome === "duplicates") {
+						await insertProspects(bindings(), auth.user.id, [{
+							...testProspect(candidate.fullName!, company),
+							matchQuality: "STRONG",
+							title: candidate.title!, linkedinUrl: candidate.sourceUrl,
+							sourceUrl: candidate.sourceUrl, sourceSnippet: candidate.evidence,
+						}]);
+					}
+					const second = { ...candidate, fullName: "Additional Fictional", sourceUrl: "https://www.linkedin.com/in/additional-fictional" };
+					const results = outcome === "zero" ? [] : outcome === "full"
+						? [asTavily(candidate), asTavily(second)]
+						: outcome === "unconfirmed" ? [asTavily(profiles[4]!)]
+							: outcome === "duplicates" ? Array(5).fill(asTavily(candidate))
+								: [asTavily(candidate)];
+					const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
+						expect(url).toBe("https://api.tavily.com/search");
+						const body = JSON.parse(String(init?.body));
+						const primary = body.include_domains.length === 1 && body.include_domains[0] === "linkedin.com";
+						if (outcome === "error" || (outcome === "bio-error" && !primary)) {
+							return Response.json({ error: "PRIVATE QUERY SECRET-DO-NOT-STORE" }, { status: 401 });
+						}
+						return Response.json({ results: primary ? results : [] });
+					});
+					try {
+						const response = await authenticatedWorkerFetch(auth, "/api/discovery", {
+							method: "POST", body: {
+								...(surface === "job" ? discovery : independentCriteria), count: 2,
+								...(mode ? { mode } : {}), anthropicSearchMaxUses: 3,
+							},
+						}, bindings());
+						const failed = ["error", "bio-error", "missing-key"].includes(outcome);
+						expect(response.status).toBe(outcome === "missing-key" ? 400 : failed ? 500 : 200);
+						const payload = await response.json() as { summary: Record<string, unknown>; prospects: Prospect[] };
+						expect(JSON.stringify(payload)).not.toMatch(/PRIVATE QUERY|SECRET-DO-NOT-STORE|fake-available-ai-key/);
+						if (!failed) {
+							expect(payload.summary).toMatchObject({
+								mode: "TAVILY", tavilyAttempted: true, fallbackProvider: "NONE",
+								fallbackAttempted: false, fallbackStatus: "NOT_REQUESTED",
+								fallbackReturned: 0, fallbackAccepted: 0, anthropicSearchMaxUses: 1,
+							});
+							if (surface === "job" && outcome === "unconfirmed") {
+								expect(payload.summary).toMatchObject({ jobQualified: 0, jobUnconfirmed: 1 });
+							}
+							if (outcome === "duplicates") expect(payload.summary).toMatchObject({ inserted: 0, duplicates: 1 });
+							expect(payload.prospects.every((person) => person.status === "DISCOVERED" && !person.contactApprovedAt && !person.email && !person.draftBody)).toBe(true);
+						}
+						expect(spy.mock.calls.map(([url]) => url)).toEqual(
+							Array(outcome === "missing-key" ? 0 : ["full", "error"].includes(outcome) ? 1 : 2)
+								.fill("https://api.tavily.com/search"),
+						);
+					} finally {
+						spy.mockRestore();
+					}
+				},
+			);
+		}
+
+		it.each(["NONE", "ANTHROPIC"] as const)(`${surface} explicit AI reports disabled/missing %s without calling any provider`, async (provider) => {
+			const auth = await authenticatedTestUser("ai-unavailable");
+			await env.DB.prepare("UPDATE user_settings SET people_search_fallback_provider=? WHERE user_id=?")
+				.bind(provider, auth.user.id).run();
+			const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No provider call authorized."));
+			try {
+				const response = await authenticatedWorkerFetch(auth, "/api/discovery", {
+					method: "POST", body: { ...(surface === "job" ? discovery : independentCriteria), mode: "AI_SUPPLEMENT" },
+				}, bindings());
+				expect(response.status).toBe(200);
+				expect(await response.json()).toMatchObject({ userId: auth.user.id, prospects: [], summary: {
+					mode: "AI_SUPPLEMENT", tavilyAttempted: false, primaryProviderReturned: 0,
+					professionalBioProviderReturned: 0, fallbackProvider: provider,
+					fallbackAttempted: false, fallbackStatus: provider === "NONE" ? "DISABLED" : "MISSING_KEY",
+				} });
+				expect(spy).not.toHaveBeenCalled();
+			} finally {
+				spy.mockRestore();
+			}
+		});
+
+		it.each(["GEMINI", "OPENAI", "ANTHROPIC"] as const)(`${surface} explicit %s makes exactly one selected request, never reads Tavily, and merges duplicates safely`, async (provider) => {
+			const auth = await authenticatedTestUser("one-selected-ai");
+			for (const credential of ["TAVILY", "GEMINI", "OPENAI", "ANTHROPIC"] as const) {
+				await saveCredential(bindings(), { userId: auth.user.id, provider: credential, value: `fake-own-${credential}` });
+			}
+			await env.DB.prepare("UPDATE encrypted_credentials SET ciphertext='unreadable-tavily-key' WHERE user_id=? AND provider='TAVILY'")
+				.bind(auth.user.id).run();
+			await env.DB.prepare("UPDATE user_settings SET people_search_fallback_provider=? WHERE user_id=?").bind(provider, auth.user.id).run();
+			const people = [profiles[2]!];
+			const citations = people.map((person) => person.sourceUrl);
+			const output = provider === "GEMINI" ? geminiInteractionResponse({ people, citations })
+				: provider === "OPENAI" ? openAiGroundedResponse({ people, citations })
+					: { content: [{ type: "text", text: JSON.stringify({ people }), citations: citations.map((url) => ({ type: "web_search_result_location", url })) }] };
+			const endpoint = {
+				GEMINI: "https://generativelanguage.googleapis.com/v1beta/interactions",
+				OPENAI: "https://api.openai.com/v1/responses",
+				ANTHROPIC: "https://api.anthropic.com/v1/messages",
+			}[provider];
+			const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+				expect(url).toBe(endpoint);
+				return Response.json(output);
+			});
+			try {
+				for (const invocation of [1, 2]) {
+					const response = await authenticatedWorkerFetch(auth, "/api/discovery", {
+						method: "POST", body: { ...(surface === "job" ? discovery : independentCriteria), mode: "AI_SUPPLEMENT" },
+					}, bindings());
+					expect(response.status).toBe(200);
+					expect(await response.json()).toMatchObject({ summary: {
+						mode: "AI_SUPPLEMENT", tavilyAttempted: false,
+						primaryProviderReturned: 0, primaryAccepted: 0, professionalBioProviderReturned: 0,
+						professionalBioAccepted: 0, fallbackProvider: provider, fallbackAttempted: true,
+						fallbackStatus: "SUCCESS", inserted: invocation === 1 ? 1 : 0,
+						duplicates: invocation === 1 ? 0 : 1, anthropicSearchMaxUses: 1,
+					} });
+					expect(spy).toHaveBeenCalledTimes(invocation);
+				}
+				const headers = spy.mock.calls[0]![1]!.headers as Record<string, string>;
+				expect(headers[provider === "ANTHROPIC" ? "x-api-key" : provider === "GEMINI" ? "x-goog-api-key" : "Authorization"])
+					.toBe(provider === "OPENAI" ? "Bearer fake-own-OPENAI" : `fake-own-${provider}`);
+				const saved = await authenticatedWorkerFetch(auth,
+					surface === "job" ? `/api/jobs/${jobIds[0]}/prospects` : "/api/prospects", {}, bindings());
+				const payload = await saved.json() as { prospects: Prospect[] };
+				expect(payload.prospects).toHaveLength(1);
+				expect(payload.prospects[0]).toMatchObject({ userId: auth.user.id, status: "DISCOVERED", contactApprovedAt: null, email: "", draftBody: "" });
+				if (surface === "job") {
+					expect(payload.prospects[0]!.linkedJobs).toEqual([expect.objectContaining({ id: jobIds[0], contactMatch: expect.objectContaining({ tier: 1 }) })]);
+				}
+				expect(spy).toHaveBeenCalledTimes(2);
+			} finally {
+				spy.mockRestore();
+			}
+		});
+	}
+
+	it("rejects invalid modes and protects both actions with authentication, CSRF, origin, beta and job feature gates", async () => {
+		const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No provider call authorized."));
+		try {
+			for (const mode of ["", "AUTO", "tavily", null, 3, true]) {
+				const response = await authenticatedWorkerFetch(owner, "/api/discovery", {
+					method: "POST", body: { ...independentCriteria, mode },
+				}, bindings());
+				expect(response.status).toBe(400);
+				expect(await response.json()).toMatchObject({ error: "INVALID_REQUEST" });
+			}
+			for (const mode of ["TAVILY", "AI_SUPPLEMENT"]) {
+				const body = { ...discovery, mode };
+				const anonymous = await workerRequest(bindings(), "/api/discovery", {
+					method: "POST", body: JSON.stringify(body), headers: { Origin: bindings().APP_ORIGIN },
+				});
+				expect(anonymous.status).toBe(401);
+				for (const gate of ["csrf", "origin"]) {
+					const request = authenticatedRequest(owner, "/api/discovery", { method: "POST", body });
+					if (gate === "csrf") request.headers.delete("X-CSRF-Token");
+					else request.headers.set("Origin", "https://unrelated.example");
+					const context = createExecutionContext();
+					const denied = await worker.fetch(request, bindings(), context);
+					await waitOnExecutionContext(context);
+					expect(denied.status).toBe(403);
+				}
+				const feature = await authenticatedWorkerFetch(owner, "/api/discovery", { method: "POST", body }, {
+					...bindings(), ENABLE_JOB_OUTREACH_LINKING: "false",
+				});
+				expect(feature.status).toBe(403);
+				const betaUser = await authenticatedTestUser("unapproved-discovery");
+				const beta = await authenticatedWorkerFetch(betaUser, "/api/discovery", { method: "POST", body }, {
+					...bindings(), BETA_ACCESS_MODE: "ALLOWLIST", BETA_ADMIN_EMAILS: "",
+				});
+				expect([401, 403]).toContain(beta.status);
+			}
+			expect(spy).not.toHaveBeenCalled();
+		} finally {
+			spy.mockRestore();
+		}
+	});
+
+	it("applies the existing shared discovery rate limit to both modes before provider calls", async () => {
+		const auth = await authenticatedTestUser("discovery-rate-limit");
+		const start = Math.floor(Date.now() / 3600000) * 3600000;
+		await env.DB.prepare("INSERT INTO rate_limits(user_id,action,window_start,count,expires_at) VALUES(?,'DISCOVERY',?,20,?)")
+			.bind(auth.user.id, new Date(start).toISOString(), new Date(start + 3600000).toISOString()).run();
+		const spy = vi.spyOn(globalThis, "fetch");
+		for (const mode of ["TAVILY", "AI_SUPPLEMENT"]) {
+			const response = await authenticatedWorkerFetch(auth, "/api/discovery", {
+				method: "POST", body: { ...independentCriteria, mode },
+			}, bindings());
+			expect(response.status).toBe(429);
+		}
+		expect(spy).not.toHaveBeenCalled();
+	});
+
 	it("rejects invalid budgets before any paid request and retains auth, CSRF and feature gates", async () => {
 		const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No outbound requests authorized."));
 		try {
@@ -2610,12 +2819,10 @@ describe("bounded ranked job contacts", () => {
 		}
 	});
 
-	it("uses one selected Anthropic request for all tiers, with legacy 1 and explicit 3 caps", async () => {
+	it("uses one explicit Anthropic request for all tiers, with default 1 and consented 3 caps", async () => {
 		for (const budget of [undefined, 3]) {
 			const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("Unexpected outbound provider."));
-			spy.mockResolvedValueOnce(Response.json({ results: [] }))
-				.mockResolvedValueOnce(Response.json({ results: [] }))
-				.mockResolvedValueOnce(Response.json({
+			spy.mockResolvedValueOnce(Response.json({
 					content: [
 						{
 							type: "text", text: JSON.stringify({ people: profiles }),
@@ -2626,7 +2833,7 @@ describe("bounded ranked job contacts", () => {
 				}));
 			try {
 				const response = await authenticatedWorkerFetch(owner, "/api/discovery", {
-					method: "POST", body: { ...discovery, ...(budget ? { anthropicSearchMaxUses: budget } : {}) },
+					method: "POST", body: { ...discovery, mode: "AI_SUPPLEMENT", ...(budget ? { anthropicSearchMaxUses: budget } : {}) },
 				}, bindings());
 				expect(response.status).toBe(200);
 				const payload = await response.json() as { summary: Record<string, unknown>; prospects: Prospect[] };
@@ -2638,12 +2845,12 @@ describe("bounded ranked job contacts", () => {
 					inserted: budget ? 0 : 5, duplicates: budget ? 5 : 0,
 				});
 				expect(payload.prospects.every((person) => person.status === "DISCOVERED" && !person.email && !person.contactApprovedAt && !person.draftBody)).toBe(true);
-				expect(spy).toHaveBeenCalledTimes(3);
-				const primary = JSON.parse(String(spy.mock.calls[0]![1]!.body));
-				expect(primary.query).toContain(company);
-				expect(primary.query).not.toContain("Senior Director");
-				expect(primary.query).not.toContain("Unrelated Company");
-				const anthropic = JSON.parse(String(spy.mock.calls[2]![1]!.body));
+				expect(spy).toHaveBeenCalledTimes(1);
+				expect(spy.mock.calls[0]![0]).toBe("https://api.anthropic.com/v1/messages");
+				const anthropic = JSON.parse(String(spy.mock.calls[0]![1]!.body));
+				expect(anthropic.messages[0].content).toContain(company);
+				expect(anthropic.messages[0].content).not.toContain("Senior Director");
+				expect(anthropic.messages[0].content).not.toContain("Unrelated Company");
 				expect(anthropic.tools[0].max_uses).toBe(budget || 1);
 				expect(anthropic.model).toBe("chosen-only-model");
 				expect(anthropic.messages[0].content).toContain("priorityOrder");

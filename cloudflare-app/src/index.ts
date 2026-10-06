@@ -443,7 +443,7 @@ app.delete("/api/credentials/:provider", requireUser, async (c) => {
 app.post("/api/discovery", requireUser, async (c) => {
 	await protectMutation(c);
 	const input = discoverySchema.parse(await readJson(c));
-	const { jobId: linkedJobId, anthropicSearchMaxUses, ...submittedCriteria } = input;
+	const { jobId: linkedJobId, mode, anthropicSearchMaxUses, ...submittedCriteria } = input;
 	let criteria = submittedCriteria;
 	if (linkedJobId) {
 		requireJobOutreachLinking(c.env);
@@ -466,8 +466,9 @@ app.post("/api/discovery", requireUser, async (c) => {
 		linkedJobId,
 		anthropicSearchMaxUses,
 		c.req.raw.signal,
+		mode,
 	);
-	return c.json(result);
+	return c.json({ ...result, userId: c.get("user")!.id });
 });
 
 app.get("/api/prospects", requireUser, async (c) =>
@@ -694,6 +695,7 @@ const credentialSchema = z.object({
 });
 const list = z.array(z.string().trim().min(1).max(120)).max(20);
 const discoverySchema = z.object({
+	mode: z.enum(["TAVILY", "AI_SUPPLEMENT"]).default("TAVILY"),
 	roles: list,
 	industries: list,
 	companies: list,

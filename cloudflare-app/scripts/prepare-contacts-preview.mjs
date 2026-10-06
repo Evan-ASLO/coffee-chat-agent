@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const preview = join(root, ".tutorial-preview");
-const env = { ...process.env, TUTORIAL_PREVIEW_PORT: "8805", WRANGLER_SEND_METRICS: "false" };
+const env = { ...process.env, TUTORIAL_PREVIEW_PORT: process.env.CONTACTS_PREVIEW_PORT || "8805", WRANGLER_SEND_METRICS: "false" };
 function run(file, args = []) {
 	const result = spawnSync(process.execPath, [file, ...args], { cwd: root, env, encoding: "utf8" });
 	if (result.status !== 0) throw new Error(`Local fixture preparation failed:\n${result.stdout}\n${result.stderr}`);
@@ -62,5 +62,5 @@ run(join(root, "node_modules", "wrangler", "bin", "wrangler.js"), [
 	"d1", "execute", "onboarding-review", "--config", join(preview, "wrangler.jsonc"),
 	"--local", "--persist-to", receipt.state, "--file", seed,
 ]);
-console.log("Seeded contacts review: http://127.0.0.1:8805/__review/existing");
+console.log(`Seeded contacts review: ${config.vars.APP_ORIGIN}/__review/existing`);
 console.log("Start with npm run preview:onboarding. External actions and real credentials are blocked.");
