@@ -73,13 +73,22 @@ import {
 import {
 	approveBetaEmail,
 	approveBetaRequest,
+	approveBetaSnapshot,
 	betaAccessMode,
+	bulkBetaApprovalSchema,
 	denyBetaRequest,
 	isBetaAdmin,
 	listBetaAccessAdmin,
+	pendingBetaApprovalSnapshot,
 	revokeBetaEmail,
 } from "./lib/beta";
 import { getUserAnalytics } from "./lib/analytics";
+import {
+	getOwnerActivity,
+	getOwnerEvents,
+	ownerActivityQuerySchema,
+	ownerEventsQuerySchema,
+} from "./lib/owner-activity";
 import {
 	getOnboarding,
 	onboardingInputSchema,
@@ -241,6 +250,30 @@ app.get("/api/beta/admin/access", requireUser, async (c) => {
 	return c.json(await listBetaAccessAdmin(c.env));
 });
 
+app.get("/api/beta/admin/activity", requireUser, async (c) => {
+	requireBetaAdmin(c.env, c.get("user")!);
+	return c.json(await getOwnerActivity(c.env, ownerActivityQuerySchema.parse(c.req.query())));
+});
+
+app.get("/api/beta/admin/activity/events", requireUser, async (c) => {
+	requireBetaAdmin(c.env, c.get("user")!);
+	return c.json(await getOwnerEvents(c.env, ownerEventsQuerySchema.parse(c.req.query())));
+});
+
+app.get("/api/beta/admin/requests/pending", requireUser, async (c) => {
+	const admin = c.get("user")!;
+	requireBetaAdmin(c.env, admin);
+	return c.json(await pendingBetaApprovalSnapshot(c.env, admin.id));
+});
+
+app.post("/api/beta/admin/requests/approve-pending", requireUser, async (c) => {
+	await protectMutation(c);
+	const admin = c.get("user")!;
+	requireBetaAdmin(c.env, admin);
+	const input = bulkBetaApprovalSchema.parse(await readJson(c, 64 * 1024));
+	return c.json(await approveBetaSnapshot(c.env, input, admin.id, c.get("requestId")));
+});
+
 app.post(
 	"/api/beta/admin/requests/:id/approve",
 	requireUser,
@@ -249,15 +282,7 @@ app.post(
 		const admin = c.get("user")!;
 		requireBetaAdmin(c.env, admin);
 		const requestId = uuid.parse(c.req.param("id"));
-		const email = await approveBetaRequest(c.env, requestId, admin.id);
-		await audit(c.env, {
-			userId: admin.id,
-			action: "BETA_ACCESS_REQUEST_APPROVED",
-			entityType: "beta_access_request",
-			entityId: requestId,
-			requestId: c.get("requestId"),
-			metadata: { email },
-		});
+		await approveBetaRequest(c.env, requestId, admin.id, c.get("requestId"));
 		return c.json({ ok: true });
 	},
 );

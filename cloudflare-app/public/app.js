@@ -34,7 +34,6 @@ const state = {
 		jobs: [],
 		pagination: { page: 1, pageSize: 100, total: 0, totalPages: 0 },
 	},
-	betaAdmin: null,
 	jobQuery: {
 		q: "",
 		company: "",
@@ -88,6 +87,14 @@ const journeyMediaConditions = [
 	window.matchMedia("(max-width: 760px)"),
 	window.matchMedia("(prefers-reduced-motion: reduce)"),
 ];
+const ownerAdmin = window.OwnerAdmin.create({
+	getSession: () => state.session,
+	api,
+	escapeHtml,
+	formatDate,
+	icon,
+	notify: showToast,
+});
 const onboarding = window.WorkspaceOnboarding?.create({
 	getSession: () => state.session,
 	getView: () => state.tab,
@@ -117,11 +124,11 @@ async function load() {
 	try {
 		loadJobQueryFromUrl();
 		state.session = await api("/api/session");
+		ownerAdmin.syncSession();
 		state.tab = state.session?.authenticated ? initialView() : "jobs";
 		if (!betaLandingRequired()) {
 			await Promise.all([
 				loadJobData(),
-				loadBetaAdminData(),
 				loadAnalyticsData(),
 			]);
 			const jobId = new URLSearchParams(location.search).get("contactJob");
@@ -137,6 +144,7 @@ async function load() {
 }
 
 function render() {
+	ownerAdmin.syncSession();
 	setMobileNavOpen(false, false);
 	onboarding?.beforeRender();
 	destroyJourneyScene();
@@ -1252,87 +1260,7 @@ function renderSettings() {
 				<div class="actions"><button class="primary">Save settings</button></div>
 			</form>
 		</dialog>
-		${state.session.isBetaAdmin ? `<details class="admin-disclosure"><summary>${icon("shield")} <span><strong>Beta access administration</strong><small>Owner-only allowlist controls</small></span>${icon("chevron-right")}</summary>${renderBetaAccessAdmin()}</details>` : ""}`;
-}
-
-function renderBetaAccessAdmin() {
-	const data = state.betaAdmin || { requests: [], access: [] };
-	const pending = data.requests.filter((item) => item.status === "PENDING");
-	const denied = data.requests.filter((item) => item.status === "DENIED");
-	const approved = data.access.filter((item) => item.status === "APPROVED");
-	const revoked = data.access.filter((item) => item.status === "REVOKED");
-	return `
-		<div class="admin-settings">
-		<section class="panel admin-panel">
-			<div class="panel-head">
-				<div>
-					<p class="eyebrow">Owner controls</p>
-					<h2>Private-beta access</h2>
-					<p>Authorization is enforced server-side from <code>BETA_ADMIN_EMAILS</code>. Changes take effect immediately; revocation terminates active sessions for that email.</p>
-				</div>
-			</div>
-			<form id="beta-approve-email-form" class="beta-invite-form">
-				<label>Approve or re-approve an email
-					<input id="beta-approve-email" type="email" maxlength="320" autocomplete="off" required />
-				</label>
-				<button class="primary">Approve email</button>
-			</form>
-		</section>
-		<section class="panel">
-			<div class="panel-head"><div><h2>Pending requests</h2><p>Requests come only from verified Google identities.</p></div></div>
-			${pending.length ? `<div class="cards">${pending.map(betaRequestCard).join("")}</div>` : empty("No access requests are pending.")}
-		</section>
-		<section class="panel">
-			<div class="panel-head"><div><h2>Approved access</h2></div></div>
-			${approved.length ? `<div class="cards">${approved.map(betaAccessCard).join("")}</div>` : empty("No D1 allowlist entries are approved. Environment admins remain authorized separately.")}
-		</section>
-		<section class="panel">
-			<div class="panel-head"><div><h2>Revoked and denied</h2><p>Re-approve only after reviewing the original decision.</p></div></div>
-			${
-				revoked.length || denied.length
-					? `<div class="cards">
-							${revoked.map(betaAccessCard).join("")}
-							${denied.map(betaRequestCard).join("")}
-						</div>`
-					: empty("No revoked or denied entries.")
-			}
-		</section>
-		</div>`;
-}
-
-function betaRequestCard(request) {
-	return `<article class="card">
-		<div class="card-head">
-			<div>
-				<h3>${escapeHtml(request.email)}</h3>
-				<p>Requested ${formatDate(request.requestedAt)}</p>
-			</div>
-			<span class="status status-${request.status.toLowerCase()}">${formatStatus(request.status)}</span>
-		</div>
-		<div class="actions">
-			<button class="primary" data-beta-approve-request="${request.id}">Approve</button>
-			${request.status === "PENDING" ? `<button class="danger" data-beta-deny-request="${request.id}">Deny</button>` : ""}
-		</div>
-	</article>`;
-}
-
-function betaAccessCard(access) {
-	return `<article class="card">
-		<div class="card-head">
-			<div>
-				<h3>${escapeHtml(access.email)}</h3>
-				<p>Updated ${formatDate(access.updatedAt)}</p>
-			</div>
-			<span class="status status-${access.status.toLowerCase()}">${formatStatus(access.status)}</span>
-		</div>
-		<div class="actions">
-			${
-				access.status === "APPROVED"
-					? `<button class="danger" data-beta-revoke-email="${escapeAttr(access.email)}">Revoke</button>`
-					: `<button class="primary" data-beta-approve-email="${escapeAttr(access.email)}">Re-approve</button>`
-			}
-		</div>
-	</article>`;
+		${ownerAdmin.render()}`;
 }
 
 function wireTab() {
@@ -1503,7 +1431,6 @@ function wireTab() {
 	});
 	document.getElementById("settings-form")?.addEventListener("submit", saveSettings);
 	document.getElementById("legacy-import-form")?.addEventListener("submit", importLegacyState);
-	document.getElementById("beta-approve-email-form")?.addEventListener("submit", approveBetaEmailForm);
 	document.getElementById("resume-form")?.addEventListener("submit", uploadResume);
 	document.getElementById("delete-resume")?.addEventListener("click", removeResume);
 	document.getElementById("init-workspace")?.addEventListener("click", initWorkspace);
@@ -1558,18 +1485,7 @@ function wireTab() {
 	document.querySelectorAll("[data-delete-secret]").forEach((button) =>
 		button.addEventListener("click", () => deleteSecret(button.dataset.deleteSecret)),
 	);
-	document.querySelectorAll("[data-beta-approve-request]").forEach((button) =>
-		button.addEventListener("click", () => approveBetaRequest(button.dataset.betaApproveRequest)),
-	);
-	document.querySelectorAll("[data-beta-deny-request]").forEach((button) =>
-		button.addEventListener("click", () => denyBetaRequest(button.dataset.betaDenyRequest)),
-	);
-	document.querySelectorAll("[data-beta-revoke-email]").forEach((button) =>
-		button.addEventListener("click", () => revokeBetaAccess(button.dataset.betaRevokeEmail)),
-	);
-	document.querySelectorAll("[data-beta-approve-email]").forEach((button) =>
-		button.addEventListener("click", () => approveBetaAccess(button.dataset.betaApproveEmail)),
-	);
+	ownerAdmin.wire();
 }
 
 async function searchHomeJobs(event) {
@@ -1598,55 +1514,6 @@ function clearHomeJobSearch() {
 		const input = document.getElementById(id);
 		if (input) input.value = "";
 	}
-}
-
-async function approveBetaEmailForm(event) {
-	event.preventDefault();
-	const email = value("beta-approve-email");
-	if (!email) return;
-	await approveBetaAccess(email);
-}
-
-async function approveBetaRequest(id) {
-	await run("Approving beta request…", async () => {
-		await api(`/api/beta/admin/requests/${id}/approve`, { method: "POST" });
-		await loadBetaAdminData();
-		render();
-	});
-}
-
-async function denyBetaRequest(id) {
-	if (!confirm("Deny this beta access request?")) return;
-	await run("Denying beta request…", async () => {
-		await api(`/api/beta/admin/requests/${id}/deny`, { method: "POST" });
-		await loadBetaAdminData();
-		render();
-	});
-}
-
-async function approveBetaAccess(email) {
-	await run("Approving beta access…", async () => {
-		await api("/api/beta/admin/access/approve", {
-			method: "POST",
-			body: { email },
-		});
-		await loadBetaAdminData();
-		render();
-	});
-}
-
-async function revokeBetaAccess(email) {
-	if (!confirm(`Revoke beta access for ${email}? Active sessions will end.`)) {
-		return;
-	}
-	await run("Revoking beta access…", async () => {
-		await api("/api/beta/admin/access/revoke", {
-			method: "POST",
-			body: { email },
-		});
-		await loadBetaAdminData();
-		render();
-	});
 }
 
 async function filterJobs(event) {
@@ -2510,6 +2377,7 @@ async function initWorkspace() {
 
 async function logout() {
 	onboarding?.dispose();
+	ownerAdmin.clear();
 	clearNetworkingContext();
 	clearPrivateDialogs();
 	await run("Signing out…", async () => {
@@ -2519,6 +2387,7 @@ async function logout() {
 }
 
 function clearPrivateDialogs() {
+	ownerAdmin.closeDialog();
 	document.querySelectorAll('input[type="password"]').forEach((input) => { input.value = ""; });
 	dialog.close();
 	document.getElementById("draft-form").reset();
@@ -2530,13 +2399,14 @@ async function refresh(tab = state.tab) {
 	resetAiConsent();
 	const previousIdentity = state.session?.user?.id;
 	state.session = await api("/api/session");
+	ownerAdmin.syncSession();
 	state.tab = state.session.authenticated ? tab : "jobs";
 	if (previousIdentity && previousIdentity !== state.session.user?.id) {
 		onboarding?.dispose();
 		clearPrivateDialogs();
 		state.jobs = { ...state.jobs, jobs: [], pagination: { ...state.jobs.pagination, total: 0, totalPages: 0 } };
 		state.trackedJobs = { ...state.trackedJobs, jobs: [], pagination: { ...state.trackedJobs.pagination, total: 0, totalPages: 0 } };
-		state.betaAdmin = null;
+		ownerAdmin.clear();
 		state.analytics = null;
 		state.analyticsError = "";
 		clearNetworkingContext();
@@ -2546,11 +2416,10 @@ async function refresh(tab = state.tab) {
 	if (!betaLandingRequired()) {
 		await Promise.all([
 			loadJobData(),
-			loadBetaAdminData(),
 			loadAnalyticsData(),
 		]);
 	} else {
-		state.betaAdmin = null;
+		ownerAdmin.clear();
 		state.analytics = null;
 	}
 	if (state.networkingJob) await loadNetworkingContacts();
@@ -2639,14 +2508,6 @@ function syncJobQueryToUrl() {
 		url.searchParams.set("page", String(state.jobQuery.page));
 	}
 	history.replaceState(null, "", url);
-}
-
-async function loadBetaAdminData() {
-	if (!state.session?.authenticated || !state.session.isBetaAdmin) {
-		state.betaAdmin = null;
-		return;
-	}
-	state.betaAdmin = await api("/api/beta/admin/access");
 }
 
 async function loadAnalyticsData() {
@@ -2860,10 +2721,16 @@ async function api(path, options = {}) {
 	}
 	if (!response.ok) {
 		if (response.status === 401 && state.session?.authenticated && state.session.user?.id === identity) {
+			ownerAdmin.clear();
 			clearNetworkingContext();
 			state.session = { authenticated: false, betaAccessMode: state.session.betaAccessMode };
 			onboarding?.dispose();
 			clearPrivateDialogs();
+			render();
+		}
+		if (response.status === 403 && path.startsWith("/api/beta/admin/") && state.session?.user?.id === identity) {
+			ownerAdmin.clear();
+			state.session = { ...state.session, isBetaAdmin: false };
 			render();
 		}
 		const error = new Error(data.message || `Request failed (${response.status}).`);
