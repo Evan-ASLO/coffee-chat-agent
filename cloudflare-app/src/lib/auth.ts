@@ -353,6 +353,7 @@ export function credentialProvider(value: string): CredentialProvider {
 		"GOOGLE",
 		"TAVILY",
 		"HUNTER",
+		"APOLLO",
 		"GEMINI",
 		"OPENAI",
 		"ANTHROPIC",

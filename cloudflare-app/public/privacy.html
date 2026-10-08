@@ -28,7 +28,7 @@
 			</header>
 
 			<article class="legal-card">
-				<p class="eyebrow">Effective October 6, 2026</p>
+				<p class="eyebrow">Effective October 7, 2026</p>
 				<h1>Privacy Policy</h1>
 				<p class="legal-lede">
 					Internship & Coffee Chat publishes normalized internship listings and
@@ -81,10 +81,16 @@
 						professional-profile results, email addresses, drafts, approval
 						statuses, sending history, and the personal context you choose to
 						provide for drafting.
+						Approved preparation also stores bounded public source links/snippets,
+						lookup provider and outcome, match/email status, and attempt timestamps
+						alongside the owned contact. Raw enrichment responses, phone numbers,
+						and personal-email reveal results are not stored.
 					</li>
 					<li>
 						<strong>Provider credentials:</strong> API keys you choose to add
 						for services such as Tavily, Hunter, Gemini, OpenAI, or Anthropic.
+						Optional Apollo credentials cannot be added until the server's
+						integration-authorization gate is enabled.
 					</li>
 					<li>
 						<strong>Resume data:</strong> a resume file you choose to upload
@@ -175,6 +181,30 @@
 					source citations are required. Search and ordinary Retry use Tavily
 					only; a shortfall never triggers AI automatically. Those providers process information under their own terms
 					and privacy policies.
+				</p>
+				<p>
+					After explicit contact approval, an authorized and selected Apollo
+					integration receives only public identity needed for an ordinary
+					work-email lookup: name, employer/domain and LinkedIn URL. It does not
+					receive your resume, background, private drafts or Google data. Apollo
+					is server-disabled pending provider authorization of this product and
+					its authentication model; a saved key cannot authorize integration.
+					No phone or personal-email reveal, waterfall lookup, Apollo people
+					search or automatic Hunter fallback is used.
+				</p>
+				<p>
+					Approved-person research sends only that person's public name and
+					employer to one bounded Tavily search. Matched public professional
+					evidence and your factual saved profile/experience are sent to your
+					selected drafting model, without recipient email or credentials in the
+					prompt. Resume suggestions contribute only after you review and save
+					them as profile facts. Sources are treated as untrusted information,
+					shown in draft review rather than automatically cited inside emails.
+					Regeneration reuses recorded email/research outcomes and does not
+					repeat those provider calls; failed stages require explicit retries.
+					Operational events contain only stage/provider categories and counts,
+					not recipient addresses or research bodies. Source caches follow the
+					contact's existing retention/deletion handling, not a new expiry promise.
 				</p>
 				<p>
 					The Analytics page and owner activity dashboard do not use a

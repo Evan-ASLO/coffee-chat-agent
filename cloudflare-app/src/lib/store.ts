@@ -7,6 +7,7 @@ import type {
 import { safeMetadata } from "./log";
 import { prospectJobLinks } from "./jobs";
 import { compareJobContactMatches, rankJobContact, type JobContactMatch } from "./job-discovery";
+import { parsePreparation, type PreparationState } from "./preparation";
 
 export interface PersonalContextItem {
 	category: string;
@@ -48,6 +49,7 @@ export interface Prospect {
 	linkedinUrl: string;
 	email: string;
 	emailConfidence: number;
+	preparation: PreparationState;
 	discoveryProvider: string;
 	sourceUrl: string;
 	sourceSnippet: string;
@@ -92,6 +94,7 @@ interface ProspectRow {
 	linkedin_url: string;
 	email: string;
 	email_confidence: number;
+	preparation_json: string;
 	discovery_provider: string;
 	source_url: string;
 	source_snippet: string;
@@ -375,12 +378,14 @@ export async function transitionProspect(
 		prospectId: string;
 		from: ProspectStatus[];
 		to: ProspectStatus;
+		expectedVersion?: number;
 		updates?: Record<string, string | number | null>;
 	},
 ): Promise<boolean> {
 	const allowedColumns = new Set([
 		"email",
 		"email_confidence",
+		"preparation_json",
 		"subject",
 		"draft_body",
 		"personalization_notes",
@@ -419,10 +424,11 @@ export async function transitionProspect(
 		input.prospectId,
 		input.userId,
 		...input.from,
+		...(input.expectedVersion === undefined ? [] : [input.expectedVersion]),
 	];
 	const result = await env.DB.prepare(
 		`UPDATE prospects SET ${assignments}
-		  WHERE id = ? AND user_id = ? AND status IN (${placeholders})`,
+		  WHERE id = ? AND user_id = ? AND status IN (${placeholders})${input.expectedVersion === undefined ? "" : " AND draft_version = ?"}`,
 	)
 		.bind(...values)
 		.run();
@@ -438,24 +444,30 @@ export async function patchDraft(
 		subject: string;
 		draftBody: string;
 		draftHash: string;
+		preparationJson: string;
+		expectedVersion: number;
 	},
 ): Promise<number> {
 	const now = new Date().toISOString();
 	const result = await env.DB.prepare(
-		`UPDATE prospects SET email = ?, subject = ?, draft_body = ?,
+		`UPDATE prospects SET email_confidence = CASE WHEN email = ? THEN email_confidence ELSE 0 END,
+		        email = ?, subject = ?, draft_body = ?, preparation_json = ?,
 		        draft_hash = ?, draft_version = draft_version + 1,
 		        draft_approved_at = NULL, error_code = '', error_message = '',
 		        updated_at = ?
-		  WHERE id = ? AND user_id = ? AND status = 'DRAFT_READY'`,
+		  WHERE id = ? AND user_id = ? AND status = 'DRAFT_READY' AND draft_version = ?`,
 	)
 		.bind(
 			updates.email,
+			updates.email,
 			updates.subject,
 			updates.draftBody,
+			updates.preparationJson,
 			updates.draftHash,
 			now,
 			prospectId,
 			userId,
+			updates.expectedVersion,
 		)
 		.run();
 	if (result.meta.changes !== 1) throw new Error("Draft was not found.");
@@ -565,7 +577,7 @@ export async function credentialStatus(
 		.bind(userId)
 		.all<{ provider: CredentialProvider; key_hint: string }>();
 	const output = Object.fromEntries(
-		(["TAVILY", "HUNTER", "GEMINI", "OPENAI", "ANTHROPIC", "GOOGLE"] as CredentialProvider[]).map(
+		(["TAVILY", "HUNTER", "APOLLO", "GEMINI", "OPENAI", "ANTHROPIC", "GOOGLE"] as CredentialProvider[]).map(
 			(provider) => [provider, { configured: false, hint: "" }],
 		),
 	) as Record<CredentialProvider, { configured: boolean; hint: string }>;
@@ -730,6 +742,7 @@ function mapProspect(row: ProspectRow): Prospect {
 		linkedinUrl: row.linkedin_url,
 		email: row.email,
 		emailConfidence: row.email_confidence,
+		preparation: parsePreparation(row.preparation_json),
 		discoveryProvider: row.discovery_provider,
 		sourceUrl: row.source_url,
 		sourceSnippet: row.source_snippet,

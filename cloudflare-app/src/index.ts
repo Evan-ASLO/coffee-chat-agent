@@ -40,6 +40,7 @@ import {
 	initializeWorkspace,
 	prepareProspect,
 	regenerateDraft,
+	retryPreparationStage,
 	rejectProspect,
 	saveEditedDraft,
 	sendApprovedDraft,
@@ -53,6 +54,7 @@ import {
 	MAX_RESUME_BYTES,
 } from "./lib/resume";
 import { ClientInputError, PublicHttpError } from "./lib/errors";
+import { apolloEnrichmentEnabled } from "./lib/preparation";
 import {
 	JOB_STATES,
 	deleteJobState,
@@ -220,6 +222,7 @@ app.get("/api/session", async (c) => {
 		betaAccessMode: mode,
 		isBetaAdmin: isBetaAdmin(c.env, user.email),
 		user,
+		features: { apolloEnrichment: apolloEnrichmentEnabled(c.env) },
 		csrfCookieName: csrfCookieName(c),
 		settings,
 		credentials,
@@ -515,8 +518,9 @@ app.post("/api/prospects/:id/prepare", requireUser, async (c) => {
 		c.get("user")!.id,
 		uuid.parse(c.req.param("id")),
 		c.get("requestId"),
+		c.req.raw.signal,
 	);
-	return c.json({ prospect });
+	return c.json({ prospect, userId: c.get("user")!.id });
 });
 
 app.post("/api/prospects/:id/regenerate", requireUser, async (c) => {
@@ -526,8 +530,19 @@ app.post("/api/prospects/:id/regenerate", requireUser, async (c) => {
 		c.get("user")!.id,
 		uuid.parse(c.req.param("id")),
 		c.get("requestId"),
+		c.req.raw.signal,
 	);
-	return c.json({ prospect });
+	return c.json({ prospect, userId: c.get("user")!.id });
+});
+
+app.post("/api/prospects/:id/preparation/retry", requireUser, async (c) => {
+	await protectMutation(c);
+	const input = preparationRetrySchema.parse(await readJson(c));
+	const prospect = await retryPreparationStage(
+		c.env, c.get("user")!.id, uuid.parse(c.req.param("id")), c.get("requestId"),
+		input.stage, input.expectedVersion, c.req.raw.signal,
+	);
+	return c.json({ prospect, userId: c.get("user")!.id });
 });
 
 app.patch("/api/prospects/:id/draft", requireUser, async (c) => {
@@ -695,7 +710,7 @@ const settingsSchema = z.object({
 		.min(1, "Enter your sender name.")
 		.max(150, "Sender name is too long."),
 	discoveryProvider: z.literal("TAVILY"),
-	enrichmentProvider: z.enum(["HUNTER", "NONE"]),
+	enrichmentProvider: z.enum(["HUNTER", "APOLLO", "NONE"]),
 	draftProvider: z.enum(["TEMPLATE", "GEMINI", "OPENAI", "ANTHROPIC"]),
 	geminiModel: z.string().trim().regex(/^[a-z0-9._:-]+$/i).max(100),
 	openAiModel: z.string().trim().regex(/^[a-z0-9._:-]+$/i).max(100),
@@ -736,7 +751,12 @@ const draftEditSchema = z.object({
 	email: z.string().trim().max(320),
 	subject: z.string().trim().min(1).max(200),
 	body: z.string().trim().min(1).max(20000),
+	expectedVersion: z.number().int().min(1).optional(),
 });
+const preparationRetrySchema = z.object({
+	stage: z.enum(["EMAIL", "RESEARCH"]),
+	expectedVersion: z.number().int().min(0),
+}).strict();
 const sendSchema = z.object({
 	expectedVersion: z.number().int().min(1),
 	idempotencyKey: z.string().uuid(),

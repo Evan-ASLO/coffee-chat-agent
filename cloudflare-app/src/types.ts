@@ -2,6 +2,7 @@ export type CredentialProvider =
 	| "GOOGLE"
 	| "TAVILY"
 	| "HUNTER"
+	| "APOLLO"
 	| "GEMINI"
 	| "OPENAI"
 	| "ANTHROPIC";
@@ -35,6 +36,7 @@ export interface AppBindings {
 	SESSION_DAYS: string;
 	JOBS_INGEST_SECRET: string;
 	ENABLE_JOB_OUTREACH_LINKING?: string;
+	ENABLE_APOLLO_ENRICHMENT?: string;
 	BETA_ACCESS_MODE?: string;
 	BETA_ADMIN_EMAILS?: string;
 	GOOGLE_CLIENT_ID: string;

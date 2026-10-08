@@ -43,6 +43,45 @@
 	box-sizing: border-box;
 }
 
+.preparation-costs {
+	margin: 12px;
+	font-size: 0.8rem;
+	line-height: 1.55;
+}
+
+.preparation-context {
+	max-inline-size: 34rem;
+	white-space: normal;
+	overflow-wrap: anywhere;
+	font-size: 0.85rem;
+	line-height: 1.5;
+}
+
+.preparation-context summary {
+	cursor: pointer;
+	padding-block: 8px;
+	color: var(--forest-700);
+}
+
+.preparation-context p {
+	margin-block: 8px;
+}
+
+.research-sources {
+	padding-inline-start: 20px;
+}
+
+.research-sources li {
+	margin-block: 12px;
+}
+
+.research-sources blockquote {
+	margin: 4px 0;
+	padding-inline-start: 12px;
+	border-inline-start: 2px solid var(--line);
+	color: var(--muted);
+}
+
 [hidden] {
 	display: none !important;
 }

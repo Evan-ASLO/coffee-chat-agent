@@ -2918,16 +2918,25 @@ describe("bounded ranked job contacts", () => {
 		const saved = await authenticatedWorkerFetch(owner, `/api/jobs/${jobIds[0]}/prospects`, {}, bindings());
 		const { prospects } = await saved.json() as { prospects: Prospect[] };
 		const id = prospects[0]!.id;
-		const spy = vi.spyOn(globalThis, "fetch").mockRejectedValue(new Error("No mail or enrichment is authorized."));
+		const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ results: [] }));
 		try {
 			const premature = await authenticatedWorkerFetch(owner, `/api/prospects/${id}/send`, {
 				method: "POST", body: { expectedVersion: 1, idempotencyKey: crypto.randomUUID() },
 			}, bindings());
 			expect(premature.status).not.toBe(200);
+			expect(spy).not.toHaveBeenCalled();
 			const prepared = await authenticatedWorkerFetch(owner, `/api/prospects/${id}/prepare`, { method: "POST" }, bindings());
 			expect(prepared.status).toBe(200);
-			expect(await prepared.json()).toMatchObject({ prospect: { status: "DRAFT_READY", draftVersion: 1, email: "" } });
-			expect(spy).not.toHaveBeenCalled();
+			expect(await prepared.json()).toMatchObject({ prospect: {
+				status: "DRAFT_READY", draftVersion: 1, email: "",
+				preparation: { research: { status: "EMPTY" } },
+			} });
+			expect(spy).toHaveBeenCalledTimes(1);
+			expect(spy.mock.calls[0]![0]).toBe("https://api.tavily.com/search");
+			expect(JSON.parse(String(spy.mock.calls[0]![1]?.body))).toMatchObject({
+				query: '"Alex Fictional" "Example Software Firm" professional profile projects experience',
+				search_depth: "basic", max_results: 5,
+			});
 		} finally {
 			spy.mockRestore();
 		}

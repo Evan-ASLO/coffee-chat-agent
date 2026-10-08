@@ -63,7 +63,20 @@ Use this checklist for the Cloudflare preview and again before public cutover. R
 - [ ] `SEARCH_LIMITED` names the actual request limit, not quota/auth failure, preserves validated partials and keeps status heading/body visibly separated. Tavily/AI phases remain clear; AI-only summaries never claim Tavily ran.
 - [ ] Selected-provider failures normalize to `RATE_LIMITED`, `SEARCH_LIMITED`, `AUTH`, `BAD_REQUEST`, `UNSUPPORTED`, `TIMEOUT`, `MALFORMED_RESPONSE`, or `PROVIDER_ERROR`; summaries/audits contain only provider/category/HTTP status/model/counts/authorized cap/safe reason and never raw provider bodies/messages, prompts, results, URLs, or credentials.
 
-## Google and encrypted-data smoke tests
+## Local approved preparation (no real provider calls)
+
+- [ ] Migration `0009_approved_preparation.sql` preserves existing credential ciphertext/AAD, Hunter defaults, contact rows and owner data; only the isolated review database is migrated.
+- [ ] Apollo's absent/default-false server gate blocks both key collection and enrichment. Product/authentication authorization remains outstanding; a client setting or API key cannot substitute for approval, and partner OAuth may still be required.
+- [ ] General and job-linked contact approval persists exactly one selected email lookup, at most one basic person-specific Tavily search (5 results), and one saved-model draft request. No fallback provider, transport/model retry or send occurs.
+- [ ] Apollo uses documented `person.match_confidence`, verified work-email status, canonical identity, current employer and matching domain; reject missing/low confidence, contradictory or former employment, placeholders, personal addresses and unrelated nested `contact` data.
+- [ ] Email/research success and failure outcomes survive refresh and later draft failure. Regenerate uses only the selected drafting model; each explicit single-stage retry reuses the other stage and discloses its actual budget.
+- [ ] Wrong-person/name-substring, wrong-employer, unsafe and instruction-bearing research is excluded; retained public sources and genuine sender experience are reviewable, with honest missing/empty/limited-context states.
+- [ ] Missing keys, authorization/credit failures and cancellation never become guessed recipients or fabricated successful research. Hunter/manual preferences remain unchanged.
+- [ ] Approval, CSRF, account/job ownership, rate limits and duplicate-action claims precede provider work. Late account/job/navigation responses cannot repopulate another context.
+- [ ] Unsaved edits and stale draft versions cannot be sent. Recipient edits remove provider verification; saving requires re-review, and cancelling final send confirmation makes zero send requests.
+- [ ] Desktop 1440 and phone 390 mocked browser flows use actual isolated Worker/D1 persistence with external egress and sends blocked. Record provider counts, screenshots and explicit real-service limitations.
+
+## Separately authorized Google and encrypted-data smoke tests
 
 Use designated test accounts and non-sensitive fixtures.
 

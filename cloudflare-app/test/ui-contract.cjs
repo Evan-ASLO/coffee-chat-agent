@@ -237,6 +237,7 @@ function discoveryClient(summary) {
 		jobOutreachLinkingEnabled: () => false,
 		render: () => {},
 		document: { getElementById: () => null },
+		dialog: { open: false },
 		loadJobData: async () => {},
 		loadBetaAdminData: async () => {},
 		loadAnalyticsData: async () => {},
@@ -261,6 +262,10 @@ function discoveryClient(summary) {
 		source.slice(source.indexOf("function renderSearchCosts("), source.indexOf("\nfunction networkingPeople(")) +
 		source.slice(source.indexOf("async function beginJobNetworking("), source.indexOf("\nasync function findPeople(")) +
 		source.slice(source.indexOf("function navigate("), source.indexOf("\nfunction syncViewToUrl(")),
+		client,
+	);
+	vm.runInNewContext(
+		source.slice(source.indexOf("function cancelPreparation("), source.indexOf("\nfunction currentProspectAction(")),
 		client,
 	);
 	return client;

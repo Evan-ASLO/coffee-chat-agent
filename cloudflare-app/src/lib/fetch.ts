@@ -20,6 +20,7 @@ export class ProviderHttpError extends Error {
 const allowedHosts = new Set([
 	"api.tavily.com",
 	"api.hunter.io",
+	"api.apollo.io",
 	"generativelanguage.googleapis.com",
 	"api.openai.com",
 	"api.anthropic.com",

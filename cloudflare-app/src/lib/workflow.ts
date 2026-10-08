@@ -3,7 +3,7 @@ import {
 	readCredential,
 	readOptionalCredential,
 } from "./credentials";
-import { ClientInputError } from "./errors";
+import { ClientInputError, ConflictError } from "./errors";
 import {
 	createTrackingSheet,
 	latestIncomingReply,
@@ -21,6 +21,18 @@ import {
 	type DiscoveryProviderResult,
 } from "./providers";
 import { readResumeAttachment } from "./resume";
+import {
+	apolloEnrichmentEnabled,
+	discoveryResearchSources,
+	enrichWithApollo,
+	personIdentityKey,
+	preparationFailure,
+	publicSourceUrl,
+	researchApprovedPerson,
+	validRecipientEmail,
+	type EmailLookup,
+	type PreparationStage,
+} from "./preparation";
 import {
 	audit,
 	claimDraftForSend,
@@ -292,7 +304,36 @@ export async function prepareProspect(
 	userId: string,
 	prospectId: string,
 	requestId: string,
+	signal?: AbortSignal,
 ): Promise<Prospect> {
+	return beginPreparation(env, userId, prospectId, requestId, "INITIAL", signal);
+}
+
+export async function regenerateDraft(
+	env: AppBindings,
+	userId: string,
+	prospectId: string,
+	requestId: string,
+	signal?: AbortSignal,
+): Promise<Prospect> {
+	return beginPreparation(env, userId, prospectId, requestId, "DRAFT", signal);
+}
+
+export async function retryPreparationStage(
+	env: AppBindings, userId: string, prospectId: string, requestId: string,
+	stage: PreparationStage, expectedVersion: number, signal?: AbortSignal,
+): Promise<Prospect> {
+	return beginPreparation(env, userId, prospectId, requestId, stage, signal, expectedVersion);
+}
+
+async function beginPreparation(
+	env: AppBindings, userId: string, prospectId: string, requestId: string,
+	stage: "INITIAL" | "DRAFT" | PreparationStage, signal?: AbortSignal, expectedVersion?: number,
+): Promise<Prospect> {
+	const previous = await requiredProspect(env, userId, prospectId);
+	if (stage !== "INITIAL" && !previous.contactApprovedAt) {
+		throw new ClientInputError("Approve this person before preparing or regenerating outreach.");
+	}
 	await enforceRateLimit(env, {
 		userId,
 		action: "DRAFT",
@@ -304,121 +345,38 @@ export async function prepareProspect(
 	const claimed = await transitionProspect(env, {
 		userId,
 		prospectId,
-		from: ["DISCOVERED", "ERROR"],
+		from: stage === "INITIAL" ? ["DISCOVERED", "ERROR"] : ["DRAFT_READY", "ERROR"],
 		to: "PREPARING",
+		expectedVersion: expectedVersion ?? previous.draftVersion,
 		updates: {
-			contact_approved_at: new Date().toISOString(),
-			error_code: "",
-			error_message: "",
+			contact_approved_at: previous.contactApprovedAt || new Date().toISOString(),
+			draft_approved_at: null, error_code: "", error_message: "",
 		},
 	});
-	if (!claimed) throw new Error("Prospect is not available for preparation.");
-
+	if (!claimed) throw new ConflictError("This contact changed or is already being prepared. Reload before retrying.");
 	try {
+		signal?.throwIfAborted();
+		const provider = settings.draftProvider.toUpperCase() as CredentialProvider | "TEMPLATE";
+		const apiKey =
+			provider === "TEMPLATE"
+				? undefined
+				: await readCredential(env, userId, provider as CredentialProvider);
 		let prospect = await requiredProspect(env, userId, prospectId);
-		let email = prospect.email;
-		let confidence = prospect.emailConfidence;
-		if (settings.enrichmentProvider === "HUNTER") {
-			const hunterKey = await readCredential(env, userId, "HUNTER");
-			const enrichment = await enrichWithHunter(hunterKey, prospect);
-			email = enrichment.email || email;
-			confidence = enrichment.confidence || confidence;
+		const identityKey = await personIdentityKey(prospect);
+		if (stage !== "DRAFT") {
+			if (stage === "INITIAL" || stage === "EMAIL") {
+				prospect = await prepareEmail(env, prospect, settings, identityKey, stage === "EMAIL", signal);
+			}
+			signal?.throwIfAborted();
+			if (stage === "INITIAL" || stage === "RESEARCH") {
+				prospect = await prepareResearch(env, prospect, identityKey, stage === "RESEARCH", signal);
+			}
 		}
-		prospect = { ...prospect, email, emailConfidence: confidence };
-		const provider = settings.draftProvider.toUpperCase() as CredentialProvider | "TEMPLATE";
-		const apiKey =
-			provider === "TEMPLATE"
-				? undefined
-				: await readCredential(env, userId, provider as CredentialProvider);
-		const draft = await createDraft({ prospect, settings, apiKey });
-		assertDraftLength(draft.body, settings);
-		const draftHash = await hashDraft(email, draft.subject, draft.body);
-		const updated = await transitionProspect(env, {
-			userId,
-			prospectId,
-			from: ["PREPARING"],
-			to: "DRAFT_READY",
-			updates: {
-				email,
-				email_confidence: confidence,
-				subject: draft.subject,
-				draft_body: draft.body,
-				personalization_notes: draft.personalizationNotes,
-				draft_provider: draft.provider,
-				draft_model: draft.model,
-				draft_version: prospect.draftVersion + 1,
-				draft_hash: draftHash,
-				error_code: "",
-				error_message: "",
-			},
-		});
-		if (!updated) throw new Error("Draft state changed during preparation.");
-		await audit(env, {
-			userId,
-			action: "DRAFT_PREPARED",
-			entityType: "prospect",
-			entityId: prospectId,
-			requestId,
-			metadata: {
-				provider: draft.provider,
-				model: draft.model,
-				emailFound: Boolean(email),
-			},
-		});
-		await queueProspectSync(env, userId, prospectId);
-		return requiredProspect(env, userId, prospectId);
-	} catch (error) {
-		await transitionProspect(env, {
-			userId,
-			prospectId,
-			from: ["PREPARING"],
-			to: "ERROR",
-			updates: {
-				error_code: "PREPARATION_FAILED",
-				error_message:
-					error instanceof Error ? error.message.slice(0, 1000) : "Preparation failed.",
-			},
-		});
-		throw error;
-	}
-}
-
-export async function regenerateDraft(
-	env: AppBindings,
-	userId: string,
-	prospectId: string,
-	requestId: string,
-): Promise<Prospect> {
-	const moved = await transitionProspect(env, {
-		userId,
-		prospectId,
-		from: ["DRAFT_READY", "ERROR"],
-		to: "PREPARING",
-		updates: { error_code: "", error_message: "", draft_approved_at: null },
-	});
-	if (!moved) throw new Error("Draft is not available for regeneration.");
-	return prepareFromPreparing(env, userId, prospectId, requestId);
-}
-
-async function prepareFromPreparing(
-	env: AppBindings,
-	userId: string,
-	prospectId: string,
-	requestId: string,
-): Promise<Prospect> {
-	try {
-		const prospect = await requiredProspect(env, userId, prospectId);
-		const settings = await getSettings(env, userId);
-		assertProfileReady(settings);
-		const provider = settings.draftProvider.toUpperCase() as CredentialProvider | "TEMPLATE";
-		const apiKey =
-			provider === "TEMPLATE"
-				? undefined
-				: await readCredential(env, userId, provider as CredentialProvider);
-		const draft = await createDraft({ prospect, settings, apiKey });
+		signal?.throwIfAborted();
+		const draft = await createDraft({ prospect, settings, apiKey, signal });
 		assertDraftLength(draft.body, settings);
 		const hash = await hashDraft(prospect.email, draft.subject, draft.body);
-		await transitionProspect(env, {
+		const updated = await transitionProspect(env, {
 			userId,
 			prospectId,
 			from: ["PREPARING"],
@@ -435,37 +393,153 @@ async function prepareFromPreparing(
 				error_message: "",
 			},
 		});
+		if (!updated) throw new ConflictError("Draft state changed during preparation.");
 		await audit(env, {
 			userId,
-			action: "DRAFT_REGENERATED",
+			action: stage === "DRAFT" ? "DRAFT_REGENERATED" : "DRAFT_PREPARED",
 			entityType: "prospect",
 			entityId: prospectId,
 			requestId,
-			metadata: { provider: draft.provider, model: draft.model },
+			metadata: {
+				provider: draft.provider, model: draft.model, emailFound: Boolean(prospect.email),
+				enrichmentProvider: prospect.preparation.email?.provider || "NONE",
+				enrichmentStatus: prospect.preparation.email?.status || "NOT_REQUESTED",
+				researchStatus: prospect.preparation.research?.status || "NOT_REQUESTED",
+				researchSources: prospect.preparation.research?.sources.length || 0,
+			},
 		});
-		await queueProspectSync(env, userId, prospectId);
-		return requiredProspect(env, userId, prospectId);
 	} catch (error) {
+		const latest = await requiredProspect(env, userId, prospectId);
+		const retained = Boolean(latest.subject && latest.draftBody && latest.draftVersion);
+		const cancelled = signal?.aborted;
+		const message = cancelled
+			? "Preparation stopped. Completed stages were kept; a started provider request may still be billed."
+			: `Draft preparation failed. Saved email and research were kept.${retained ? " The previous draft was also kept." : ""} Check the selected drafting key/model, then explicitly retry the draft.`;
 		await transitionProspect(env, {
 			userId,
 			prospectId,
 			from: ["PREPARING"],
-			to: "ERROR",
+			to: retained ? "DRAFT_READY" : "ERROR",
 			updates: {
-				error_code: "DRAFT_FAILED",
-				error_message:
-					error instanceof Error ? error.message.slice(0, 1000) : "Draft failed.",
+				error_code: cancelled ? "PREPARATION_CANCELLED" : "DRAFT_FAILED",
+				error_message: message,
+				...(retained ? {
+					draft_hash: await hashDraft(latest.email, latest.subject, latest.draftBody),
+					draft_version: latest.draftVersion + 1,
+				} : {}),
 			},
 		});
-		throw error;
+		await audit(env, {
+			userId, action: "DRAFT_PREPARATION_FAILED", entityType: "prospect", entityId: prospectId, requestId,
+			metadata: { stage, status: preparationFailure(error, signal), previousDraftKept: retained },
+		});
+		throw new ClientInputError(message);
 	}
+	await queueProspectSync(env, userId, prospectId);
+	return requiredProspect(env, userId, prospectId);
+}
+
+async function savePreparation(
+	env: AppBindings, prospect: Prospect, updates: Record<string, string | number | null> = {},
+): Promise<Prospect> {
+	const saved = await transitionProspect(env, {
+		userId: prospect.userId, prospectId: prospect.id, from: ["PREPARING"], to: "PREPARING",
+		updates: { ...updates, preparation_json: JSON.stringify(prospect.preparation) },
+	});
+	if (!saved) throw new ConflictError("Preparation state changed.");
+	return requiredProspect(env, prospect.userId, prospect.id);
+}
+
+async function prepareEmail(
+	env: AppBindings, prospect: Prospect, settings: UserSettings, identityKey: string,
+	retry: boolean, signal?: AbortSignal,
+): Promise<Prospect> {
+	const saved = prospect.preparation.email;
+	const email = validRecipientEmail(prospect.email);
+	if (email && (!saved || (saved.identityKey === identityKey &&
+		["MATCHED", "MANUAL"].includes(saved.status) && saved.emailHash === await sha256(email)))) {
+		if (saved) return prospect;
+		prospect.preparation.email = {
+			provider: "MANUAL", status: "MANUAL", identityKey, checkedAt: new Date().toISOString(),
+			emailHash: await sha256(email), matchConfidence: null, emailStatus: null, sourceUrl: "",
+		};
+		return savePreparation(env, prospect);
+	}
+	if (!retry && saved?.identityKey === identityKey) return prospect;
+	const provider = settings.enrichmentProvider;
+	if (!["APOLLO", "HUNTER", "NONE"].includes(provider)) throw new ClientInputError("Select a supported email enrichment provider.");
+	const lookup: EmailLookup = {
+		provider: provider === "NONE" ? "MANUAL" : provider as "APOLLO" | "HUNTER",
+		status: provider === "NONE" ? "NO_EMAIL" : "RUNNING", identityKey, checkedAt: new Date().toISOString(),
+		emailHash: "", matchConfidence: null, emailStatus: null,
+		sourceUrl: publicSourceUrl(prospect.linkedinUrl || prospect.sourceUrl),
+	};
+	prospect.preparation.email = lookup;
+	if (provider === "NONE") return savePreparation(env, prospect);
+	if (provider === "APOLLO" && !apolloEnrichmentEnabled(env)) {
+		lookup.status = "INTEGRATION_DISABLED";
+		return savePreparation(env, prospect);
+	}
+	prospect = await savePreparation(env, prospect);
+	let found = "";
+	let confidence = 0;
+	try {
+		signal?.throwIfAborted();
+		const key = await readOptionalCredential(env, prospect.userId, provider as "APOLLO" | "HUNTER");
+		if (!key) {
+			lookup.status = "MISSING_KEY";
+		} else if (provider === "APOLLO") {
+			const enrichment = await enrichWithApollo(env, key, prospect, signal);
+			Object.assign(lookup, enrichment.lookup);
+			found = enrichment.email;
+		} else {
+			const enrichment = await enrichWithHunter(key, prospect, signal);
+			found = enrichment.email;
+			confidence = enrichment.confidence;
+			lookup.status = found ? "MATCHED" : "NO_EMAIL";
+			lookup.emailHash = found ? await sha256(found) : "";
+		}
+	} catch (error) {
+		lookup.status = preparationFailure(error, signal);
+	}
+	prospect.preparation.email = lookup;
+	// An existing manually reviewed recipient is not replaced by a failed lookup.
+	return savePreparation(env, prospect, found ? { email: found, email_confidence: confidence } : {});
+}
+
+async function prepareResearch(
+	env: AppBindings, prospect: Prospect, identityKey: string, retry: boolean, signal?: AbortSignal,
+): Promise<Prospect> {
+	const saved = prospect.preparation.research;
+	if (!retry && saved?.identityKey === identityKey) return prospect;
+	prospect.preparation.research = {
+		status: "RUNNING", identityKey, checkedAt: new Date().toISOString(),
+		sources: saved?.identityKey === identityKey ? saved.sources : discoveryResearchSources(prospect),
+	};
+	prospect = await savePreparation(env, prospect);
+	try {
+		signal?.throwIfAborted();
+		const key = await readOptionalCredential(env, prospect.userId, "TAVILY");
+		if (!key) {
+			prospect.preparation.research!.status = "MISSING_KEY";
+		} else {
+			const result = await researchApprovedPerson(key, prospect, signal);
+			if (result.status !== "SOURCED" && saved?.identityKey === identityKey && saved.sources.length) {
+				result.sources = saved.sources;
+			}
+			prospect.preparation.research = result;
+		}
+	} catch (error) {
+		prospect.preparation.research!.status = preparationFailure(error, signal);
+	}
+	return savePreparation(env, prospect);
 }
 
 export async function saveEditedDraft(
 	env: AppBindings,
 	userId: string,
 	prospectId: string,
-	input: { email: string; subject: string; body: string },
+	input: { email: string; subject: string; body: string; expectedVersion?: number },
 	requestId: string,
 ): Promise<number> {
 	const email = input.email ? validateEmail(input.email) : "";
@@ -474,11 +548,21 @@ export async function saveEditedDraft(
 	if (!subject || !body) throw new Error("Subject and body are required.");
 	const settings = await getSettings(env, userId);
 	assertDraftLength(body, settings);
+	const prospect = await requiredProspect(env, userId, prospectId);
+	if (email !== prospect.email) {
+		prospect.preparation.email = {
+			provider: "MANUAL", status: email ? "MANUAL" : "NO_EMAIL",
+			identityKey: await personIdentityKey(prospect), checkedAt: new Date().toISOString(),
+			emailHash: email ? await sha256(email) : "", matchConfidence: null, emailStatus: null, sourceUrl: "",
+		};
+	}
 	const version = await patchDraft(env, userId, prospectId, {
 		email,
 		subject,
 		draftBody: body,
 		draftHash: await hashDraft(email, subject, body),
+		preparationJson: JSON.stringify(prospect.preparation),
+		expectedVersion: input.expectedVersion ?? prospect.draftVersion,
 	});
 	await audit(env, {
 		userId,
@@ -510,11 +594,12 @@ export async function sendApprovedDraft(
 		windowSeconds: 24 * 60 * 60,
 	});
 	const prospect = await requiredProspect(env, userId, input.prospectId);
+	if (!prospect.contactApprovedAt) throw new ClientInputError("Approve this person before sending outreach.");
 	if (prospect.status !== "DRAFT_READY") {
 		throw new Error("Draft is not ready to send.");
 	}
 	if (prospect.draftVersion !== input.expectedVersion) {
-		throw new Error("Draft changed after review. Review the latest version.");
+		throw new ConflictError("Draft changed after review. Review the latest version.");
 	}
 	validateEmail(prospect.email);
 	const currentHash = await hashDraft(

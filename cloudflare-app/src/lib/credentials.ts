@@ -4,6 +4,7 @@ import type {
 	CredentialProvider,
 } from "../types";
 import { decryptCredential, encryptCredential, secretHint } from "./crypto";
+import { requireApolloIntegration } from "./preparation";
 import {
 	deleteCredential,
 	getCredential,
@@ -42,6 +43,7 @@ export async function saveCredential(
 		metadata?: Record<string, unknown>;
 	},
 ): Promise<void> {
+	if (input.provider === "APOLLO") requireApolloIntegration(env);
 	const kind = input.kind ?? "API_KEY";
 	const value = input.value.trim();
 	if (value.length < 8 || value.length > 10000) {

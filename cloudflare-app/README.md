@@ -14,6 +14,99 @@ npm run dev
 
 Configure the existing Google/encryption values plus `JOBS_INGEST_SECRET` in `.dev.vars`. `BETA_ACCESS_MODE` defaults to `OPEN` when absent for backward compatibility. `ENABLE_JOB_OUTREACH_LINKING` defaults to false when absent; keep it false for preview unless deliberately testing the gated job-link flow. Never commit `.dev.vars`. Apply migrations remotely only as a separately approved deployment step.
 
+## Approved contact preparation: optional Apollo and sourced drafts
+
+Discovery remains separate: Tavily-only Search/Retry and explicit one-provider
+**Find more with AI** cannot approve, enrich or draft. In either Networking entry,
+**Approve & prepare** claims the existing owned prospect once, records contact
+approval, and performs bounded stages: selected email lookup, person-specific
+Tavily research, then the saved drafting model (or the existing key-free Template).
+No stage sends mail or approves a draft.
+
+- Hunter remains the existing default; saving an Apollo key does not change the
+  enrichment preference. There is no automatic Hunter/Apollo fallback.
+- **Apollo is NOT enabled for live use.** `ENABLE_APOLLO_ENRICHMENT` must equal
+  `"true"` server-side before key storage or an Apollo call is allowed; absent is
+  off. The UI has no authorization toggle. [API Terms section 3](https://www.apollo.io/terms/api)
+  require Apollo authorization of this product and its authentication model.
+  [Partner OAuth registration](https://docs.apollo.io/docs/use-oauth-20-authorization-flow-to-access-apollo-user-information-partners)
+  may be required instead of this key adapter. Per-user BYOK is not verified
+  permission. Do not enable the gate or collect keys until the arrangement is
+  authorized; OAuth implementation would be a separately reviewed requirement.
+- The adapter uses one `POST https://api.apollo.io/api/v1/people/match` with
+  `x-api-key` and documented query parameters (not API keys in the URL). Only
+  approved public identity is sent. `reveal_personal_emails`,
+  `reveal_phone_number`, `run_waterfall_email`, and `run_waterfall_phone` are
+  explicitly false. It uses `person`, never a nested unrelated `contact`, and
+  requires high `person.match_confidence`, matching name/profile/current employer,
+  matching employer domain, and a valid `verified` work email. Missing confidence,
+  historical employment, placeholders, unverified/personal addresses and
+  contradictory identity are not accepted. Categorical match confidence is not a
+  deliverability percentage: Apollo leaves the legacy numeric score at 0
+  (unknown) and its CRM confidence cell blank, while Hunter's score is preserved.
+  No enrichment result approves sending.
+- Official [enrichment](https://docs.apollo.io/reference/people-enrichment) and
+  [pricing](https://docs.apollo.io/docs/api-pricing) were reviewed October 7, 2026:
+  current-plan demographics/email may cost 1 credit even with no email; legacy
+  costs and account eligibility vary. A scoped people/match key can suffice;
+  this app does not demand a master key.
+- Research is one basic Tavily search, max 5 results, for the approved name and
+  employer. Only associated public professional snippets/links are retained.
+  Irrelevant, wrong-person, unsafe and instruction-bearing results are rejected.
+  Existing genuine discovery evidence can support a labelled limited-context
+  draft when research is missing, empty or fails; success is never fabricated.
+- The existing draft path receives minimal untrusted public evidence plus saved
+  factual user experience/profile (including reviewed resume suggestions).
+  Recipient email, credentials and private prior drafts are omitted. Each draft
+  action uses one selected model request, existing token budgets and no search
+  tools, automatic transport retries or Gemini model fallback. The template
+  choice remains key-free. Source links stay in review/context UI, not forced
+  inline citations in outreach. Template retains its existing profile/discovery
+  wording rather than summarizing new research.
+- Each stage is persisted before the next. The cache is bound to public person
+  identity, not shared between accounts or contacts. Successes AND unsuccessful
+  outcomes are reused by ordinary draft retry; regeneration never re-spends on
+  enrichment or research. Caches are dated evidence, not a guarantee of current
+  employment/deliverability; there is no automatic freshness refresh.
+- `POST /api/prospects/:id/preparation/retry` accepts strict
+  `{stage: "EMAIL" | "RESEARCH", expectedVersion: number}` after contact approval.
+  It retries only that stage and the draft, reusing the other stage. The separate
+  cost-disclosed controls are for explicit recovery, not automatic top-up.
+- Stage failures are visible; a missing email never becomes a guessed recipient.
+  A draft failure retains completed email/research and any previous draft.
+  Preparation/regeneration/editing invalidate prior draft approval. Concurrent
+  preparation is rejected; draft editing checks the reviewed version. The client
+  cannot send unsaved edits or reuse a review across accounts/jobs; the server
+  still requires the current version/hash, ownership and existing send lock/
+  idempotency protocol. Cancelled/stale responses cannot change a newer context.
+- Operational events preserve `DRAFT_PREPARED` / `DRAFT_REGENERATED` and only add
+  provider/stage enums and counts. Owner projection remains unchanged: no
+  recipient email, research bodies or raw provider errors are exposed.
+
+Migration **0009_approved_preparation.sql** adds `prospects.preparation_json`
+(validated versioned email/research state) and rebuilds only the encrypted-key
+table to add `APOLLO` to its provider constraint. Ciphertext, IVs, user-bound AAD
+inputs, existing IDs, settings/defaults and owner data are preserved. Apply it
+locally for review; production migration and release need separate approval.
+
+### Mock-only preparation review
+
+After the existing isolated contacts preview has been stopped, run
+`node scripts\prepare-preparation-preview.mjs`, then `npm run preview:onboarding`.
+This upgrades only the validated local fixture database and changes its ignored
+test entry, not production configuration. Use `http://127.0.0.1:8807/__review/preparation`
+for the fictional preparation account; the original `/__review/existing` Tavily
+review remains available. All external fetches are replaced with deterministic
+fixtures. Keys, OAuth, discovery, CRM and actual sends remain blocked. Browser
+review exercises stored D1 approval, email/research, draft edits/regeneration and
+final-send cancellation. Existing prospect-sync queue messages are recorded by a
+typed local mock and never dispatched to Google. This is not a real-provider or
+licensing smoke test.
+
+Focused checks: `npm test -- test\preparation.spec.ts`, `npm run typecheck`,
+`node --test test\preparation-client.cjs`, and
+`node test\browser\preparation.mjs` (set `PREPARATION_EVIDENCE_DIR` outside the repo).
+
 ## No-build client, reference art, and Career Journey
 
 - The SPA remains plain HTML, CSS, and browser JavaScript served by the Worker assets binding.

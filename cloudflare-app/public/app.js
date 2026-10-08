@@ -66,6 +66,8 @@ const state = {
 	networkingCriteria: null,
 	networkingContacts: { status: "idle", prospects: [], message: "", request: 0 },
 	discoveryRequest: null,
+	preparationRequest: null,
+	draftReview: null,
 	tavilySearch: null,
 	networkingSearch: {
 		status: "idle",
@@ -119,6 +121,8 @@ journeyMediaConditions.forEach((condition) =>
 );
 document.getElementById("save-draft").addEventListener("click", saveDraft);
 document.getElementById("send-draft").addEventListener("click", sendDraft);
+document.getElementById("draft-form").addEventListener("input", syncDraftControls);
+dialog.addEventListener("close", () => { state.draftReview = null; });
 
 async function load() {
 	try {
@@ -886,6 +890,8 @@ function renderNetworking() {
 					<div><h2>${state.networkingJob ? "Saved contacts for this job" : "Your network"}</h2><p>${state.networkingJob ? "Ranked for this role using saved public evidence. Unconfirmed fits remain separate." : "Keep approval, draft, send, and reply state visible in one compact workflow."}</p></div>
 					<div class="table-tools"><button id="open-discovery-dialog-secondary" class="primary">${icon("search")} Find people</button></div>
 				</div>
+				${renderPreparationCosts()}
+				${state.preparationRequest ? '<p class="notice" role="status">An explicitly approved action is running. Completed stages are saved independently. <button id="cancel-preparation" class="secondary">Stop waiting</button></p>' : ""}
 				${
 					prospects.length
 						? `<div class="responsive-table-wrap" tabindex="0" role="region" aria-label="Networking table. Scroll to view every column."><table class="data-table networking-table">
@@ -1050,10 +1056,11 @@ function renderApprove() {
 		<div class="panel-head">
 			<div>
 				<h2>Approve people</h2>
-				<p>The first approval may use Hunter and your selected drafting provider. It never sends email.</p>
+				<p>The first approval prepares email lookup, public research, and a reviewable draft. It never sends email.</p>
 			</div>
 		</div>
 		${profileReady ? "" : '<p class="notice warning">Add at least one factual detail about your background, current goal, or experience before preparing a personalized draft. <button id="complete-profile" class="secondary">Complete profile</button></p>'}
+		${renderPreparationCosts()}
 		${people.length ? `<div class="cards">${people.map((person) => prospectCard(person, profileReady)).join("")}</div>` : empty("No people are waiting for approval.")}
 	</section>`;
 }
@@ -1216,10 +1223,12 @@ function renderSettings() {
 					${credentials.GOOGLE.configured ? (settings.spreadsheetId ? `<a class="button" href="https://docs.google.com/spreadsheets/d/${escapeAttr(settings.spreadsheetId)}" target="_blank" rel="noopener">Open CRM</a>` : '<button id="init-workspace" class="secondary">Create CRM</button>') : '<a class="button primary" href="/auth/google/connect">Connect</a>'}
 				</div>
 				<details class="credentials-details">
-					<summary>${icon("key")}<span><b>Provider credentials</b><small>Tavily, Hunter, Gemini, OpenAI, Anthropic</small></span>${icon("chevron-right")}</summary>
+					<summary>${icon("key")}<span><b>Provider credentials</b><small>Tavily, Hunter, Apollo, Gemini, OpenAI, Anthropic</small></span>${icon("chevron-right")}</summary>
 					<div class="credentials-list">
 						${secretRow("TAVILY", "Tavily", credentials.TAVILY)}
 						${secretRow("HUNTER", "Hunter", credentials.HUNTER)}
+						${secretRow("APOLLO", "Apollo (optional)", credentials.APOLLO || { configured: false }, !state.session.features?.apolloEnrichment)}
+						<p class="notice" id="apollo-setup-guidance">Apollo is a separate, optional work-email lookup after contact approval; it does not find people here. <strong>${state.session.features?.apolloEnrichment ? "The operator gate is enabled; your account still needs permitted endpoint access." : "Unavailable pending Apollo authorization of this product and its authentication model. Do not enter an Apollo key yet."}</strong> A saved key never enables the server gate or selects Apollo. <a href="https://www.apollo.io/terms/api" target="_blank" rel="noopener">API Terms section 3</a> and <a href="https://docs.apollo.io/docs/use-oauth-20-authorization-flow-to-access-apollo-user-information-partners" target="_blank" rel="noopener">partner OAuth registration</a> apply. Approval may require OAuth rather than keys. An approved key-based arrangement needs only people/match access, not necessarily a master key. <a href="https://docs.apollo.io/reference/people-enrichment" target="_blank" rel="noopener">Endpoint and account eligibility</a>.</p>
 						${secretRow("GEMINI", "Gemini", credentials.GEMINI)}
 						${secretRow("OPENAI", "OpenAI", credentials.OPENAI)}
 						${secretRow("ANTHROPIC", "Anthropic", credentials.ANTHROPIC)}
@@ -1244,7 +1253,7 @@ function renderSettings() {
 				<div class="dialog-head"><div><p class="eyebrow">Profile & drafting</p><h2 id="profile-settings-title">Edit real workspace preferences</h2><p>Only factual context you save here is available to drafting.</p></div><button class="icon-button" value="cancel" aria-label="Close profile settings">×</button></div>
 				<div class="grid grid-3">
 					<label>Your name<input id="sender-name" value="${escapeAttr(settings.senderName)}" /></label>
-					<label>Email enrichment<select id="enrichment-provider"><option value="HUNTER" ${selected(settings.enrichmentProvider, "HUNTER")}>Hunter</option><option value="NONE" ${selected(settings.enrichmentProvider, "NONE")}>Manual email entry</option></select></label>
+					<label>Email enrichment<select id="enrichment-provider"><option value="HUNTER" ${selected(settings.enrichmentProvider, "HUNTER")}>Hunter</option><option value="APOLLO" ${selected(settings.enrichmentProvider, "APOLLO")} ${state.session.features?.apolloEnrichment ? "" : "disabled"}>Apollo${state.session.features?.apolloEnrichment ? "" : " (authorization pending)"}</option><option value="NONE" ${selected(settings.enrichmentProvider, "NONE")}>Manual email entry</option></select><small>Changing or saving a key never switches this preference. No automatic provider fallback.</small></label>
 					<label>Draft provider<select id="draft-provider">${providerOptions(settings.draftProvider)}</select></label>
 					<label>Gemini model<input id="gemini-model" value="${escapeAttr(settings.geminiModel)}" /></label>
 					<label>OpenAI model<input id="openai-model" value="${escapeAttr(settings.openAiModel)}" /></label>
@@ -1479,6 +1488,15 @@ function wireTab() {
 	document.querySelectorAll("[data-regenerate]").forEach((button) =>
 		button.addEventListener("click", () => regenerate(button.dataset.regenerate)),
 	);
+	wirePreparationRetries(app);
+	if (state.preparationRequest) {
+		app.querySelectorAll("[data-prepare], [data-regenerate], [data-review], [data-retry-preparation]").forEach((button) => { button.disabled = true; });
+	}
+	document.getElementById("cancel-preparation")?.addEventListener("click", () => {
+		cancelPreparation();
+		showToast("Stopped waiting. Started work may still finish or be billed; reload saved contacts before retrying.");
+		render();
+	});
 	document.querySelectorAll("[data-save-secret]").forEach((button) =>
 		button.addEventListener("click", () => saveSecret(button.dataset.saveSecret)),
 	);
@@ -1743,6 +1761,7 @@ async function beginJobNetworking(id) {
 
 function clearNetworkingContext() {
 	cancelDiscovery();
+	cancelPreparation();
 	state.networkingJob = null;
 	state.networkingCriteria = null;
 	state.networkingContacts = { status: "idle", prospects: [], message: "", request: state.networkingContacts.request + 1 };
@@ -2107,11 +2126,109 @@ function fallbackProviderLabel(provider) {
 	);
 }
 
+function preparationBudget(person = null, stage = "INITIAL") {
+	const settings = state.session.settings;
+	const credentials = state.session.credentials;
+	const email = person?.preparation?.email;
+	const research = person?.preparation?.research;
+	const parts = [];
+	if (["INITIAL", "EMAIL"].includes(stage)) {
+		if (person?.email && (!email || ["MATCHED", "MANUAL"].includes(email.status))) {
+			parts.push("Reuse the saved recipient; no new email lookup.");
+		} else if (stage === "INITIAL" && email) {
+			parts.push("Reuse the recorded email outcome; retrying lookup requires its separate action.");
+		} else if (settings.enrichmentProvider === "APOLLO") {
+			parts.push(!state.session.features?.apolloEnrichment
+				? "Apollo is server-disabled pending authorization: no Apollo call."
+				: !credentials.APOLLO?.configured
+					? "Apollo key missing: no Apollo call; email will remain unresolved."
+					: "At most 1 ordinary Apollo work-email lookup. Current plans may charge 1 credit for demographics or email, even with no email. Legacy pricing differs; phone, personal-email reveal and waterfall stay off.");
+		} else if (settings.enrichmentProvider === "HUNTER") {
+			parts.push(credentials.HUNTER?.configured
+				? "At most 1 Hunter lookup, billed under your Hunter API plan."
+				: "Hunter key missing: no lookup; email will remain unresolved.");
+		} else {
+			parts.push("Manual recipient entry; no email lookup.");
+		}
+	}
+	if (stage === "DRAFT" || stage === "EMAIL" || (stage === "INITIAL" && research)) {
+		parts.push("Reuse saved public research; no new Tavily call.");
+	} else {
+		parts.push(credentials.TAVILY?.configured
+			? "At most 1 basic Tavily person-research search (up to 5 results), billed under your Tavily API plan."
+			: "Tavily key missing: no new research. Only existing public evidence can support a limited-context draft.");
+	}
+	parts.push(settings.draftProvider === "TEMPLATE"
+		? "Template drafting makes no AI request."
+		: `At most 1 ${settings.draftProvider} request using your saved model and API token budget, without search tools.`);
+	return `${parts.join(" ")} No automatic retries or provider switches; lookup and research can return no usable result.`;
+}
+
+function renderPreparationCosts(person = null, stage = "INITIAL") {
+	return `<p class="notice preparation-costs"><strong>Before approving preparation:</strong> ${escapeHtml(preparationBudget(person, stage))}
+		<a href="https://docs.apollo.io/docs/api-pricing" target="_blank" rel="noopener">Apollo pricing</a> ·
+		<a href="https://docs.tavily.com/documentation/api-credits" target="_blank" rel="noopener">Tavily pricing</a>.
+		Only your selected drafting model receives saved public professional evidence and your factual profile/experience (including resume suggestions you reviewed and saved). Your resume, private drafts and background are not sent to Apollo or Tavily.</p>`;
+}
+
+function preparationStatus(status, kind) {
+	return ({
+		RUNNING: "Request started; outcome not confirmed. An explicit retry may be billed again.",
+		MATCHED: "Matched work email saved. Review the recipient; delivery is not guaranteed.",
+		MANUAL: "Manually supplied recipient; not provider-verified.",
+		NO_MATCH: "No confident person match; no email accepted.",
+		NO_EMAIL: "No email found. Enter a known correct address or explicitly retry lookup.",
+		LOW_CONFIDENCE: "Person match was uncertain; no email accepted.",
+		IDENTITY_MISMATCH: "Identity was not confirmed; no email accepted.",
+		EMPLOYER_MISMATCH: "Current employer was not confirmed; no email accepted.",
+		UNVERIFIED_EMAIL: "Returned address was unverified, unusable or not a confirmed work email.",
+		INTEGRATION_DISABLED: "Apollo is unavailable pending authorization. A saved key cannot enable the server gate.",
+		MISSING_KEY: `${kind === "Email" ? "Selected lookup provider" : "Tavily"} key missing. Configure it in Settings before explicitly retrying.`,
+		FORBIDDEN: "Provider refused access. Check endpoint permission, key and account eligibility.",
+		QUOTA: "Provider quota or rate limit reached. Check your account before explicitly retrying.",
+		FAILED: "Provider request failed. Completed earlier stages were kept.",
+		INVALID_RESPONSE: "Provider returned an unusable response; no unvalidated facts were accepted.",
+		CANCELLED: "Stopped waiting. Started provider work may still be billed.",
+		SOURCED: "Identity-associated public professional sources saved.",
+		EMPTY: "No new public research returned; existing evidence only.",
+		IRRELEVANT: "No new research matched this person and employer; unrelated results were excluded.",
+	}[status] || "Not requested.");
+}
+
+function renderPreparationContext(person, expanded = false) {
+	const email = person.preparation?.email;
+	const research = person.preparation?.research;
+	const sources = research?.sources || [];
+	const editable = person.contactApprovedAt && ["DRAFT_READY", "ERROR"].includes(person.status);
+	const retryEmail = editable && !["MATCHED", "MANUAL"].includes(email?.status) &&
+		state.session.settings.enrichmentProvider !== "NONE";
+	const retryResearch = editable && research?.status !== "SOURCED";
+	return `<details class="preparation-context" ${expanded ? "open" : ""}>
+		<summary>Email &amp; research context${research?.status && research.status !== "SOURCED" ? " · limited context" : ""}</summary>
+		<p><strong>Email${email?.provider ? ` · ${escapeHtml(email.provider)}` : ""}:</strong> ${escapeHtml(preparationStatus(email?.status, "Email"))}
+			${email?.matchConfidence ? ` Match confidence: ${escapeHtml(email.matchConfidence)}.` : ""}
+			${email?.emailStatus ? ` Provider email status: ${escapeHtml(email.emailStatus)}.` : ""}</p>
+		<p><strong>Public research:</strong> ${escapeHtml(preparationStatus(research?.status, "Research"))}
+			${research?.checkedAt ? ` Last attempt: ${escapeHtml(formatDate(research.checkedAt))}.` : ""}
+			${research?.status && research.status !== "SOURCED" ? " Drafts must not pretend new research succeeded." : ""}</p>
+		${sources.length ? `<ul class="research-sources">${sources.map((source) => `<li><a href="${escapeAttr(source.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(source.title || "Public professional source")}</a> <small>${source.origin === "DISCOVERY" ? "Saved discovery evidence" : "Saved Tavily research"}</small><blockquote>${escapeHtml(source.snippet)}</blockquote></li>`).join("")}</ul>` : "<p>No additional sourced context is saved. A draft may use only the evidenced role/company and your genuine experience.</p>"}
+		${person.errorMessage ? `<p class="notice warning">${escapeHtml(person.errorMessage)}</p>` : ""}
+		${editable ? '<p>Regenerate reuses this saved email/research, including recorded failures. No lookup or research is retried automatically. Check dated sources and the exact draft yourself; results are not a guarantee of current facts.</p>' : ""}
+		${retryEmail ? `<p class="small">${escapeHtml(preparationBudget(person, "EMAIL"))}</p><button type="button" class="secondary" data-retry-preparation="EMAIL" data-prospect-id="${person.id}">Retry email &amp; draft</button>` : ""}
+		${retryResearch ? `<p class="small">${escapeHtml(preparationBudget(person, "RESEARCH"))}</p><button type="button" class="secondary" data-retry-preparation="RESEARCH" data-prospect-id="${person.id}">Retry research &amp; draft</button>` : ""}
+	</details>`;
+}
+
+function wirePreparationRetries(root) {
+	root.querySelectorAll("[data-retry-preparation]").forEach((button) =>
+		button.addEventListener("click", () => retryPreparation(button.dataset.prospectId, button.dataset.retryPreparation)));
+}
+
 async function prepare(id) {
-	await run("Preparing encrypted enrichment and draft…", async () => {
-		await api(`/api/prospects/${id}/prepare`, { method: "POST" });
-		await refresh("networking");
-	});
+	const person = networkingPeople().find((item) => item.id === id);
+	if (!person || state.preparationRequest) return;
+	if (!confirm(`Approve ${person.fullName} and prepare outreach?\n\n${preparationBudget(person)}\n\nNo email is sent. Missing email or research is shown explicitly; a limited-context draft may still be prepared.`)) return;
+	await runProspectAction(id, "prepare", undefined, "Preparing email, public research and draft...");
 }
 
 async function reject(id) {
@@ -2123,16 +2240,89 @@ async function reject(id) {
 }
 
 async function regenerate(id) {
-	if (!confirm("Replace the current draft? No email will be sent.")) return;
-	await run("Regenerating recipient-focused draft…", async () => {
-		await api(`/api/prospects/${id}/regenerate`, { method: "POST" });
-		await refresh("networking");
-	});
+	if (state.preparationRequest) return;
+	if (!confirm(`Regenerate using saved email and research?\n\n${preparationBudget(null, "DRAFT")}\n\nThe current draft is replaced only if generation succeeds. No email will be sent.`)) return;
+	await runProspectAction(id, "regenerate", undefined, "Regenerating from saved research...");
+}
+
+async function retryPreparation(id, stage) {
+	const person = networkingPeople().find((item) => item.id === id);
+	if (!person || state.preparationRequest || !["EMAIL", "RESEARCH"].includes(stage)) return;
+	if (!confirm(`Retry ${stage === "EMAIL" ? "email lookup" : "public research"} and update the draft?\n\n${preparationBudget(person, stage)}\n\nOther completed stages are reused. No email will be sent.`)) return;
+	await runProspectAction(id, "preparation/retry", { stage, expectedVersion: person.draftVersion }, "Retrying the selected preparation stage...");
+}
+
+function cancelPreparation() {
+	state.preparationRequest?.controller.abort();
+	state.preparationRequest = null;
+}
+
+function currentProspectAction(request) {
+	return state.preparationRequest === request && state.session?.authenticated &&
+		state.session.user?.id === request.userId && state.tab === request.tab &&
+		(state.networkingJob?.id || null) === request.jobId;
+}
+
+async function runProspectAction(id, action, body, message, method = "POST") {
+	if (state.preparationRequest || !state.session?.authenticated) return;
+	const request = {
+		id, action, userId: state.session.user.id, tab: state.tab,
+		jobId: state.networkingJob?.id || null, controller: new AbortController(),
+	};
+	state.preparationRequest = request;
+	syncDraftControls();
+	render();
+	showToast(message);
+	let failure = "";
+	try {
+		try {
+			const result = await api(`/api/prospects/${id}/${action}`, {
+				method, body, signal: request.controller.signal,
+			});
+			if (!currentProspectAction(request)) return;
+			if (result.userId && result.userId !== request.userId) throw new Error("Account changed. Reload before continuing.");
+			if (result.prospect && (result.prospect.id !== id || result.prospect.userId !== request.userId)) {
+				throw new Error("Contact response did not match this account.");
+			}
+		} catch (error) {
+			if (!currentProspectAction(request)) return;
+			failure = error.message;
+		}
+		if (!currentProspectAction(request)) return;
+		const session = await api("/api/session", { signal: request.controller.signal });
+		if (!currentProspectAction(request)) return;
+		if (session.user?.id !== request.userId) {
+			await refresh(state.tab);
+			return;
+		}
+		state.session = session;
+		if (request.jobId) await loadNetworkingContacts();
+		if (!currentProspectAction(request)) return;
+		if (state.draftReview?.id === id && !failure) {
+			dialog.close();
+			state.draftReview = null;
+		}
+		showToast(failure || "Saved. Review the email, research status and exact draft before sending.", Boolean(failure));
+	} catch (error) {
+		if (currentProspectAction(request)) {
+			showToast(`${failure || "The action may have completed."} Saved state could not be refreshed. Reload before retrying.`, true);
+		}
+	} finally {
+		if (currentProspectAction(request)) {
+			state.preparationRequest = null;
+			render();
+			syncDraftControls();
+		}
+	}
 }
 
 function openDraft(id) {
 	const prospect = networkingPeople().find((item) => item.id === id);
-	if (!prospect) return;
+	if (!prospect || state.preparationRequest) return;
+	state.draftReview = {
+		id, userId: state.session.user.id, jobId: state.networkingJob?.id || null,
+		email: prospect.email, subject: prospect.subject, body: prospect.draftBody, version: prospect.draftVersion,
+	};
 	document.getElementById("draft-id").value = prospect.id;
 	document.getElementById("draft-version").value = prospect.draftVersion;
 	document.getElementById("draft-name").textContent =
@@ -2142,6 +2332,8 @@ function openDraft(id) {
 	document.getElementById("draft-body").value = prospect.draftBody;
 	document.getElementById("draft-audit").textContent =
 		`${prospect.personalizationNotes || "No personalization audit was returned."} Draft v${prospect.draftVersion}${prospect.draftHash ? ` · integrity ${prospect.draftHash.slice(0, 10)}` : ""}.`;
+	document.getElementById("draft-context").innerHTML = renderPreparationContext(prospect, true);
+	wirePreparationRetries(document.getElementById("draft-context"));
 	const attachmentRow = document.getElementById("resume-attachment-row");
 	const attachmentInput = document.getElementById("attach-resume");
 	const attachmentLabel = document.getElementById("resume-attachment-label");
@@ -2153,27 +2345,52 @@ function openDraft(id) {
 		? `Attach ${state.session.resume.fileName}`
 		: "Attach resume";
 	dialog.showModal();
+	syncDraftControls();
 }
 
 async function saveDraft() {
-	const id = value("draft-id");
-	await run("Saving draft…", async () => {
-		await api(`/api/prospects/${id}/draft`, {
-			method: "PATCH",
-			body: {
-				email: value("draft-email"),
-				subject: value("draft-subject"),
-				body: value("draft-body"),
-			},
-		});
-		dialog.close();
-		await refresh("networking");
-	});
+	const review = validDraftReview();
+	if (!review) return;
+	await runProspectAction(review.id, "draft", {
+		email: value("draft-email"), subject: value("draft-subject"), body: value("draft-body"),
+		expectedVersion: review.version,
+	}, "Saving exact draft...", "PATCH");
+}
+
+function validDraftReview() {
+	const review = state.draftReview;
+	return review && review.userId === state.session?.user?.id &&
+		review.jobId === (state.networkingJob?.id || null) &&
+		networkingPeople().some((person) => person.id === review.id && person.status === "DRAFT_READY" && person.draftVersion === review.version)
+		? review : null;
+}
+
+function draftHasUnsavedChanges(review) {
+	return review.email !== value("draft-email") || review.subject !== value("draft-subject") || review.body !== value("draft-body");
+}
+
+function syncDraftControls() {
+	const review = validDraftReview();
+	const busy = Boolean(state.preparationRequest);
+	const dirty = Boolean(review && draftHasUnsavedChanges(review));
+	document.getElementById("send-draft").disabled = !review || busy || dirty || !review.email;
+	document.getElementById("save-draft").disabled = !review || busy;
+	for (const id of ["draft-email", "draft-subject", "draft-body", "attach-resume"]) {
+		document.getElementById(id).disabled = busy || (id === "attach-resume" && !state.session?.resume?.configured);
+	}
+	document.getElementById("draft-save-state").textContent = !review && state.draftReview
+		? "This saved draft changed. Close and reopen review before editing or approving it."
+		: dirty
+		? "Unsaved changes: save and review again before approving this exact email."
+		: review && !review.email ? "No recipient email is saved. Enter a known correct address or retry email lookup; nothing can be sent yet."
+			: "Only this saved recipient, subject and body can be approved for sending.";
 }
 
 async function sendDraft() {
-	const id = value("draft-id");
-	const email = value("draft-email");
+	const review = validDraftReview();
+	if (!review || state.preparationRequest) return;
+	if (draftHasUnsavedChanges(review)) return showToast("Save changes and review the saved draft before sending.", true);
+	const email = review.email;
 	const attachResume = Boolean(
 		document.getElementById("attach-resume")?.checked,
 	);
@@ -2185,18 +2402,9 @@ async function sendDraft() {
 	) {
 		return;
 	}
-	await run("Sending through your Gmail account…", async () => {
-		await api(`/api/prospects/${id}/send`, {
-			method: "POST",
-			body: {
-				expectedVersion: Number(value("draft-version")),
-				idempotencyKey: crypto.randomUUID(),
-				attachResume,
-			},
-		});
-		dialog.close();
-		await refresh("networking");
-	});
+	await runProspectAction(review.id, "send", {
+		expectedVersion: review.version, idempotencyKey: crypto.randomUUID(), attachResume,
+	}, "Sending through your Gmail account...");
 }
 
 async function importLegacyState(event) {
@@ -2387,12 +2595,16 @@ async function logout() {
 }
 
 function clearPrivateDialogs() {
+	cancelPreparation();
+	state.draftReview = null;
 	ownerAdmin.closeDialog();
 	document.querySelectorAll('input[type="password"]').forEach((input) => { input.value = ""; });
 	dialog.close();
 	document.getElementById("draft-form").reset();
 	document.getElementById("draft-name").textContent = "Review draft";
 	document.getElementById("draft-audit").textContent = "";
+	document.getElementById("draft-context").textContent = "";
+	document.getElementById("draft-save-state").textContent = "";
 }
 
 async function refresh(tab = state.tab) {
@@ -2558,6 +2770,10 @@ function navigate(view, options = {}) {
 			? view
 			: "jobs";
 	resetAiConsent();
+	if (allowed !== state.tab) {
+		cancelPreparation();
+		if (dialog.open) dialog.close();
+	}
 	if (state.discoveryRequest && allowed !== state.tab) {
 		cancelDiscovery();
 		state.networkingSearch = {
@@ -2874,7 +3090,9 @@ function networkingTableRow(person, profileReady) {
 	</div>` : "";
 	let nextStep = "";
 	if (["DISCOVERED", "ERROR"].includes(person.status)) {
-		nextStep = `<button class="table-action primary" data-prepare="${person.id}" ${profileReady ? "" : "disabled"}>Approve & prepare</button><button class="table-action danger" data-reject="${person.id}">Reject</button>`;
+		nextStep = person.contactApprovedAt
+			? `<button class="table-action primary" data-regenerate="${person.id}" ${profileReady ? "" : "disabled"}>Retry draft</button>`
+			: `<button class="table-action primary" data-prepare="${person.id}" ${profileReady ? "" : "disabled"}>Approve & prepare</button><button class="table-action danger" data-reject="${person.id}">Reject</button>`;
 	} else if (person.status === "DRAFT_READY") {
 		nextStep = `<button class="table-action primary" data-review="${person.id}">Review draft v${person.draftVersion}</button><button class="table-action" data-regenerate="${person.id}">Regenerate</button>`;
 	} else if (person.status === "REPLIED") {
@@ -2890,7 +3108,7 @@ function networkingTableRow(person, profileReady) {
 		<td>${escapeHtml(person.company || "Company not listed")}</td>
 		<td><span class="status status-${person.status.toLowerCase()}">${formatStatus(person.status)}</span></td>
 		<td>${priority || (person.matchQuality === "BROADER_COMPANY" ? '<span class="chip chip-warning" title="Matches the company and a broader professional signal; review role relevance.">Broader</span>' : '<span class="chip chip-strong">Strong</span>')}</td>
-		<td><div class="table-actions">${nextStep}</div>${person.errorMessage ? `<small class="row-error">${escapeHtml(person.errorMessage)}</small>` : ""}</td>
+		<td><div class="table-actions">${nextStep}</div>${person.contactApprovedAt ? renderPreparationContext(person) : ""}${person.errorMessage ? `<small class="row-error">${escapeHtml(person.errorMessage)}</small>` : ""}</td>
 		<td>${profileUrl ? `<a class="row-action-button" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" aria-label="${profileLabel} for ${escapeAttr(person.fullName)}">${icon("external")}</a>` : ""}</td>
 	</tr>`;
 }
@@ -2974,16 +3192,16 @@ function linkedJobChips(person) {
 		.join("");
 }
 
-function secretRow(provider, label, status) {
+function secretRow(provider, label, status, disabled = false) {
 	return `<div class="secret-row" data-tour="credential-${provider}">
 		<div>
 			<strong>${label}</strong><br />
 			<small id="secret-status-${provider}" class="secret-save-status" role="status">${status.configured ? `Saved ${escapeHtml(status.hint)} · not provider-validated` : "Not saved"}</small>
 		</div>
 		<label class="sr-only" for="secret-${provider}">${escapeHtml(label)} API key</label>
-		<input id="secret-${provider}" type="password" autocomplete="off" placeholder="${status.configured ? "Leave blank to keep current key" : "Enter API key"}" />
+		<input id="secret-${provider}" type="password" autocomplete="off" ${disabled ? "disabled" : ""} placeholder="${disabled ? "Authorization pending" : status.configured ? "Leave blank to keep current key" : "Enter API key"}" />
 		<div class="actions">
-			<button data-save-secret="${provider}">Save</button>
+			<button data-save-secret="${provider}" ${disabled ? "disabled" : ""}>Save</button>
 			<button class="danger" data-delete-secret="${provider}" ${status.configured ? "" : "disabled"}>Delete</button>
 		</div>
 	</div>`;

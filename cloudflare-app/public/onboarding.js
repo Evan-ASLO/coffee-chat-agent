@@ -24,8 +24,8 @@
 		},
 		{
 			id: "tavily", chapter: 0, view: "settings", target: "credential-TAVILY",
-			title: "Tavily: discover public profiles",
-			body: (session) => `<p>A Tavily key is needed only when you submit <strong>Search public profiles</strong>. That Search and its ordinary Retry use Tavily only, even with few or no results. Jobs and website navigation do not need it.</p>
+			title: "Tavily: public profiles and approved research",
+			body: (session) => `<p>A Tavily key powers <strong>Search public profiles</strong> and one targeted public-research search after you separately approve a person for preparation. Search and its ordinary Retry use Tavily only, even with few or no results. Jobs and navigation never research a person.</p>
 				<ol><li>Sign in or create your own Tavily account.</li><li>Copy the API key from its dashboard.</li><li>Enter it in the highlighted password field and choose <strong>Save</strong>.</li></ol>
 				${keyLinks("TAVILY")}${credentialSummary(session, "TAVILY")}
 				<p>Discovery uses publicly indexed profiles. It does not scrape LinkedIn, sign into LinkedIn, or send LinkedIn messages. Check your account's current pricing and quotas.</p>`,
@@ -36,8 +36,9 @@
 			preference: "enrichment-provider", action: "preferences", actionLabel: "Choose email enrichment",
 			body: (session) => `<p>Hunter can find a work email after you explicitly approve a person for preparation. Add your own Hunter key only if you want that enrichment.</p>
 				${keyLinks("HUNTER")}${credentialSummary(session, "HUNTER")}
+				<p>Apollo is a separate optional work-email lookup, not people search. It remains server-disabled unless Apollo authorizes this product and the operator enables the approved authentication model. Per-user keys alone are not authorization; approval may require partner OAuth. Do not enter Apollo keys while authorization is pending. <a href="https://www.apollo.io/terms/api" target="_blank" rel="noopener">Official API terms</a>.</p>
 				<p>Prefer no Hunter requests? Open <strong>Preferences</strong>, set <strong>Email enrichment → Manual email entry</strong>, and save. Enter the recipient email in the actual draft-review dialog before sending.</p>
-				<p>Current choice: <strong>${session.settings.enrichmentProvider === "NONE" ? "Manual email entry" : "Hunter"}</strong>. Touring or skipping this step does not change it.</p>`,
+				<p>Current choice: <strong>${escapeHtml(session.settings.enrichmentProvider === "NONE" ? "Manual email entry" : session.settings.enrichmentProvider)}</strong>. Touring, skipping or saving a key never changes it or starts a call.</p>`,
 		},
 		{
 			id: "drafting", chapter: 0, view: "settings", target: "preferences",
@@ -119,13 +120,15 @@
 			id: "networking-review", chapter: 1, view: "networking", target: "networking-review",
 			title: "First approval: the person",
 			body: () => `<p>Review the person's public profile, relevance, and match quality. <strong>Broader company</strong> matches may not fit the exact role; inspect them carefully rather than treating them as verified contacts.</p>
-				<p><strong>Approve &amp; prepare</strong> may call Hunter and your selected drafting provider. It does not send. Missing email is shown explicitly; with Manual email entry, supply it in draft review.</p>
+				<p><strong>Approve &amp; prepare</strong> shows costs before at most one selected email lookup, one targeted Tavily research search, and one saved drafting-model request. An authorized Apollo lookup may cost 1 credit for demographics or email even if no email is found; legacy plans differ. No phone, personal-email reveal, waterfall or automatic provider switching is enabled.</p>
+				<p>Only identity-associated public professional snippets and your factual saved experience feed the draft. Review sources in <strong>Email &amp; research context</strong>. Missing, unverified or wrong-person email is never guessed; failed/empty research remains labelled as limited context. Completed stages are saved independently.</p>
 				<p>The workflow rail remains useful when your network is empty. This tour never approves or prepares a person, and never uses a real contact as a scripted exercise.</p>`,
 		},
 		{
 			id: "networking-send", chapter: 1, view: "networking", target: "networking-workflow",
 			title: "Second approval: the exact email",
-			body: () => `<p>Open <strong>Review draft</strong> to edit the recipient, subject, and body. Save changes before sending. Regenerate can call your drafting provider and may incur costs.</p>
+			body: () => `<p>Open <strong>Review draft</strong> to inspect sources and edit the recipient, subject, and body. Save changes before sending; unsaved or stale versions cannot be approved. Regenerate uses one selected drafting-model request and reuses saved email/research, including recorded failures. It never repeats lookup or research.</p>
+				<p>Use the separately cost-disclosed <strong>Retry email &amp; draft</strong> or <strong>Retry research &amp; draft</strong> for a failed stage. Successful earlier stages are kept. Research is public evidence, not a guarantee that a fact or email remains current.</p>
 				<p>A resume attachment is off until you explicitly choose it for that email. <strong>Approve and send</strong> and the final confirmation are your consent to send the exact draft through connected Gmail.</p>
 				<p>Sent and Replied filters show recorded states, not completed coffee chats. Connected Sheets receives CRM updates; reply syncing follows your preference. Uncertain sends stay locked until you check Gmail Sent.</p>`,
 		},

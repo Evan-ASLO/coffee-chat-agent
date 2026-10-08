@@ -217,7 +217,7 @@ function prospectRow(prospect: Prospect): Array<string | number> {
 		prospect.location,
 		prospect.linkedinUrl,
 		prospect.email,
-		prospect.emailConfidence,
+		prospect.preparation?.email?.provider === "APOLLO" ? "" : prospect.emailConfidence,
 		prospect.whyRelevant,
 		prospect.subject,
 		prospect.draftBody,
