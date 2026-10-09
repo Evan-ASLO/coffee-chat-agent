@@ -1393,10 +1393,13 @@ function activeCatalogResult(
 
 function reliablePostedAt(value: string | null): string | null {
 	if (!value) return null;
-	const timestamp = Date.parse(value);
+	const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,19}))?Z$/.exec(value);
+	if (!match) return null;
+	const normalized = `${match[1]}.${(match[2] || "").slice(0, 3).padEnd(3, "0")}Z`;
+	const timestamp = Date.parse(normalized);
 	if (!Number.isFinite(timestamp) || timestamp > Date.now()) return null;
 	const canonical = new Date(timestamp).toISOString();
-	return value === canonical || value === canonical.replace(".000Z", "Z") ? value : null;
+	return normalized === canonical ? canonical : null;
 }
 
 function mapJob(row: JobRow): JobRecord {
@@ -1731,18 +1734,25 @@ function buildJobFilter(
 		}
 	}
 	if (query.posted) {
-		// Round-trip UTC timestamps so SQLite's permissive date parsing cannot make invalid dates recent.
+		// Match JS millisecond precision before SQLite can round longer fractions or parse invalid calendars.
+		const normalized = `(CASE
+			WHEN length(j.posted_at)=20 AND substr(j.posted_at,20,1)='Z'
+				THEN substr(j.posted_at,1,19)||'.000Z'
+			WHEN length(j.posted_at) BETWEEN 22 AND 40 AND substr(j.posted_at,20,1)='.'
+				AND substr(j.posted_at,-1)='Z'
+				AND substr(j.posted_at,21,length(j.posted_at)-21) NOT GLOB '*[^0-9]*'
+				THEN substr(j.posted_at,1,19)||'.'||substr(substr(j.posted_at,21,length(j.posted_at)-21)||'000',1,3)||'Z'
+			ELSE NULL END)`;
 		const reliable = `COALESCE((
-			(strftime('%Y-%m-%dT%H:%M:%SZ', j.posted_at) = j.posted_at OR
-			 strftime('%Y-%m-%dT%H:%M:%fZ', j.posted_at) = j.posted_at)
-			AND substr(j.posted_at, 12, 2) BETWEEN '00' AND '23'
-			AND julianday(j.posted_at) <= julianday(?)
+			strftime('%Y-%m-%dT%H:%M:%fZ', ${normalized}) = ${normalized}
+			AND substr(${normalized}, 12, 2) BETWEEN '00' AND '23'
+			AND julianday(${normalized}) <= julianday(?)
 		), 0)`;
 		where.push(query.posted === "UNAVAILABLE" ? `NOT (${reliable})` : reliable);
 		bindings.push(new Date(now).toISOString());
 		if (query.posted !== "UNAVAILABLE") {
 			const hours = { "24h": 24, "7d": 7 * 24, "30d": 30 * 24 }[query.posted];
-			where.push("julianday(j.posted_at) >= julianday(?)");
+			where.push(`julianday(${normalized}) >= julianday(?)`);
 			bindings.push(new Date(now - hours * 60 * 60 * 1000).toISOString());
 		}
 	}

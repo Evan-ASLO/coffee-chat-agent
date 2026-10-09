@@ -116,4 +116,65 @@ describe("source posting dates over the complete active catalog", () => {
 		expect(safeAppReturnPath("https://example.com", "/?posted=7d&contactJob=legacy%3Arole&oauth_token=secret#people"))
 			.toBe("/?posted=7d&contactJob=legacy%3Arole#people");
 	});
+	it("keeps seconds, milliseconds and microseconds equivalent at every inclusive cutoff before and after source normalization", async () => {
+		const company = "Precision equivalents";
+		const equivalent: Array<[string, string | null]> = [];
+		for (const days of [1, 7, 30]) {
+			const value = new Date(NOW - days * 24 * HOUR).toISOString();
+			equivalent.push([`precision-${days}-seconds`, value.replace(".000Z", "Z")],
+				[`precision-${days}-milliseconds`, value], [`precision-${days}-microseconds`, value.replace(".000Z", ".000000Z")]);
+		}
+		equivalent.push(["precision-missing", null], ["precision-impossible", "2026-02-30T12:00:00.000000Z"],
+			["precision-future", new Date(NOW + 1).toISOString().replace(".001Z", ".001000Z")],
+			["precision-invalid-fraction", "2026-10-09T12:00:00.abc000Z"]);
+		for (const [label, posted] of equivalent) await insertPrecisionJob(label, company, posted);
+		const before = new Map<string, string[]>();
+		for (const [range, count] of [["24h", 3], ["7d", 6], ["30d", 9], ["UNAVAILABLE", 4]] as const) {
+			const result = await list(`company=${encodeURIComponent(company)}&posted=${range}&pageSize=50`);
+			expect(result.pagination.total).toBe(count);
+			before.set(range, result.jobs.map((job) => job.id).sort());
+			expect(result.jobs.every((job) => range === "UNAVAILABLE" ? job.postedAt === null :
+				/\.000Z$/.test(job.postedAt || ""))).toBe(true);
+		}
+		for (const [label, posted] of equivalent.slice(0, 9)) {
+			await env.DB.prepare("UPDATE jobs SET posted_at=? WHERE id=?").bind(new Date(posted!).toISOString(), id(label)).run();
+		}
+		for (const [range, ids] of before) {
+			const result = await list(`company=${encodeURIComponent(company)}&posted=${range}&pageSize=50`);
+			expect(result.pagination.total).toBe(ids.length);
+			expect(result.jobs.map((job) => job.id).sort()).toEqual(ids);
+		}
+	});
+	it("truncates longer fractions consistently with JS instead of letting SQLite round over a millisecond boundary", async () => {
+		const company = "Precision boundary";
+		vi.mocked(Date.now).mockReturnValue(NOW + 761);
+		for (const days of [1, 7, 30]) {
+			const boundary = new Date(NOW + 761 - days * 24 * HOUR).toISOString();
+			for (const [suffix, posted] of [
+				["milliseconds", boundary], ["microseconds", boundary.replace(".761Z", ".761000Z")],
+				["sub-millisecond", boundary.replace(".761Z", ".761999Z")],
+				["before", boundary.replace(".761Z", ".760999Z")],
+			]) await insertPrecisionJob(`fraction-${days}-${suffix}`, company, posted);
+		}
+		await insertPrecisionJob("fraction-future", company, new Date(NOW + 762).toISOString().replace(".762Z", ".762000Z"));
+		for (const [range, days, total] of [["24h", 1, 3], ["7d", 7, 7], ["30d", 30, 11]] as const) {
+			const result = await list(`company=${encodeURIComponent(company)}&posted=${range}&pageSize=50`);
+			expect(result.pagination.total).toBe(total);
+			for (const suffix of ["milliseconds", "microseconds", "sub-millisecond"]) {
+				expect(result.jobs.map((job) => job.id)).toContain(id(`fraction-${days}-${suffix}`));
+			}
+			expect(result.jobs.map((job) => job.id)).not.toContain(id(`fraction-${days}-before`));
+			expect(result.jobs.map((job) => job.id)).not.toContain(id("fraction-future"));
+		}
+		expect((await list(`company=${encodeURIComponent(company)}&posted=UNAVAILABLE`)).jobs.map((job) => job.id))
+			.toEqual([id("fraction-future")]);
+	});
 });
+
+async function insertPrecisionJob(label: string, company: string, posted: string | null) {
+	const now = new Date(NOW).toISOString();
+	await env.DB.prepare(`INSERT INTO jobs(id,source,company,company_normalized,title,title_normalized,url,canonical_url,
+		posted_at,first_seen_at,last_seen_at,latest_import_run_id,created_at,updated_at,is_active)
+		VALUES(?,'fixture',?,?,'Intern','intern','https://example.test/job','https://example.test/job',?,?,?,'date-fixture',?,?,1)`)
+		.bind(id(label), company, company.toLowerCase(), posted, now, now, now, now).run();
+}
