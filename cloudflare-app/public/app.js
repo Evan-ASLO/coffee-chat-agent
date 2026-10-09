@@ -287,8 +287,7 @@ function renderBetaLanding() {
 	app.innerHTML = `
 		<section class="beta-landing">
 			<div class="beta-landing-brand">
-				<span class="brand-mark" aria-hidden="true">${icon("cup")}</span>
-				<strong>Internship & Coffee Chat</strong>
+				<div class="brand"><span class="brand-mark" aria-hidden="true">${icon("cup")}</span><strong>Internship & Coffee Chat</strong></div>
 				<span>Private Toronto beta</span>
 				<button type="button" class="secondary demo-button" data-open-demo>${icon("play")} Demo</button>
 				${themeChoices()}
