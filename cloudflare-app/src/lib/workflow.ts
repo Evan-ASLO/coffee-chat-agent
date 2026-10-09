@@ -13,6 +13,7 @@ import {
 import {
 	createDraft,
 	discoverWithTavily,
+	discoveryPersonKey,
 	enrichWithHunter,
 	qualifiedDiscoveryCount,
 	selectDiscoveryPeople,
@@ -45,6 +46,7 @@ import {
 	listReplyCandidates,
 	patchDraft,
 	prospectIdsForDiscoveryUrls,
+	savedProspectsForDiscoveryUrls,
 	setSheetRow,
 	setSpreadsheetId,
 	startIdempotentOperation,
@@ -148,6 +150,14 @@ export async function discoverProspects(
 	let providerResult: DiscoveryProviderResult | null = null;
 	let aiRejectionCounts: DiscoveryRejectionCounts | undefined;
 	let people: DiscoveredPerson[] = [];
+	let reusedPeople: DiscoveredPerson[] = [];
+	const findSavedKeys = async (candidates: DiscoveredPerson[]) => {
+		const saved = await savedProspectsForDiscoveryUrls(env, userId, candidates);
+		return new Set(candidates.filter((candidate) => saved.some((record) =>
+			(candidate.linkedinUrl && record.linkedinUrl === candidate.linkedinUrl) ||
+			record.sourceUrl === candidate.sourceUrl,
+		)).map((candidate) => discoveryPersonKey(candidate, criteria)));
+	};
 	let fallbackProvider: "NONE" | PeopleSearchFallbackProvider = "NONE";
 	let fallbackAttempted = false;
 	let fallbackStatus: PeopleSearchFallbackStatus = "NOT_REQUESTED";
@@ -163,8 +173,9 @@ export async function discoverProspects(
 		try {
 			providerResult = await discoverWithTavily(tavilyKey, {
 				...criteria, count: requestedCount,
-			}, signal);
+			}, signal, findSavedKeys);
 			people = providerResult.people;
+			reusedPeople = providerResult.reusedPeople || [];
 		} catch {
 			signal?.throwIfAborted();
 			throw new Error("Tavily discovery failed. No AI search was requested.");
@@ -198,6 +209,7 @@ export async function discoverProspects(
 						count: requestedCount,
 						anthropicSearchMaxUses,
 						signal,
+						findSavedKeys,
 					});
 					fallbackStatus = grounded.status;
 					fallbackReason = grounded.reason;
@@ -205,6 +217,7 @@ export async function discoverProspects(
 					fallbackReturned = grounded.returned;
 					aiRejectionCounts = grounded.rejectionCounts;
 					people = grounded.people;
+					reusedPeople = grounded.reusedPeople || [];
 				} catch (error) {
 					if (error instanceof PeopleSearchFallbackError) {
 						fallbackStatus = error.category;
@@ -239,7 +252,7 @@ export async function discoverProspects(
 			...(await prospectIdsForDiscoveryUrls(
 				env,
 				userId,
-				discovered,
+				[...discovered, ...reusedPeople],
 			)),
 		]);
 		await linkProspectsToJob(env, userId, jobId, [...linkedProspectIds]);

@@ -87,6 +87,18 @@ describe("recall-first identifiable professional candidates", () => {
 			content: "Jamie Example is an analyst.",
 		}, criteria)).toBeNull();
 	});
+	it.each(["Accountant", "Attorney", "Physiotherapist", "Librarian", "Chef", "Commercial Pilot"])(
+		"retains an evidenced %s biography without adding the profession to a role-word allowlist", (title) => {
+			const person = professionalBioPerson({
+				title: `Jamie Example | ${title} at Example Firm`,
+				url: "https://professionals.example/people/jamie-example",
+				content: `Jamie Example is a ${title} at Example Firm in Toronto.`,
+			}, { ...criteria, roles: [title], companies: ["Example Firm"] });
+			expect(person).toMatchObject({
+				fullName: "Jamie Example", title, company: "Example Firm", matchQuality: "BROADER_COMPANY",
+			});
+		},
+	);
 	it("rejects non-person and unsafe pages even when a plausible name is supplied", () => {
 		for (const url of [
 			"javascript:alert(1)", "https://user:secret@consultancy.com/bio/jane",
@@ -337,7 +349,7 @@ describe("discovery query semantics", () => {
 			'("BMO" OR "BMO Financial Group" OR "Bank of Montreal")',
 		);
 		expect(query).toContain(
-			'("analyst" OR "associate" OR "recruiter" OR "biography" OR "profile")',
+			'("biography" OR "professional profile" OR "professional")',
 		);
 		expect(query.length).toBeLessThanOrEqual(1800);
 		expect(professionalBioDomains(criteria)).toEqual([
@@ -462,6 +474,68 @@ describe("discovery query semantics", () => {
 		expect(query).not.toContain("\\");
 		expect((query.match(/Role/g) || [])).toHaveLength(12);
 		expect(query.length).toBeLessThanOrEqual(1800);
+	});
+});
+
+describe("shared discovery recall across targets and saved contacts", () => {
+	const base: DiscoveryCriteria = {
+		roles: [], industries: [], companies: [], locations: ["Toronto"],
+		keywords: [], seniority: [], objective: "", count: 1,
+	};
+	it("does not drop an industry-only target just because an employer is supplied", () => {
+		const criteria = { ...base, industries: ["consulting"], companies: ["Example Firm"] };
+		expect(buildDiscoveryQuery(criteria)).toContain('"consulting"');
+		expect(buildProfessionalBioQuery(criteria)).toContain('"consulting"');
+	});
+	for (const field of ["roles", "industries", "keywords"] as const) {
+		it.each([
+			["consulting", "Consultant"], ["software engineering", "Software Engineer"],
+			["marketing", "Marketing Specialist"], ["accounting", "Accountant"],
+			["human resources", "HR Specialist"], ["data science", "Data Scientist"],
+			["law", "Lawyer"], ["design", "Designer"],
+		])(`retains a person for %s entered as ${field}, without a profession-specific source rule`, async (term, title) => {
+			const criteria = { ...base, [field]: [term] };
+			const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ results: [{
+				title: `Jamie Example - ${title} - Example Firm | LinkedIn`,
+				url: "https://www.linkedin.com/in/jamie-example",
+				content: `Jamie Example is a ${title} at Example Firm in Toronto, doing professional ${term} work.`,
+			}] }));
+			const result = await discoverWithTavily("fake", criteria);
+			expect(result.people[0]?.fullName).toBe("Jamie Example");
+			expect(spy).toHaveBeenCalledTimes(1);
+			expect(buildDiscoveryQuery(criteria)).toContain(`"${term}"`);
+			expect(buildProfessionalBioQuery(criteria)).toContain(`"${term}"`);
+		});
+	}
+	const candidates = ["Ada Saved", "Ben Saved", "Casey New", "Dana New"].map((name) => ({
+		title: `${name} - Consultant - Example Firm | LinkedIn`,
+		url: `https://www.linkedin.com/in/${name.toLowerCase().replace(" ", "-")}`,
+		content: `${name} is a Consultant doing consulting work at Example Firm in Toronto.`,
+	}));
+	const known = new Set(candidates.slice(0, 2).map((candidate) => candidate.url));
+	it("selects new lower-ranked people before saved top results consume the requested count", async () => {
+		const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ results: candidates }));
+		const result = await discoverWithTavily("fake", { ...base, roles: ["consulting"], count: 2 }, undefined, async () => known);
+		expect(result.people.map((person) => person.fullName)).toEqual(["Casey New", "Dana New"]);
+		expect(result.reusedPeople?.map((person) => person.fullName)).toEqual(["Ada Saved", "Ben Saved"]);
+		expect(spy).toHaveBeenCalledTimes(1);
+	});
+	it("uses the existing second pass when the first pass only finds saved people", async () => {
+		const spy = vi.spyOn(globalThis, "fetch")
+			.mockResolvedValueOnce(Response.json({ results: candidates.slice(0, 2) }))
+			.mockResolvedValueOnce(Response.json({ results: candidates.slice(2) }));
+		const result = await discoverWithTavily("fake", { ...base, roles: ["consulting"], count: 2 }, undefined, async () => known);
+		expect(result.people.map((person) => person.fullName)).toEqual(["Casey New", "Dana New"]);
+		expect(result.fallbackAccepted).toBe(2);
+		expect(spy).toHaveBeenCalledTimes(2);
+	});
+	it("retains an honest already-saved outcome if neither pass contains new people", async () => {
+		const spy = vi.spyOn(globalThis, "fetch")
+			.mockResolvedValueOnce(Response.json({ results: candidates.slice(0, 2) }))
+			.mockResolvedValueOnce(Response.json({ results: [] }));
+		const result = await discoverWithTavily("fake", { ...base, roles: ["consulting"], count: 2 }, undefined, async () => known);
+		expect(result.people.map((person) => person.fullName)).toEqual(["Ada Saved", "Ben Saved"]);
+		expect(spy).toHaveBeenCalledTimes(2);
 	});
 });
 

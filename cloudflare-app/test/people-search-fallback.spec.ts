@@ -72,6 +72,20 @@ const providerCases: Array<{
 	},
 ];
 
+describe("saved-contact-aware explicit AI selection", () => {
+	it.each(providerCases)("keeps a new cited person instead of the saved highest-ranked $provider result", async ({ provider, model, endpoint }) => {
+		const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(groundedResponse(provider, { people, citations }));
+		const result = await discoverWithPeopleSearchFallback({
+			provider, model, apiKey: "fake-key", criteria, count: 1,
+			findSavedKeys: async () => new Set([people[1]!.sourceUrl]),
+		});
+		expect(result.people[0]?.fullName).toBe(people[0]!.fullName);
+		expect(result.reusedPeople?.[0]?.fullName).toBe(people[1]!.fullName);
+		expect(spy).toHaveBeenCalledTimes(1);
+		expect(spy.mock.calls[0]?.[0]).toBe(endpoint);
+	});
+});
+
 describe("request-scoped Anthropic web-search authorization", () => {
 	it.each([undefined, 1, 3, 2, 99, -1])("hard-bounds budget %s with a legacy default of one", async (budget) => {
 		const fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue(

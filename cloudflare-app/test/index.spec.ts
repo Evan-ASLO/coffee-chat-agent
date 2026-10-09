@@ -34,7 +34,7 @@ import {
 } from "../src/lib/resume";
 import { saveCredential } from "../src/lib/credentials";
 import { createSession, upsertUser } from "../src/lib/db";
-import { insertProspects } from "../src/lib/store";
+import { insertProspects, savedProspectsForDiscoveryUrls } from "../src/lib/store";
 import { acceptVerifiedGoogleLogin } from "../src/lib/auth";
 import {
 	hmacSha256Hex,
@@ -2586,6 +2586,96 @@ describe("bounded ranked job contacts", () => {
 		roles: ["Software Engineer"], industries: [], companies: [company],
 		locations: [], keywords: [], seniority: [], objective: "", count: 2,
 	};
+	it("looks up more than twenty matching sources without dropping later saved contacts or leaking another user", async () => {
+		const auth = await authenticatedTestUser("saved-source-batches");
+		const candidates = Array.from({ length: 22 }, (_, index) => {
+			const sourceUrl = `https://www.linkedin.com/in/batch-${auth.user.id}-${index}`;
+			return { ...testProspect("Batch Example", company), matchQuality: "STRONG" as const, linkedinUrl: sourceUrl, sourceUrl };
+		});
+		await insertProspects(bindings(), auth.user.id, candidates);
+		const owned = await savedProspectsForDiscoveryUrls(bindings(), auth.user.id, candidates);
+		expect(owned).toHaveLength(22);
+		expect(owned.some((record) => record.sourceUrl === candidates[21]!.sourceUrl)).toBe(true);
+		expect(await savedProspectsForDiscoveryUrls(bindings(), other.user.id, candidates)).toEqual([]);
+	});
+	it.each([
+		["general", "TAVILY"], ["job", "TAVILY"],
+		["general", "AI_SUPPLEMENT"], ["job", "AI_SUPPLEMENT"],
+	])("does not let saved top results hide new %s contacts in one %s action", async (surface, mode) => {
+		const auth = await authenticatedTestUser(`new-beyond-saved-${surface}-${mode}`);
+		await saveCredential(bindings(), {
+			userId: auth.user.id, provider: mode === "TAVILY" ? "TAVILY" : "ANTHROPIC", value: "fake-new-beyond-saved",
+		});
+		if (mode === "AI_SUPPLEMENT") {
+			await env.DB.prepare("UPDATE user_settings SET people_search_fallback_provider='ANTHROPIC' WHERE user_id=?")
+				.bind(auth.user.id).run();
+		}
+		const candidates = ["Ada Saved", "Ben Saved", "Casey New", "Dana New"].map((fullName) => ({
+			fullName, title: "Junior Software Engineer",
+			sourceUrl: `https://www.linkedin.com/in/${auth.user.id}-${fullName.toLowerCase().replace(" ", "-")}`,
+			evidence: `${fullName} is a Junior Software Engineer at ${company}.`,
+		}));
+		await insertProspects(bindings(), auth.user.id, candidates.slice(0, 2).map((candidate) => ({
+			...testProspect(candidate.fullName, company), matchQuality: "STRONG" as const,
+			title: candidate.title, linkedinUrl: candidate.sourceUrl,
+			sourceUrl: candidate.sourceUrl, sourceSnippet: candidate.evidence,
+		})));
+		const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url) => {
+			expect(url).toBe(mode === "TAVILY" ? "https://api.tavily.com/search" : "https://api.anthropic.com/v1/messages");
+			if (mode === "AI_SUPPLEMENT") {
+				return Response.json({ content: [{
+					type: "text", text: JSON.stringify({ people: candidates.map((candidate) => ({
+						...candidate, company, location: "Toronto",
+					})) }),
+					citations: candidates.map((candidate) => ({ type: "web_search_result_location", url: candidate.sourceUrl })),
+				}] });
+			}
+			return Response.json({ results: candidates.map((candidate) => ({
+				title: `${candidate.fullName} - ${candidate.title} - ${company} | LinkedIn`,
+				url: candidate.sourceUrl, content: candidate.evidence,
+			})) });
+		});
+		try {
+			const response = await authenticatedWorkerFetch(auth, "/api/discovery", {
+				method: "POST", body: { ...(surface === "job" ? discovery : independentCriteria), count: 2, mode },
+			}, bindings());
+			expect(response.status).toBe(200);
+			const payload = await response.json() as { summary: Record<string, unknown>; prospects: Prospect[] };
+			expect(payload.summary).toMatchObject({
+				inserted: 2, duplicates: 0, fallbackStatus: mode === "TAVILY" ? "NOT_REQUESTED" : "SUCCESS",
+			});
+			expect(payload.prospects.map((person) => person.fullName)).toEqual(["Casey New", "Dana New"]);
+			expect(spy).toHaveBeenCalledTimes(1);
+			if (surface === "job") {
+				const linked = await env.DB.prepare("SELECT COUNT(*) AS count FROM job_prospects WHERE user_id=? AND job_id=?")
+					.bind(auth.user.id, jobIds[0]).first<{ count: number }>();
+				expect(linked?.count).toBe(4);
+			}
+		} finally { spy.mockRestore(); }
+	});
+	it("never treats another user's saved source as this user's duplicate", async () => {
+		const auth = await authenticatedTestUser("saved-source-isolation");
+		await saveCredential(bindings(), { userId: auth.user.id, provider: "TAVILY", value: "fake-isolated-discovery" });
+		const sourceUrl = `https://www.linkedin.com/in/isolated-${auth.user.id}`;
+		await insertProspects(bindings(), other.user.id, [{
+			...testProspect("Alex Isolated", company), matchQuality: "STRONG",
+			title: "Junior Software Engineer", linkedinUrl: sourceUrl, sourceUrl,
+		}]);
+		const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ results: [{
+			title: `Alex Isolated - Junior Software Engineer - ${company} | LinkedIn`, url: sourceUrl,
+			content: `Alex Isolated is a Junior Software Engineer at ${company}.`,
+		}] }));
+		try {
+			const response = await authenticatedWorkerFetch(auth, "/api/discovery", {
+				method: "POST", body: { ...independentCriteria, count: 1 },
+			}, bindings());
+			const payload = await response.json() as { summary: Record<string, unknown>; prospects: Prospect[] };
+			expect(response.status).toBe(200);
+			expect(payload.summary).toMatchObject({ inserted: 1, duplicates: 0 });
+			expect(payload.prospects[0]?.userId).toBe(auth.user.id);
+			expect(spy).toHaveBeenCalledTimes(1);
+		} finally { spy.mockRestore(); }
+	});
 	for (const surface of ["general", "job"] as const) {
 		for (const mode of [undefined, "TAVILY"] as const) {
 			it.each(["full", "partial", "zero", "unconfirmed", "duplicates", "error", "bio-error", "missing-key"])(

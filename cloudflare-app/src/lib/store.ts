@@ -271,6 +271,21 @@ export async function prospectIdsForDiscoveryUrls(
 	userId: string,
 	prospects: Array<{ linkedinUrl: string; sourceUrl: string }>,
 ): Promise<string[]> {
+	return (await savedProspectsForDiscoveryUrls(env, userId, prospects)).map((row) => row.id);
+}
+
+export async function savedProspectsForDiscoveryUrls(
+	env: AppBindings,
+	userId: string,
+	prospects: Array<{ linkedinUrl: string; sourceUrl: string }>,
+): Promise<Array<{ id: string; linkedinUrl: string; sourceUrl: string }>> {
+	if (prospects.length > 20) {
+		const rows: Array<{ id: string; linkedinUrl: string; sourceUrl: string }> = [];
+		for (let offset = 0; offset < prospects.length; offset += 20) {
+			rows.push(...await savedProspectsForDiscoveryUrls(env, userId, prospects.slice(offset, offset + 20)));
+		}
+		return [...new Map(rows.map((row) => [row.id, row])).values()];
+	}
 	const linkedinUrls = Array.from(
 		new Set(
 			prospects.map((item) => item.linkedinUrl.trim()).filter(Boolean),
@@ -297,12 +312,12 @@ export async function prospectIdsForDiscoveryUrls(
 	}
 	if (!clauses.length) return [];
 	const result = await env.DB.prepare(
-		`SELECT id FROM prospects
+		`SELECT id, linkedin_url, source_url FROM prospects
 		  WHERE user_id = ? AND (${clauses.join(" OR ")})`,
 	)
 		.bind(...bindings)
-		.all<{ id: string }>();
-	return result.results.map((row) => row.id);
+		.all<{ id: string; linkedin_url: string; source_url: string }>();
+	return result.results.map((row) => ({ id: row.id, linkedinUrl: row.linkedin_url, sourceUrl: row.source_url }));
 }
 
 export async function insertProspects(

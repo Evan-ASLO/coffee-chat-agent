@@ -10,7 +10,7 @@ import {
 	professionalBioDomains,
 	professionalBioPerson,
 	discoveryPersonKey,
-	selectDiscoveryPeople,
+	selectDiscoveryPeoplePrioritizingNew,
 	type DiscoveredPerson,
 	type DiscoveryCriteria,
 	type DiscoveryRejectionCounts,
@@ -124,6 +124,7 @@ export interface PeopleSearchFallbackResult {
 	returned: number;
 	accepted: number;
 	people: DiscoveredPerson[];
+	reusedPeople?: DiscoveredPerson[];
 }
 
 export class PeopleSearchFallbackError extends Error {
@@ -149,6 +150,7 @@ export async function discoverWithPeopleSearchFallback(input: {
 	count: number;
 	anthropicSearchMaxUses?: number;
 	signal?: AbortSignal;
+	findSavedKeys?: (people: DiscoveredPerson[]) => Promise<ReadonlySet<string>>;
 }): Promise<PeopleSearchFallbackResult> {
 	try {
 		const provider = input.provider;
@@ -209,9 +211,14 @@ export async function discoverWithPeopleSearchFallback(input: {
 				discoveryProvider: groundedDiscoveryProvider(provider),
 			});
 		}
-		const selected = selectDiscoveryPeople([...people.values()], {
+		const candidates = [...people.values()];
+		const savedKeys = input.findSavedKeys ? await input.findSavedKeys(candidates) : new Set<string>();
+		const reusedPeople = candidates.filter((candidate) => savedKeys.has(discoveryPersonKey(candidate, input.criteria)));
+		const selected = selectDiscoveryPeoplePrioritizingNew(candidates, {
 			...input.criteria, count: Math.min(Math.max(input.count, 1), 10),
-		});
+		}, savedKeys);
+		rejectionCounts.duplicate += reusedPeople.length -
+			selected.filter((candidate) => savedKeys.has(discoveryPersonKey(candidate, input.criteria))).length;
 		return {
 			provider,
 			model,
@@ -221,6 +228,7 @@ export async function discoverWithPeopleSearchFallback(input: {
 			accepted: selected.length,
 			rejectionCounts,
 			people: selected,
+			...(input.findSavedKeys ? { reusedPeople } : {}),
 		};
 	} catch (error) {
 		throw classifyPeopleSearchError(error);

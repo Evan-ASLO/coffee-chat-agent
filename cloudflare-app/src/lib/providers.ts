@@ -50,6 +50,7 @@ export interface DiscoveryProviderResult {
 	broaderAccepted: number;
 	rejectionCounts?: DiscoveryRejectionCounts;
 	people: DiscoveredPerson[];
+	reusedPeople?: DiscoveredPerson[];
 }
 
 export interface DiscoveryRejectionCounts {
@@ -83,6 +84,7 @@ export async function discoverWithTavily(
 	apiKey: string,
 	criteria: DiscoveryCriteria,
 	signal?: AbortSignal,
+	findSavedKeys?: (people: DiscoveredPerson[]) => Promise<ReadonlySet<string>>,
 ): Promise<DiscoveryProviderResult> {
 	const primary = await fetchJson<{
 		results?: Array<{ title?: string; url?: string; content?: string }>;
@@ -124,12 +126,19 @@ export async function discoverWithTavily(
 	}
 
 	const primaryKeys = new Set(seen);
+	const savedKeys = new Set<string>();
+	const rememberSaved = async (candidates: DiscoveredPerson[]) => {
+		if (!findSavedKeys || !candidates.length) return;
+		for (const key of await findSavedKeys(candidates)) savedKeys.add(key);
+	};
+	await rememberSaved(people);
 	let fallbackResults: Array<{
 		title?: string;
 		url?: string;
 		content?: string;
 	}> = [];
-	const remaining = criteria.count - qualifiedDiscoveryCount(people, criteria);
+	const newPeople = () => people.filter((person) => !savedKeys.has(discoveryPersonKey(person, criteria)));
+	const remaining = criteria.count - qualifiedDiscoveryCount(newPeople(), criteria);
 	if (remaining > 0) {
 		const fallback = await fetchJson<{
 			results?: Array<{ title?: string; url?: string; content?: string }>;
@@ -149,6 +158,7 @@ export async function discoverWithTavily(
 			signal,
 		});
 		fallbackResults = fallback.results ?? [];
+		const fallbackPeople: DiscoveredPerson[] = [];
 		for (const result of fallbackResults) {
 			const linkedIn = linkedInPerson(result, criteria);
 			if (linkedIn.insufficientMatch) insufficientMatchRejected += 1;
@@ -160,9 +170,14 @@ export async function discoverWithTavily(
 			if (seen.has(key)) { rejectionCounts.duplicate += 1; continue; }
 			seen.add(key);
 			people.push(person);
+			fallbackPeople.push(person);
 		}
+		await rememberSaved(fallbackPeople);
 	}
-	const selected = selectDiscoveryPeople(people, criteria);
+	const reusedPeople = people.filter((person) => savedKeys.has(discoveryPersonKey(person, criteria)));
+	const selected = selectDiscoveryPeoplePrioritizingNew(people, criteria, savedKeys);
+	rejectionCounts.duplicate += reusedPeople.length -
+		selected.filter((person) => savedKeys.has(discoveryPersonKey(person, criteria))).length;
 	const primaryAccepted = selected.filter((person) =>
 		primaryKeys.has(discoveryPersonKey(person, criteria)),
 	).length;
@@ -176,6 +191,7 @@ export async function discoverWithTavily(
 		rejectionCounts,
 		...matchQualityCounts(selected),
 		people: selected,
+		...(findSavedKeys ? { reusedPeople } : {}),
 	};
 }
 
@@ -206,6 +222,16 @@ export function selectDiscoveryPeople(people: DiscoveredPerson[], criteria: Disc
 		left.fullName.localeCompare(right.fullName, "en") ||
 		left.sourceUrl.localeCompare(right.sourceUrl, "en"),
 	).slice(0, criteria.count);
+}
+
+export function selectDiscoveryPeoplePrioritizingNew(
+	people: DiscoveredPerson[], criteria: DiscoveryCriteria, savedKeys: ReadonlySet<string>,
+): DiscoveredPerson[] {
+	const fresh = selectDiscoveryPeople(people.filter((person) => !savedKeys.has(discoveryPersonKey(person, criteria))), criteria);
+	const saved = selectDiscoveryPeople(people.filter((person) => savedKeys.has(discoveryPersonKey(person, criteria))), {
+		...criteria, count: criteria.count - fresh.length,
+	});
+	return selectDiscoveryPeople([...fresh, ...saved], criteria);
 }
 
 export async function enrichWithHunter(
@@ -624,7 +650,10 @@ export function buildDiscoveryQuery(criteria: DiscoveryCriteria): string {
 		], " ");
 	}
 	const roleTopics = Array.from(
-		new Set([...criteria.roles, ...criteria.keywords, ...ventureCapitalTopics(criteria.roles)]),
+		new Set([
+			...criteria.roles, ...criteria.keywords, ...ventureCapitalTopics(criteria.roles),
+			...(criteria.companies.length && !criteria.roles.length && !criteria.keywords.length ? criteria.industries : []),
+		]),
 	);
 	const groups = [
 		queryGroup(criteria.companies, 8),
@@ -646,7 +675,10 @@ export function buildProfessionalBioQuery(
 			queryGroup(["team", "bio", "profile"], 3),
 		]);
 	}
-	const requestedTopics = [...criteria.roles, ...criteria.keywords];
+	const requestedTopics = [
+		...criteria.roles, ...criteria.keywords,
+		...(!criteria.companies.length || (!criteria.roles.length && !criteria.keywords.length) ? criteria.industries : []),
+	];
 	const roleTopics = Array.from(new Set([
 		...requestedTopics,
 		...professionalRoleTopics(criteria.roles),
@@ -656,9 +688,7 @@ export function buildProfessionalBioQuery(
 		queryGroup(roleTopics, 10),
 		queryGroup(employerSearchAliases(criteria.companies), 8),
 		queryGroup(criteria.locations, 6),
-		queryGroup(criteria.companies.length
-			? ["analyst", "associate", "recruiter", "biography", "profile"]
-			: ["analyst", "investor", "biography", "profile"], 5),
+		queryGroup(["biography", "professional profile", "professional"], 3),
 	]);
 }
 
@@ -832,7 +862,10 @@ export function professionalBioPerson(
 		(domain) =>
 			url.hostname === domain || url.hostname === `www.${domain}`,
 	);
-	if (!/\b(?:analyst|engineer|developer|recruiter|consultant|manager|director|officer|founder|partner|professor|researcher|designer|associate|specialist|advisor|president|strategist|investment|portfolio|employee|intern|professional|works|career|joined|serves|team|biography)\b/i.test(evidence)) return null;
+	const professionalEvidence = Boolean(parsed.company) ||
+		/^(?:Headline|Current role):\s*\S/im.test(result.content || "") ||
+		/\b(?:analyst|engineer|developer|recruiter|consultant|manager|director|officer|founder|partner|professor|researcher|designer|associate|specialist|advisor|president|strategist|investment|portfolio|employee|intern|professional|works|career|joined|serves|team|biography)\b/i.test(evidence);
+	if (!professionalEvidence) return null;
 	const score = scoreEvidence(evidence, criteria);
 	const sourceSnippet = cleanText(
 		`${result.title || ""}\n${result.content || ""}`,
