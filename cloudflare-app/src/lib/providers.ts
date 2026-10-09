@@ -91,6 +91,7 @@ export async function discoverWithTavily(
 		body: {
 			query: buildDiscoveryQuery(criteria),
 			search_depth: "basic",
+			auto_parameters: false,
 			max_results: Math.min(criteria.count * 3, 20),
 			topic: "general",
 			include_answer: false,
@@ -137,6 +138,7 @@ export async function discoverWithTavily(
 			body: {
 				query: buildProfessionalBioQuery(criteria),
 				search_depth: "basic",
+				auto_parameters: false,
 				max_results: Math.min(remaining * 4, 20),
 				topic: "general",
 				include_answer: false,
@@ -613,7 +615,14 @@ function parseJsonObject(text: string): Record<string, unknown> {
 }
 
 export function buildDiscoveryQuery(criteria: DiscoveryCriteria): string {
-	if (criteria.jobContext) return buildJobContactQuery(criteria);
+	const sources = "(site:linkedin.com/in OR biography OR profile)";
+	if (criteria.jobContext) {
+		return buildBoundedQuery("", [
+			queryGroup(employerSearchAliases([criteria.jobContext.company]), 8),
+			queryGroup(criteria.roles, 12),
+			sources,
+		], " ");
+	}
 	const roleTopics = Array.from(
 		new Set([...criteria.roles, ...criteria.keywords, ...ventureCapitalTopics(criteria.roles)]),
 	);
@@ -623,8 +632,9 @@ export function buildDiscoveryQuery(criteria: DiscoveryCriteria): string {
 		queryGroup(criteria.locations, 6),
 		criteria.companies.length ? "" : queryGroup(criteria.industries, 6),
 		queryGroup(criteria.seniority, 6),
+		sources,
 	];
-	return buildBoundedQuery("", groups);
+	return buildBoundedQuery("", groups, " ");
 }
 
 export function buildProfessionalBioQuery(
@@ -674,14 +684,14 @@ export function professionalBioDomains(
 		.slice(0, 20);
 }
 
-function buildBoundedQuery(prefix: string, groups: string[]): string {
+function buildBoundedQuery(prefix: string, groups: string[], separator = " AND "): string {
 	const parts = prefix ? [prefix] : [];
 	for (const group of groups.filter(Boolean)) {
-		const candidate = [...parts, group].join(" AND ");
+		const candidate = [...parts, group].join(separator);
 		if (candidate.length > 1800) break;
 		parts.push(group);
 	}
-	return parts.join(" AND ");
+	return parts.join(separator);
 }
 
 function quote(value: string): string {
@@ -891,11 +901,13 @@ function parsePersonEvidence(result: { title?: string; content?: string; url?: s
 > | null {
 	const linked = normalizeLinkedIn(result.url || "");
 	const search = linked ? parseSearchTitle(result.title || "") : null;
-	if (search && isPersonName(search.fullName)) return search;
+	if (search && isPersonName(search.fullName)) return indexedProfessionalEvidence(search, result.content || "");
 	const bio = parseProfessionalBioTitle(result.title || "");
 	if (bio) {
 		const employment = bio.title.match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
-		return { ...bio, title: employment?.[1] || bio.title, company: employment?.[2] || "" };
+		return indexedProfessionalEvidence({
+			...bio, title: employment?.[1] || bio.title, company: employment?.[2] || "",
+		}, result.content || "");
 	}
 	const snippetName = cleanText(result.content || "", 1000).match(
 		/^((?:[\p{L}][\p{L}'’.-]*\s+){1,4}[\p{L}][\p{L}'’.-]*)\s+(?:is|works|serves|joined)\b/u,
@@ -903,6 +915,27 @@ function parsePersonEvidence(result: { title?: string; content?: string; url?: s
 	if (!snippetName || !isPersonName(snippetName)) return null;
 	const names = snippetName.split(/\s+/);
 	return { firstName: names[0]!, lastName: names.slice(1).join(" "), fullName: snippetName, title: "", company: "" };
+}
+
+function indexedProfessionalEvidence(
+	parsed: Pick<DiscoveredPerson, "firstName" | "lastName" | "fullName" | "title" | "company">,
+	content: string,
+): typeof parsed {
+	const currentRole = content.match(/^Current role:\s*([^\n]+)/im)?.[1]?.trim();
+	const headline = content.match(/^Headline:\s*([^\n]+)/im)?.[1]?.trim();
+	if (!currentRole && !headline) return parsed;
+	const currentEmployment = content.match(/^\s*-\s*(.+?)\s+at\s+(.+?)\s+\([^)\n]*\bto present\)/im);
+	const headlineEmployment = headline?.match(/^(.+?)\s+(?:at|@)\s+([^|]+)(?:\s*\||$)/i);
+	const title = currentEmployment?.[1]?.trim() || currentRole ||
+		headlineEmployment?.[1]?.trim() || parsed.title;
+	const company = currentEmployment?.[2]?.trim() ||
+		(!currentRole || !headlineEmployment || title.toLowerCase().includes(headlineEmployment[1]!.trim().toLowerCase())
+			? headlineEmployment?.[2]?.trim() : "") || "";
+	return {
+		...parsed,
+		title: company && sameEmployer(title, company) ? "" : cleanText(title, 200),
+		company: cleanText(company, 250),
+	};
 }
 
 function evidencedRequestedCompany(evidence: string, companies: string[]): string {
@@ -1088,6 +1121,7 @@ export function normalizeProfessionalSourceUrl(value: string): string {
 function isRejectedProfilePage(value: string): boolean {
 	const url = new URL(value);
 	const hostname = url.hostname.toLowerCase();
+	if (/^(?:jobs?|careers?)\./i.test(hostname)) return true;
 	if (
 		[
 			"facebook.com",
@@ -1237,6 +1271,8 @@ function isPersonName(value: string): boolean {
 		"analyst", "engineer", "recruiter", "internship", "opportunities", "contact",
 		"search", "results", "login", "sign", "in", "about", "services", "financial",
 		"conference", "speakers", "events", "privacy", "policy", "terms", "service",
+		"capital", "markets", "bank", "banking", "securities", "wikipedia",
+		"corporation", "holdings", "ventures", "inc", "limited", "solutions",
 	]);
 	if (words.some((word) => generic.has(word.toLowerCase()))) return false;
 	if (

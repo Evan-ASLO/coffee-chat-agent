@@ -2101,14 +2101,14 @@ describe.sequential("internship jobs platform", () => {
 		);
 		expect(primaryQuery.include_domains).toBeUndefined();
 		expect(primaryQuery.include_domains_mode).toBeUndefined();
-		expect(primaryQuery.query).not.toContain("site:");
+		expect(primaryQuery.query).toContain("(site:linkedin.com/in OR biography OR profile)");
 		expect(primaryQuery.query).not.toContain(
 			"Banking & Financial Services",
 		);
 		expect(primaryQuery.query).toContain(
 			'("Junior Investment Analyst" OR "Investment Analyst I"',
 		);
-		expect(primaryQuery.query).toContain(" AND ");
+		expect(primaryQuery.query).not.toContain(" AND ");
 		fetchSpy.mockRestore();
 	});
 

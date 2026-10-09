@@ -56,6 +56,37 @@ describe("recall-first identifiable professional candidates", () => {
 		}, criteria);
 		expect(person).toMatchObject({ fullName: "Casey Morgan", company: "", title: "", matchQuality: "BROADER_COMPANY" });
 	});
+	it("reads indexed current employment rather than a credential suffix or outdated profile title", () => {
+		const person = linkedInDiscoveryPerson({
+			title: "Jamie Example, CFA - RBC Capital Markets",
+			url: "https://ca.linkedin.com/in/jamie-example",
+			content: "# Jamie Example\nHeadline: Investment Banking Analyst at RBC Capital Markets\nCurrent role: Investment Banking Associate\nLocation: Toronto, Ontario, Canada\n## Experience\n- Investment Banking Associate at RBC Capital Markets (Aug 2026 to present)\n- Investment Banking Analyst at RBC Capital Markets (Aug 2024 to Jul 2026)",
+		}, { ...criteria, roles: ["Investment Banking"], companies: ["RBC"] });
+		expect(person).toMatchObject({
+			fullName: "Jamie Example", title: "Investment Banking Associate",
+			company: "RBC", matchQuality: "STRONG",
+		});
+	});
+	it("keeps a different current employer instead of confirming a requested past employer", () => {
+		const person = linkedInDiscoveryPerson({
+			title: "Jamie Example - Analyst - BMO Financial Group",
+			url: "https://ca.linkedin.com/in/jamie-example",
+			content: "Headline: Analyst at BMO Financial Group\nCurrent role: Analyst\n## Experience\n- Analyst at Other Firm (Aug 2026 to present)\n- Analyst at BMO Financial Group (Aug 2024 to Jul 2026)",
+		}, criteria);
+		expect(person).toMatchObject({ title: "Analyst", company: "Other Firm", matchQuality: "BROADER_COMPANY" });
+	});
+	it("does not mistake company pages or job-host pages for people", () => {
+		for (const title of ["RBC Capital Markets - Wikipedia", "RBC Capital Markets", "Capital Markets - Corporate & Investment jobs | Jobs at RBC"]) {
+			expect(professionalBioPerson({
+				title, url: "https://www.rbccm.com/en",
+				content: "RBC Capital Markets is an investment banking company in Toronto.",
+			}, criteria)).toBeNull();
+		}
+		expect(professionalBioPerson({
+			title: "Jamie Example - Analyst", url: "https://jobs.rbc.com/ca/en/investment-banking",
+			content: "Jamie Example is an analyst.",
+		}, criteria)).toBeNull();
+	});
 	it("rejects non-person and unsafe pages even when a plausible name is supplied", () => {
 		for (const url of [
 			"javascript:alert(1)", "https://user:secret@consultancy.com/bio/jane",
@@ -284,16 +315,16 @@ describe("discovery query semantics", () => {
 		count: 5,
 	};
 
-	it("uses OR within categories and AND between categories", () => {
+	it("uses role alternatives and optional profile-source clues rather than a LinkedIn-only restriction", () => {
 		const query = buildDiscoveryQuery(criteria);
 		expect(query).toContain(
 			'("Recruiter" OR "Hiring Manager" OR "investment" OR "portfolio")',
 		);
 		expect(query).toContain('("bmo" OR "BMO Financial Group")');
 		expect(query).toContain('("Toronto" OR "Canada")');
-		expect(query).toContain(" AND ");
+		expect(query).not.toContain(" AND ");
 		expect(query).not.toContain('"Recruiter" "Hiring Manager"');
-		expect(query).not.toContain("site:");
+		expect(query).toContain("(site:linkedin.com/in OR biography OR profile)");
 		expect(query).not.toContain("Banking & Financial Services");
 	});
 
@@ -572,9 +603,11 @@ describe("professional bio fallback", () => {
 		const fallbackBody = JSON.parse(
 			String((fetchSpy.mock.calls[1]?.[1] as RequestInit)?.body),
 		);
-		expect(primaryBody.query).not.toContain("site:");
+		expect(primaryBody.query).toContain("(site:linkedin.com/in OR biography OR profile)");
 		expect(primaryBody.include_domains).toBeUndefined();
 		expect(primaryBody.include_domains_mode).toBeUndefined();
+		expect(primaryBody.auto_parameters).toBe(false);
+		expect(primaryBody.search_depth).toBe("basic");
 		expect(primaryBody.query).toContain(
 			'("Investment Team" OR "Investment Analyst" OR "Portfolio Manager"',
 		);
@@ -585,6 +618,8 @@ describe("professional bio fallback", () => {
 		expect(fallbackBody.query).not.toContain("site:");
 		expect(fallbackBody.include_domains).toBeUndefined();
 		expect(fallbackBody.include_domains_mode).toBeUndefined();
+		expect(fallbackBody.auto_parameters).toBe(false);
+		expect(fallbackBody.search_depth).toBe("basic");
 	});
 
 	it("preserves accepted LinkedIn results without invoking fallback", async () => {
