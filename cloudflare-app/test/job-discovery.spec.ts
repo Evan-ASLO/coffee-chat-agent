@@ -294,6 +294,40 @@ describe("discovery query semantics", () => {
 		]);
 	});
 
+	it("keeps VC/VC analyst intent in the second Tavily pass without targeting generic team directories", async () => {
+		const ventureCriteria: DiscoveryCriteria = {
+			roles: ["VC", "VC analyst"], industries: [], companies: [], locations: ["Toronto"],
+			keywords: [], seniority: [], objective: "", count: 3,
+		};
+		const query = buildProfessionalBioQuery(ventureCriteria);
+		expect(buildDiscoveryQuery(ventureCriteria)).toContain('"venture capital analyst"');
+		expect(query).toContain('"venture capital"');
+		expect(query).toContain('"venture capital analyst"');
+		expect(query).not.toContain('"team"');
+		expect(query).not.toContain('"leadership"');
+		const response = [
+			{ results: [
+				{ title: "VC jobs", url: "https://venture.example/jobs", content: "Analyst jobs in Toronto." },
+				{ title: "Venture capital firm", url: "https://www.linkedin.com/company/venture", content: "VC analyst." },
+				{ title: "Venture capital posts", url: "https://www.linkedin.com/posts/venture", content: "VC analyst." },
+			] },
+			{ results: [
+				{ title: "Venture Capital Team", url: "https://venture.example/team", content: "Meet our analyst team." },
+				{ title: "Jane Doe | Venture Capital Analyst", url: "https://venture.example/team/jane-doe",
+					content: "Jane Doe is a venture capital analyst in Toronto." },
+			] },
+		];
+		const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+			new Response(JSON.stringify(response.shift()), { headers: { "Content-Type": "application/json" } }));
+		const found = await discoverWithTavily("fake-key", ventureCriteria);
+		expect(spy).toHaveBeenCalledTimes(2);
+		expect(JSON.parse(String((spy.mock.calls[1]?.[1] as RequestInit)?.body)).query).toBe(query);
+		expect(found.rejectionCounts?.unsafeOrNonProfile).toBe(4);
+		expect(found.people).toHaveLength(1);
+		expect(found.people[0]).toMatchObject({ fullName: "Jane Doe", matchQuality: "BROADER_COMPANY",
+			sourceUrl: "https://venture.example/team/jane-doe" });
+	});
+
 	it("sanitizes and caps large alternative groups", () => {
 		const query = buildDiscoveryQuery({
 			...criteria,

@@ -2620,7 +2620,7 @@ describe("bounded ranked job contacts", () => {
 					const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
 						expect(url).toBe("https://api.tavily.com/search");
 						const body = JSON.parse(String(init?.body));
-						const primary = body.include_domains.length === 1 && body.include_domains[0] === "linkedin.com";
+						const primary = body.include_domains?.length === 1 && body.include_domains[0] === "linkedin.com";
 						if (outcome === "error" || (outcome === "bio-error" && !primary)) {
 							return Response.json({ error: "PRIVATE QUERY SECRET-DO-NOT-STORE" }, { status: 401 });
 						}

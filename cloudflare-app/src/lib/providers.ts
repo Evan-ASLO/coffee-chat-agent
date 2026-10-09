@@ -617,7 +617,7 @@ function parseJsonObject(text: string): Record<string, unknown> {
 export function buildDiscoveryQuery(criteria: DiscoveryCriteria): string {
 	if (criteria.jobContext) return buildJobContactQuery(criteria);
 	const roleTopics = Array.from(
-		new Set([...criteria.roles, ...criteria.keywords]),
+		new Set([...criteria.roles, ...criteria.keywords, ...ventureCapitalTopics(criteria.roles)]),
 	);
 	const groups = [
 		queryGroup(criteria.companies, 8),
@@ -649,7 +649,9 @@ export function buildProfessionalBioQuery(
 		queryGroup(roleTopics, 10),
 		queryGroup(employerSearchAliases(criteria.companies), 8),
 		queryGroup(criteria.locations, 6),
-		queryGroup(["team", "bio", "profile", "leadership"], 4),
+		queryGroup(criteria.companies.length
+			? ["team", "bio", "profile", "leadership"]
+			: ["analyst", "investor", "biography", "profile"], 4),
 	]);
 }
 
@@ -712,20 +714,17 @@ function professionalRoleTopics(roles: string[]): string[] {
 		"acquisition",
 		"recruiter",
 	]);
-	return Array.from(
-		new Set(
-			roles.flatMap((role) =>
-				sanitizeQueryToken(role)
-					.toLowerCase()
-					.split(" ")
-					.filter(
-						(token) =>
-							token.length >= 4 &&
-							!ignored.has(token),
-					),
-			),
-		),
-	);
+	return Array.from(new Set(roles.flatMap((role) => {
+		const clean = sanitizeQueryToken(role).toLowerCase();
+		const topics = clean.split(" ").filter((token) => token.length >= 4 && !ignored.has(token));
+		return [...topics, ...ventureCapitalTopics([clean])];
+	})));
+}
+
+function ventureCapitalTopics(roles: string[]): string[] {
+	return roles.flatMap((role) => /\bvc\b/i.test(role)
+		? [/\banalyst\b/i.test(role) ? "venture capital analyst" : "venture capital"]
+		: []);
 }
 
 function sanitizeQueryToken(value: string): string {
