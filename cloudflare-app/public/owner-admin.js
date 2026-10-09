@@ -11,6 +11,7 @@
 			activity: null, activityStatus: "idle", activityError: "", accountCursors: [null],
 			events: null, eventsStatus: "idle", eventsError: "", eventCursors: [null],
 			userFilter: null, action: "ALL",
+			roster: null, rosterStatus: "idle", rosterError: "", rosterCursors: [null],
 			access: null, accessStatus: "idle", accessError: "",
 			mutating: false, mutationError: "", result: null, bulk: null,
 		};
@@ -107,6 +108,7 @@
 
 		function ensureLoaded() {
 			if (state.section === "activity" && state.activityStatus === "idle") void loadActivity();
+			if (state.section === "activity" && state.rosterStatus === "idle") void loadRoster();
 			if (state.section === "beta" && state.accessStatus === "idle") void loadAccess();
 		}
 
@@ -139,6 +141,7 @@
 				</div>
 				${state.activityError ? notice(state.activityError, true) : ""}
 				${state.activityStatus === "loading" ? notice("Loading recorded activity...") : ""}
+				${rosterHtml()}
 				${data && state.activityStatus === "ready" ? `
 					<p class="owner-period">From ${esc(date(data.period.from))} through ${esc(date(data.period.asOf))}. Refresh explicitly for newer events.</p>
 					<div class="owner-metrics">
@@ -147,13 +150,14 @@
 						${metric("Recorded events", data.summary.total, "Operational actions, not visits")}
 						${metric("AI search issues", data.summary.searchIssues, "Recorded limited, unavailable or failed AI searches, including legacy fallback attempts")}
 					</div>
-					<h3 id="owner-accounts-title">Accounts in this period</h3>
-					<p>Counts are recorded actions, not current saved-job or draft totals. Tracker changes include stage changes, removals and imports.</p>
+					<h3 id="owner-accounts-title">Registered accounts in this snapshot</h3>
+					<p>Counts are recorded actions, not current saved-job or draft totals. Access reflects the grant at this page's last refresh, not the historical period.</p>
 					${data.accounts.length ? `<div class="owner-table-scroll" role="region" aria-labelledby="owner-accounts-title" tabindex="0">
 						<table class="owner-accounts-table">
-							<thead><tr><th scope="col">Account</th><th scope="col">All events</th><th scope="col">People searches</th><th scope="col">Job saves</th><th scope="col">Tracker changes</th><th scope="col">Draft changes</th><th scope="col">Sends</th><th scope="col">Last recorded event</th><th scope="col">Filter</th></tr></thead>
+							<thead><tr><th scope="col">Account</th><th scope="col">Access at refresh</th><th scope="col">All events</th><th scope="col">People searches</th><th scope="col">Job saves</th><th scope="col">Tracker changes</th><th scope="col">Draft changes</th><th scope="col">Sends</th><th scope="col">Last recorded event</th><th scope="col">Filter</th></tr></thead>
 							<tbody>${data.accounts.map((account) => `<tr>
 								<th scope="row"><strong>${esc(account.name || "Registered account")}</strong><small>${esc(account.email)}</small></th>
+								<td>${esc(accessLabel(account.currentAccess))}</td>
 								${["total", "peopleSearches", "jobSaves", "trackerChanges", "draftChanges", "outreachSends"].map((key) => `<td>${number(account.counts[key])}</td>`).join("")}
 								<td>${account.lastRecordedEventAt ? esc(date(account.lastRecordedEventAt)) : "No recorded activity in this period"}</td>
 								<td><button class="secondary" data-owner-user="${esc(account.id)}" aria-label="View events for ${esc(account.email)}">Events</button></td>
@@ -164,6 +168,62 @@
 				` : ""}
 				<p class="owner-privacy-note">Only basic account identifiers, action counts, timestamps and allowlisted search outcomes are shown. No private content, credentials, recipient details, search queries or raw event metadata. Failures not recorded in the audit log are not counted. <a href="/privacy.html">Privacy policy</a></p>
 			</section>`;
+		}
+
+		function accessLabel(access) {
+			if (!access) return "Access not loaded";
+			const label = { ADMIN: "Configured owner", OPEN: "Open mode", APPROVED: "Access granted", REVOKED: "Access revoked", NOT_GRANTED: "No current grant" }[access.status] || "Access not loaded";
+			return access.approvalStatus === "REVOKED" && ["ADMIN", "OPEN"].includes(access.status) ? `${label} · approval revoked` : label;
+		}
+
+		function rosterHtml() {
+			const data = state.roster;
+			return `<section class="owner-roster" aria-labelledby="owner-roster-title">
+				<div class="panel-head"><div><h3 id="owner-roster-title">Current named access</h3><p>Access grants are not account registrations or recorded visits.</p></div><button id="owner-roster-refresh" class="secondary">Refresh access roster</button></div>
+				${state.rosterStatus === "loading" ? notice("Loading current access roster...") : ""}
+				${state.rosterError ? notice(state.rosterError, true) : ""}
+				${data && state.rosterStatus === "ready" ? `
+					<p>Current as of ${esc(date(data.fetchedAt))}, separate from the activity period below.${data.mode === "OPEN" ? " Open mode admits anyone who signs in; named entries are not a count of everyone who can access." : ""}</p>
+					<div class="owner-metrics">
+						${metric("Named access grants", data.summary.namedGrants, "Approved addresses plus configured owners, deduplicated")}
+						${metric("Registered entries", data.summary.registeredEntries, "Named addresses with a current registered account")}
+						${metric("No current account", data.summary.noCurrentAccountEntries, `${data.summary.deletedAccountEntries ? `${data.summary.deletedAccountEntries} deleted ${data.summary.deletedAccountEntries === 1 ? "account" : "accounts"} included. ` : ""}Registration does not measure visits.`)}
+					</div>
+					<p>${number(data.summary.approvedEmailEntries)} approved email ${data.summary.approvedEmailEntries === 1 ? "entry" : "entries"}; ${number(data.summary.configuredOwners)} configured owner ${data.summary.configuredOwners === 1 ? "identity" : "identities"}. Owners may overlap approved entries.</p>
+					${data.entries.length ? `<div class="owner-table-scroll" role="region" aria-labelledby="owner-roster-title" tabindex="0"><table class="owner-accounts-table">
+						<thead><tr><th scope="col">Address</th><th scope="col">Access source</th><th scope="col">Registration</th></tr></thead>
+						<tbody>${data.entries.map((entry) => `<tr><th scope="row">${esc(entry.email)}</th><td>${entry.source === "OWNER_AND_APPROVAL" ? "Owner and approval" : entry.source === "OWNER" ? "Configured owner" : "Access granted"}</td><td>${entry.registration === "REGISTERED" ? `Registered${entry.name ? ` · ${esc(entry.name)}` : ""}` : entry.registration === "DELETED" ? "Deleted account · named access remains" : "No current registered account"}</td></tr>`).join("")}</tbody>
+					</table></div>` : notice("No current named access grants.")}
+					${pager("roster", state.rosterCursors.length, data.nextCursor, data.pageSize)}
+				` : ""}
+			</section>`;
+		}
+
+		async function loadRoster(reset = false) {
+			if (!syncSession()) return;
+			const turn = generation;
+			if (reset) state.rosterCursors = [null];
+			state.roster = null;
+			state.rosterStatus = "loading";
+			state.rosterError = "";
+			paint();
+			const query = new URLSearchParams();
+			if (state.rosterCursors.at(-1)) query.set("cursor", state.rosterCursors.at(-1));
+			try {
+				const result = await call("roster", `/api/beta/admin/activity/access${query.size ? `?${query}` : ""}`);
+				if (!result || turn !== generation || ownerKey() !== identity) return;
+				if (!Array.isArray(result.entries) || !["OPEN", "ALLOWLIST"].includes(result.mode) ||
+					!["namedGrants", "registeredEntries", "noCurrentAccountEntries", "deletedAccountEntries", "approvedEmailEntries", "configuredOwners"]
+						.every((key) => Number.isInteger(result.summary?.[key]) && result.summary[key] >= 0)) {
+					throw new Error("Current access roster could not be read. Refresh it.");
+				}
+				state.roster = result;
+				state.rosterStatus = "ready";
+			} catch (error) {
+				state.rosterStatus = "error";
+				state.rosterError = `Could not refresh current access: ${error.message}`;
+			}
+			paint();
 		}
 
 		function metric(label, value, hint) {
@@ -194,7 +254,7 @@
 		}
 
 		function pager(kind, page, next, size) {
-			return `<nav class="owner-pagination" aria-label="${kind === "accounts" ? "Account" : "Event"} pages">
+			return `<nav class="owner-pagination" aria-label="${kind === "roster" ? "Access roster" : kind === "accounts" ? "Account" : "Event"} pages">
 				<button id="owner-${kind}-previous" class="secondary" ${page === 1 ? "disabled" : ""}>Previous</button>
 				<span>Page ${page} &middot; up to ${size} ${kind} per page</span>
 				<button id="owner-${kind}-next" class="secondary" ${next ? "" : "disabled"}>Next</button>
@@ -352,6 +412,10 @@
 			state.activityStatus = state.eventsStatus = "idle";
 			state.asOf = "";
 			state.accountCursors = state.eventCursors = [null];
+			requests.get("roster")?.abort();
+			state.roster = null;
+			state.rosterStatus = "idle";
+			state.rosterCursors = [null];
 		}
 
 		async function openBulk() {
@@ -488,7 +552,10 @@
 				state.days = event.target.value;
 				void loadActivity(true);
 			});
-			on("owner-refresh", "click", () => void loadActivity(true));
+			on("owner-refresh", "click", () => { void loadActivity(true); void loadRoster(true); });
+			on("owner-roster-refresh", "click", () => void loadRoster(true));
+			on("owner-roster-previous", "click", () => { if (state.rosterCursors.length > 1) state.rosterCursors.pop(); void loadRoster(); });
+			on("owner-roster-next", "click", () => { if (state.roster?.nextCursor) { state.rosterCursors.push(state.roster.nextCursor); void loadRoster(); } });
 			on("owner-access-refresh", "click", () => void loadAccess());
 			on("owner-events-retry", "click", () => void loadEvents());
 			for (const kind of ["accounts", "events"]) {
@@ -545,7 +612,7 @@
 			}
 		}
 
-		return { render, wire, syncSession, clear, closeDialog, loadAccess, loadActivity };
+		return { render, wire, syncSession, clear, closeDialog, loadAccess, loadActivity, loadRoster };
 	}
 
 	return { create };

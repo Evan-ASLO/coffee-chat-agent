@@ -869,7 +869,7 @@ function renderNetworking() {
 					<div class="table-tools"><button id="open-discovery-dialog-secondary" class="primary">${icon("search")} Find people</button></div>
 				</div>
 				${renderPreparationCosts()}
-				${state.preparationRequest ? '<p class="notice" role="status">An explicitly approved action is running. Completed stages are saved independently. <button id="cancel-preparation" class="secondary">Stop waiting</button></p>' : ""}
+				${state.preparationRequest ? `<p class="notice" role="status">${state.preparationRequest.action === "reject" ? "Removing this person from active queues." : "An explicitly approved action is running. Completed stages are saved independently."} <button id="cancel-preparation" class="secondary">Stop waiting</button></p>` : ""}
 				${
 					prospects.length
 						? `<div class="people-cards networking-table" aria-label="People and approval-first outreach">${prospects.map((person, index) => `${state.networkingJob && !jobContactFor(person)?.tier && (index === 0 || jobContactFor(prospects[index - 1])?.tier) ? '<p class="unconfirmed-contacts">Unconfirmed fits - not part of the three ranked priorities. Review the public evidence before approaching.</p>' : ""}${networkingTableRow(person, profileReady)}`).join("")}</div>`
@@ -1001,7 +1001,8 @@ function renderAiDiscovery() {
 }
 
 function networkingPeople() {
-	return state.networkingJob ? state.networkingContacts.prospects : state.session.prospects;
+	const people = state.networkingJob ? state.networkingContacts.prospects : state.session.prospects;
+	return people.filter((person) => person.status !== "REJECTED");
 }
 
 function jobContactFor(person) {
@@ -1523,11 +1524,14 @@ function wireTab() {
 	);
 	wirePreparationRetries(app);
 	if (state.preparationRequest) {
-		app.querySelectorAll("[data-prepare], [data-regenerate], [data-review], [data-retry-preparation]").forEach((button) => { button.disabled = true; });
+		app.querySelectorAll("[data-prepare], [data-regenerate], [data-review], [data-retry-preparation], [data-reject]").forEach((button) => { button.disabled = true; });
 	}
 	document.getElementById("cancel-preparation")?.addEventListener("click", () => {
+		const removing = state.preparationRequest?.action === "reject";
 		cancelPreparation();
-		showToast("Stopped waiting. Started work may still finish or be billed; reload saved contacts before retrying.");
+		showToast(removing
+			? "Stopped waiting. Removal may have completed; reload saved contacts before retrying."
+			: "Stopped waiting. Started work may still finish or be billed; reload saved contacts before retrying.");
 		render();
 	});
 	document.querySelectorAll("[data-save-secret]").forEach((button) =>
@@ -2274,11 +2278,14 @@ async function prepare(id) {
 }
 
 async function reject(id) {
-	if (!confirm("Reject this person?")) return;
-	await run("Updating prospect…", async () => {
-		await api(`/api/prospects/${id}/reject`, { method: "POST" });
-		await refresh("networking");
-	});
+	if (!state.session?.authenticated) return showToast("Sign in before removing a person.", true);
+	if (state.preparationRequest) return showToast("Wait for the current action to finish before removing a person.", true);
+	const person = networkingPeople().find((item) => item.id === id);
+	if (!person || person.userId !== state.session?.user?.id || !["DISCOVERED", "ERROR", "DRAFT_READY"].includes(person.status)) {
+		return showToast("This person is no longer in a removable state. Reload saved contacts.", true);
+	}
+	if (!confirm(`Remove ${person.fullName} from the active approval and outreach queues?\n\nTheir saved record and history are kept. This does not permanently delete them or send email.`)) return;
+	await runProspectAction(id, "reject", undefined, "Removing from active queues...", "POST", "Removed from active approval and outreach queues.");
 }
 
 async function regenerate(id) {
@@ -2305,7 +2312,22 @@ function currentProspectAction(request) {
 		(state.networkingJob?.id || null) === request.jobId;
 }
 
-async function runProspectAction(id, action, body, message, method = "POST") {
+function applyPersonRemoval(id, userId) {
+	for (const people of [state.session.prospects, state.networkingContacts?.prospects || []]) {
+		for (const person of people) {
+			if (person.id === id && person.userId === userId) {
+				person.status = "REJECTED";
+				person.draftApprovedAt = null;
+			}
+		}
+	}
+	if (state.draftReview?.id === id) {
+		dialog.close();
+		state.draftReview = null;
+	}
+}
+
+async function runProspectAction(id, action, body, message, method = "POST", successMessage = "Saved. Review the email, research status and exact draft before sending.") {
 	if (state.preparationRequest || !state.session?.authenticated) return;
 	const request = {
 		id, action, userId: state.session.user.id, tab: state.tab,
@@ -2316,6 +2338,7 @@ async function runProspectAction(id, action, body, message, method = "POST") {
 	render();
 	showToast(message);
 	let failure = "";
+	let removalConfirmed = false;
 	try {
 		try {
 			const result = await api(`/api/prospects/${id}/${action}`, {
@@ -2325,6 +2348,11 @@ async function runProspectAction(id, action, body, message, method = "POST") {
 			if (result.userId && result.userId !== request.userId) throw new Error("Account changed. Reload before continuing.");
 			if (result.prospect && (result.prospect.id !== id || result.prospect.userId !== request.userId)) {
 				throw new Error("Contact response did not match this account.");
+			}
+			if (action === "reject") {
+				if (result.ok !== true) throw new Error("Removal was not confirmed. Reload saved contacts.");
+				removalConfirmed = true;
+				applyPersonRemoval(id, request.userId);
 			}
 		} catch (error) {
 			if (!currentProspectAction(request)) return;
@@ -2338,16 +2366,23 @@ async function runProspectAction(id, action, body, message, method = "POST") {
 			return;
 		}
 		state.session = session;
+		if (removalConfirmed) applyPersonRemoval(id, request.userId);
 		if (request.jobId) await loadNetworkingContacts();
+		if (!currentProspectAction(request)) return;
+		if (action === "reject" && request.jobId && state.networkingContacts.status !== "ready") {
+			throw new Error("Linked contacts could not be refreshed.");
+		}
+		if (removalConfirmed) applyPersonRemoval(id, request.userId);
+		if (action === "reject") await loadAnalyticsData();
 		if (!currentProspectAction(request)) return;
 		if (state.draftReview?.id === id && !failure) {
 			dialog.close();
 			state.draftReview = null;
 		}
-		showToast(failure || "Saved. Review the email, research status and exact draft before sending.", Boolean(failure));
+		showToast(failure || successMessage, Boolean(failure));
 	} catch (error) {
 		if (currentProspectAction(request)) {
-			showToast(`${failure || "The action may have completed."} Saved state could not be refreshed. Reload before retrying.`, true);
+			showToast(`${removalConfirmed ? "Removal was confirmed." : failure || "The action may have completed."} Saved state could not be refreshed. Reload before retrying.`, true);
 		}
 	} finally {
 		if (currentProspectAction(request)) {
@@ -3235,9 +3270,9 @@ function networkingTableRow(person, profileReady) {
 	</div>` : "";
 	let nextStep = "";
 	if (["DISCOVERED", "ERROR"].includes(person.status)) {
-		nextStep = person.contactApprovedAt
+		nextStep = person.contactApprovedAt && person.status === "ERROR"
 			? `<button class="table-action primary" data-regenerate="${person.id}" ${profileReady ? "" : "disabled"}>Retry draft</button>`
-			: `<button class="table-action primary" data-prepare="${person.id}" ${profileReady ? "" : "disabled"}>Approve & prepare</button><button class="table-action danger" data-reject="${person.id}">Reject</button>`;
+			: `<button class="table-action primary" data-prepare="${person.id}" ${profileReady ? "" : "disabled"}>Approve & prepare</button>`;
 	} else if (person.status === "DRAFT_READY") {
 		nextStep = `<button class="table-action primary" data-review="${person.id}">Review draft v${person.draftVersion}</button><button class="table-action" data-regenerate="${person.id}">Regenerate</button>`;
 	} else if (person.status === "REPLIED") {
@@ -3253,9 +3288,14 @@ function networkingTableRow(person, profileReady) {
 		${priority || (person.matchQuality === "STRONG" ? '<span class="chip chip-strong">Strong match</span>' : '<span class="chip chip-warning">Possible match · review relevance</span>')}
 		${!state.networkingJob ? `<details class="job-contact-priority"><summary>Public search evidence</summary><blockquote>${escapeHtml(person.sourceSnippet || "No search snippet was saved. Review the linked public profile before approving.")}</blockquote></details>` : ""}
 		<span class="chip">${person.email ? "Email on file · review before send" : "Email needed before send"}</span>
-		<div class="person-review-actions"><div class="table-actions">${nextStep}</div>${profileUrl ? `<a class="button secondary" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" aria-label="${profileLabel} for ${escapeAttr(person.fullName)}">Public profile ${icon("external")}</a>` : ""}</div>
+		<div class="person-review-actions"><div class="table-actions">${nextStep}${removePersonAction(person, "table-action danger remove-person-action")}</div>${profileUrl ? `<a class="button secondary" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" aria-label="${profileLabel} for ${escapeAttr(person.fullName)}">Public profile ${icon("external")}</a>` : ""}</div>
 		${person.contactApprovedAt ? renderPreparationContext(person) : ""}${person.errorMessage ? `<p class="notice warning">${escapeHtml(person.errorMessage)}</p>` : ""}
 	</article>`;
+}
+
+function removePersonAction(person, classes = "danger remove-person-action") {
+	if (!["DISCOVERED", "ERROR", "DRAFT_READY"].includes(person.status)) return "";
+	return `<button type="button" class="${classes}" data-reject="${person.id}" aria-label="Remove ${escapeAttr(person.fullName)} from active queues" ${state.preparationRequest ? "disabled" : ""}>Remove</button>`;
 }
 
 function prospectCard(person, profileReady) {
@@ -3280,8 +3320,10 @@ function prospectCard(person, profileReady) {
 		<p>${escapeHtml(person.whyRelevant || person.sourceSnippet)}</p>
 		${person.errorMessage ? `<p class="notice danger">${escapeHtml(person.errorMessage)}</p>` : ""}
 		<div class="actions">
-			<button class="secondary" data-prepare="${person.id}" ${profileReady ? "" : "disabled"}>Approve & prepare</button>
-			<button class="danger" data-reject="${person.id}">Reject</button>
+			${person.contactApprovedAt && person.status === "ERROR"
+				? `<button class="secondary" data-regenerate="${person.id}" ${profileReady ? "" : "disabled"}>Retry draft</button>`
+				: `<button class="secondary" data-prepare="${person.id}" ${profileReady ? "" : "disabled"}>Approve & prepare</button>`}
+			${removePersonAction(person)}
 			${profileUrl ? `<a class="button" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener">${profileLabel}</a>` : ""}
 		</div>
 	</article>`;
@@ -3308,6 +3350,7 @@ function draftCard(person) {
 		<div class="actions">
 			<button class="primary" data-review="${person.id}">Review</button>
 			<button data-regenerate="${person.id}">Regenerate</button>
+			${removePersonAction(person)}
 		</div>
 	</article>`;
 }

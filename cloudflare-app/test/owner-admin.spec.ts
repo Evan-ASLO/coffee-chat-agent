@@ -10,9 +10,11 @@ import {
 } from "../src/lib/beta";
 import {
 	getOwnerActivity,
+	getOwnerAccessRoster,
 	ownerActivityQuerySchema,
 	type OwnerActivity,
 	type OwnerEvents,
+	type OwnerAccessRoster,
 } from "../src/lib/owner-activity";
 
 const bindings: AppBindings = {
@@ -49,7 +51,7 @@ describe("owner operational activity", () => {
 	it("authorizes every owner read on the server without changing personal Analytics", async () => {
 		for (const path of [
 			"/api/beta/admin/activity", "/api/beta/admin/activity/events",
-			"/api/beta/admin/access", "/api/beta/admin/requests/pending",
+			"/api/beta/admin/access", "/api/beta/admin/requests/pending", "/api/beta/admin/activity/access",
 		]) {
 			expect((await request(path)).status).toBe(401);
 			expect((await request(path, member)).status).toBe(403);
@@ -85,13 +87,79 @@ describe("owner operational activity", () => {
 			expect(serialized).not.toContain(forbidden);
 		}
 		expect(Object.keys(activity.accounts[0]!).sort()).toEqual(
-			["id", "name", "email", "registeredAt", "counts", "lastRecordedEventAt"].sort(),
+			["id", "name", "email", "registeredAt", "counts", "lastRecordedEventAt", "currentAccess"].sort(),
 		);
 		expect(feed.events.some((entry) => entry.action === "OTHER")).toBe(true);
 		expect(feed.events.filter((entry) => entry.searchFallback)).toMatchObject([{
 			searchFallback: { status: "SEARCH_LIMITED", reason: "max_uses_exceeded", provider: "ANTHROPIC" },
 		}]);
 		expect(activity.summary.searchIssues).toBe(1);
+	});
+
+	describe("current named access versus registered activity", () => {
+		it("shows fourteen named grants and seven registered accounts without inventing invitee accounts or events", async () => {
+			for (let index = 0; index < 5; index++) await newAccount(`registered-${index}@example.test`);
+			const now = new Date().toISOString();
+			for (let index = 0; index < 7; index++) {
+				await env.DB.prepare("INSERT INTO beta_access(email,status,created_at,updated_at) VALUES(?,'APPROVED',?,?)")
+					.bind(`invited-${index}@example.test`, now, now).run();
+			}
+			await event(member, "SETTINGS_UPDATED");
+			const roster = await (await request("/api/beta/admin/activity/access", owner)).json<OwnerAccessRoster>();
+			const activity = await (await request("/api/beta/admin/activity", owner)).json<OwnerActivity>();
+			expect(roster.summary).toMatchObject({ namedGrants: 14, registeredEntries: 7, noCurrentAccountEntries: 7, configuredOwners: 1 });
+			expect(activity.summary).toMatchObject({ accounts: 7, accountsWithEvents: 1 });
+			expect(roster.entries.filter((entry) => entry.registration === "NOT_REGISTERED")).toHaveLength(7);
+			expect(roster.entries.filter((entry) => entry.registration === "NOT_REGISTERED").every((entry) => entry.userId === null && entry.name === null)).toBe(true);
+			expect(activity.accounts.filter((account) => account.counts.total === 0)).toHaveLength(6);
+			expect((await env.DB.prepare("SELECT COUNT(*) AS count FROM users").first<{ count: number }>())?.count).toBe(7);
+		});
+		it("normalizes owner identities and registered-email joins, deduplicates grants and retains revoked-account history", async () => {
+			await env.DB.prepare("UPDATE users SET email=' MEMBER@EXAMPLE.TEST ' WHERE id=?").bind(member.user.id).run();
+			const normalized = { ...bindings, BETA_ADMIN_EMAILS: " OWNER@example.test,owner@EXAMPLE.test " };
+			const roster = await getOwnerAccessRoster(normalized, {});
+			expect(roster.summary).toMatchObject({ namedGrants: 2, registeredEntries: 2, configuredOwners: 1 });
+			expect(roster.entries.find((entry) => entry.email === "owner@example.test")?.source).toBe("OWNER_AND_APPROVAL");
+			await event(member, "SETTINGS_UPDATED");
+			await env.DB.prepare("UPDATE beta_access SET status='REVOKED' WHERE email='member@example.test'").run();
+			const revoked = await getOwnerActivity(normalized, ownerActivityQuerySchema.parse({}));
+			expect(revoked.accounts.find((account) => account.id === member.user.id)).toMatchObject({
+				counts: { total: 1 }, currentAccess: { status: "REVOKED", approvalStatus: "REVOKED" },
+			});
+			expect((await getOwnerAccessRoster(normalized, {})).summary.namedGrants).toBe(1);
+			const open = await getOwnerActivity({ ...normalized, BETA_ACCESS_MODE: "OPEN" }, ownerActivityQuerySchema.parse({}));
+			expect(open.accounts.find((account) => account.id === member.user.id)?.currentAccess).toEqual({ status: "OPEN", approvalStatus: "REVOKED" });
+			expect((await getOwnerAccessRoster({ ...normalized, BETA_ACCESS_MODE: "OPEN" }, {})).mode).toBe("OPEN");
+		});
+		it("distinguishes deleted accounts and configured-owner overrides without exposing deleted identity data", async () => {
+			await env.DB.prepare("UPDATE users SET deleted_at=?,name='PRIVATE-DELETED-NAME' WHERE id=?").bind(new Date().toISOString(), member.user.id).run();
+			await env.DB.prepare("UPDATE beta_access SET status='REVOKED' WHERE email='owner@example.test'").run();
+			const roster = await getOwnerAccessRoster(bindings, {});
+			expect(roster.summary).toMatchObject({ namedGrants: 2, registeredEntries: 1, deletedAccountEntries: 1 });
+			expect(roster.entries.find((entry) => entry.email === "member@example.test")).toMatchObject({ registration: "DELETED", userId: null, name: null });
+			expect(roster.entries.find((entry) => entry.email === "owner@example.test")?.source).toBe("OWNER");
+			expect(JSON.stringify(roster)).not.toContain("PRIVATE-DELETED-NAME");
+			const activity = await getOwnerActivity(bindings, ownerActivityQuerySchema.parse({}));
+			expect(activity.accounts).toHaveLength(1);
+			expect(activity.accounts[0]?.currentAccess).toEqual({ status: "ADMIN", approvalStatus: "REVOKED" });
+		});
+		it("paginates named entries independently of the event period and rejects malformed cursors", async () => {
+			const now = new Date().toISOString();
+			for (let index = 0; index < 21; index++) {
+				await env.DB.prepare("INSERT INTO beta_access(email,status,created_at,updated_at) VALUES(?,'APPROVED',?,?)")
+					.bind(`extra-${String(index).padStart(2, "0")}@example.test`, now, now).run();
+			}
+			const first = await (await request("/api/beta/admin/activity/access", owner)).json<OwnerAccessRoster>();
+			expect(first.entries).toHaveLength(20);
+			expect(first.summary.namedGrants).toBe(23);
+			const second = await (await request(`/api/beta/admin/activity/access?cursor=${first.nextCursor}`, owner)).json<OwnerAccessRoster>();
+			expect(second.entries).toHaveLength(3);
+			expect(new Set([...first.entries, ...second.entries].map((entry) => entry.email)).size).toBe(23);
+			expect(second.nextCursor).toBeNull();
+			for (const query of ["cursor=bad", "days=7", "userId=anything", "limit=999"]) {
+				expect((await request(`/api/beta/admin/activity/access?${query}`, owner)).status).toBe(400);
+			}
+		});
 	});
 
 	it("keeps Tavily-only NOT_REQUESTED out of AI failures while retaining legacy and explicit AI outcomes", async () => {

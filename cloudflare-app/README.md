@@ -149,6 +149,10 @@ Focused checks: `npm test -- test\preparation.spec.ts`, `npm run typecheck`,
 
 `GET /api/analytics` is authenticated and ownership-scoped. It uses bounded queries over existing job state, prospect, job, and audit tables to return current application/networking counts, top companies, a 28-day recorded-activity series, and recent activity. It requires no migration and does not fabricate growth, conversion, coffee-chat, reminder, or future-event data.
 
+## Removing unsent people after preparation failures
+
+**Remove** remains available for `DISCOVERED`, `ERROR` and `DRAFT_READY` people, including previously approved contacts whose draft failed, without writing-profile readiness or provider credentials. It uses the existing rejection route, not permanent deletion. Confirmation names the person and explains that their record/history is kept while they leave active approval/outreach queues. General and job-linked active lists/counts exclude `REJECTED`; records, job links, cached preparation and historical drafts remain stored. In-flight `PREPARING`/`SENDING` and completed `SENT`/`REPLIED` states are not removable. State-guarded preparation, edits and send claims cannot revive or send a rejected person. A confirmed removal invalidates client draft review even when a later refresh is stale or fails.
+
 ## Owner activity and reviewed beta approvals
 
 **Settings > Owner tools** is visible only for the server-reported owner role.
@@ -163,6 +167,8 @@ filtered by `userId` and an allowlisted `action`. Keyset cursors are bound to th
 period and filters. Continue with the returned `asOf` time; snapshots older than
 24 hours require an explicit refresh. Both endpoints use existing tables and
 the user/time audit index, without a migration or per-user request loop.
+
+`GET /api/beta/admin/activity/access` supplies a separately paginated **current named access** roster: effective normalized approved addresses plus configured owners, deduplicated and joined to current registrations. Its grant, registered-address and no-current-account totals are not the same as registered-user or event totals in the activity snapshot. Unregistered or deleted entries have no user ID/name or Events action; a missing account is not proof of no visits. Deleted identity details are not returned. Registered activity keeps revoked/non-granted accounts and genuine zero-event rows, with access status labelled at the last refresh rather than as historical access. In `OPEN` mode, named grants are explicitly not a total of everyone who can access; configured owners retain their override even if a D1 approval is revoked. This read-only addition does not create users, grant permissions, record visits or change schema.
 
 The explicit response schema excludes raw metadata, entity/recipient details,
 credentials and key hints, session hashes, resumes, private profile/draft/email

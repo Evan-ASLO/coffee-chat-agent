@@ -20,6 +20,19 @@ function activity(name = "Fictional private account") {
 	};
 }
 
+function roster() {
+	return {
+		fetchedAt: "2026-10-09T12:00:00.000Z", mode: "ALLOWLIST",
+		summary: { namedGrants: 14, registeredEntries: 7, noCurrentAccountEntries: 7, deletedAccountEntries: 0, approvedEmailEntries: 14, configuredOwners: 1 },
+		entries: Array.from({ length: 14 }, (_, i) => ({
+			email: `entry-${i}@example.test`, name: i < 7 ? `Fictional registered ${i}` : null,
+			userId: i < 7 ? `member-${i}` : null, registration: i < 7 ? "REGISTERED" : "NOT_REGISTERED",
+			source: i === 0 ? "OWNER_AND_APPROVAL" : "APPROVAL",
+		})),
+		pageSize: 20, nextCursor: null,
+	};
+}
+
 function deferred() {
 	let resolve;
 	const promise = new Promise((done) => { resolve = done; });
@@ -50,15 +63,85 @@ test("owner controls are lazy and non-owners make no owner requests", async () =
 	assert.equal(signedOut.ui.render(), "");
 	await signedOut.ui.loadActivity();
 	await signedOut.ui.loadAccess();
+	await signedOut.ui.loadRoster();
 	assert.equal(signedOut.calls.length, 0);
 	const member = fixture(() => assert.fail("Unexpected request"), { ...owner(), isBetaAdmin: false });
 	assert.equal(member.ui.render(), "");
 	await member.ui.loadActivity();
+	await member.ui.loadRoster();
 	assert.equal(member.calls.length, 0);
 	const admin = fixture(() => assert.fail("Rendering should not fetch"));
 	assert.match(admin.ui.render(), /Owner tools/);
 	assert.equal(admin.calls.length, 0);
 });
+
+test("owner roster separates named access from account registration without inventing events actions", async () => {
+	const client = fixture((url) => url.includes("/activity/access") ? roster() : activity());
+	await client.ui.loadActivity();
+	await client.ui.loadRoster();
+	const html = client.ui.render();
+	assert.match(html, /Named access grants/);
+	assert.match(html, /Registered entries/);
+	assert.match(html, /No current registered account/);
+	assert.match(html, /separate from the activity period/);
+	const section = html.slice(html.indexOf('<section class="owner-roster"'), html.indexOf("</section>", html.indexOf('<section class="owner-roster"')));
+	assert.doesNotMatch(section, /data-owner-user|Last recorded event|last online|never logged/i);
+	assert.equal((section.match(/@example.test/g) || []).length, 14);
+	assert.match(html, /Registered accounts in this snapshot/);
+});
+
+test("open access and revoked recorded accounts are labelled without claiming a finite total of site access", async () => {
+	const current = roster();
+	current.mode = "OPEN";
+	const records = activity();
+	records.accounts[0].currentAccess = { status: "OPEN", approvalStatus: "REVOKED" };
+	const client = fixture((url) => url.includes("/activity/access") ? current : records);
+	await client.ui.loadActivity();
+	await client.ui.loadRoster();
+	assert.match(client.ui.render(), /named entries are not a count of everyone who can access/);
+	assert.match(client.ui.render(), /Open mode · approval revoked/);
+});
+
+test("roster errors are explicit and recoverable without hiding valid recorded activity", async () => {
+	const client = fixture((url) => {
+		if (url.includes("/activity/access")) throw new Error("Roster offline");
+		return activity();
+	});
+
+	test("malformed roster responses do not become zero grants or invalid count success", async () => {
+		const client = fixture(() => ({}));
+		await client.ui.loadRoster();
+		const html = client.ui.render();
+		assert.match(html, /Current access roster could not be read/);
+		assert.doesNotMatch(html, /No current named access grants|NaN/);
+	});
+	await client.ui.loadActivity();
+	await client.ui.loadRoster();
+	const html = client.ui.render();
+	assert.match(html, /Roster offline/);
+	assert.match(html, /Refresh access roster/);
+	assert.match(html, /Registered accounts/);
+});
+
+for (const change of ["logout", "account", "role"]) {
+	test(`late access roster cannot leak after owner ${change}`, async () => {
+		const pending = deferred();
+		const client = fixture(() => pending.promise);
+		const loading = client.ui.loadRoster();
+		if (change === "logout") client.session = { authenticated: false };
+		if (change === "account") client.session = owner("owner-b");
+		if (change === "role") client.session = { ...client.session, isBetaAdmin: false };
+		client.ui.syncSession();
+		const data = roster();
+		data.entries[0].email = "PRIVATE-OLD-OWNER@example.test";
+		pending.resolve(data);
+		await loading;
+		assert.doesNotMatch(client.ui.render(), /PRIVATE-OLD-OWNER/);
+		client.session = owner();
+		client.ui.syncSession();
+		assert.doesNotMatch(client.ui.render(), /PRIVATE-OLD-OWNER|entry-0@example.test/);
+	});
+}
 
 test("activity renders honest counts, non-presence labels, empty-period copy and escaped identities", async () => {
 	const client = fixture(() => activity('<script>alert("identity")</script>'));

@@ -748,9 +748,9 @@ export async function rejectProspect(
 		prospectId,
 		from: ["DISCOVERED", "DRAFT_READY", "ERROR"],
 		to: "REJECTED",
-		updates: { error_code: "", error_message: "" },
+		updates: { error_code: "", error_message: "", draft_approved_at: null },
 	});
-	if (!changed) throw new Error("Prospect cannot be rejected in its current state.");
+	if (!changed) throw new ConflictError("This person changed or is not in a removable state. Reload before trying again.");
 	await audit(env, {
 		userId,
 		action: "PROSPECT_REJECTED",

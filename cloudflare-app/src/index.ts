@@ -87,8 +87,10 @@ import {
 import { getUserAnalytics } from "./lib/analytics";
 import {
 	getOwnerActivity,
+	getOwnerAccessRoster,
 	getOwnerEvents,
 	ownerActivityQuerySchema,
+	ownerAccessRosterQuerySchema,
 	ownerEventsQuerySchema,
 } from "./lib/owner-activity";
 import {
@@ -256,6 +258,11 @@ app.get("/api/beta/admin/access", requireUser, async (c) => {
 app.get("/api/beta/admin/activity", requireUser, async (c) => {
 	requireBetaAdmin(c.env, c.get("user")!);
 	return c.json(await getOwnerActivity(c.env, ownerActivityQuerySchema.parse(c.req.query())));
+});
+
+app.get("/api/beta/admin/activity/access", requireUser, async (c) => {
+	requireBetaAdmin(c.env, c.get("user")!);
+	return c.json(await getOwnerAccessRoster(c.env, ownerAccessRosterQuerySchema.parse(c.req.query())));
 });
 
 app.get("/api/beta/admin/activity/events", requireUser, async (c) => {

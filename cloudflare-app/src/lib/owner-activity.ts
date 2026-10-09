@@ -2,6 +2,7 @@ import { z } from "zod";
 import type { AppBindings } from "../types";
 import { ClientInputError } from "./errors";
 import { decodeUtf8, fromBase64Url, toBase64Url, utf8 } from "./encoding";
+import { betaAccessMode, betaAdminEmails, isBetaAdmin, normalizeBetaEmail, type BetaAccessStatus, type BetaAccessMode } from "./beta";
 
 const PAGE_SIZE = 20;
 const EVENT_PAGE_SIZE = 25;
@@ -49,6 +50,15 @@ export const ownerEventsQuerySchema = ownerActivityQuerySchema.extend({
 	userId: z.string().uuid().optional(),
 	action: actionSchema.default("ALL"),
 }).strict();
+
+export const ownerAccessRosterQuerySchema = z.object({
+	cursor: z.string().min(1).max(1024).optional(),
+}).strict();
+const rosterCursorSchema = z.object({
+	email: z.string().min(1).max(320),
+	mode: z.enum(["OPEN", "ALLOWLIST"]),
+}).strict();
+type CurrentAccess = { status: "ADMIN" | "OPEN" | "APPROVED" | "REVOKED" | "NOT_GRANTED"; approvalStatus: BetaAccessStatus | null };
 
 type ActivityQuery = z.infer<typeof ownerActivityQuerySchema>;
 type EventsQuery = z.infer<typeof ownerEventsQuerySchema>;
@@ -109,6 +119,7 @@ interface AccountRow extends ActivityCounts {
 	email: string;
 	created_at: string;
 	last_event_at: string | null;
+	access_status: BetaAccessStatus | null;
 }
 
 interface EventRow {
@@ -133,6 +144,7 @@ export interface OwnerActivity {
 		registeredAt: string;
 		counts: ActivityCounts;
 		lastRecordedEventAt: string | null;
+		currentAccess: CurrentAccess;
 	}>;
 	pageSize: number;
 	nextCursor: string | null;
@@ -155,6 +167,76 @@ export interface OwnerEvents {
 	}>;
 	pageSize: number;
 	nextCursor: string | null;
+}
+
+export interface OwnerAccessRoster {
+	fetchedAt: string;
+	mode: BetaAccessMode;
+	summary: { namedGrants: number; registeredEntries: number; noCurrentAccountEntries: number; deletedAccountEntries: number; approvedEmailEntries: number; configuredOwners: number };
+	entries: Array<{ email: string; name: string | null; userId: string | null; registration: "REGISTERED" | "NOT_REGISTERED" | "DELETED"; source: "OWNER" | "APPROVAL" | "OWNER_AND_APPROVAL" }>;
+	pageSize: number;
+	nextCursor: string | null;
+}
+
+function currentAccess(env: AppBindings, email: string, approvalStatus: BetaAccessStatus | null): CurrentAccess {
+	return { approvalStatus, status: isBetaAdmin(env, email) ? "ADMIN" : betaAccessMode(env) === "OPEN"
+		? "OPEN" : approvalStatus === "APPROVED" ? "APPROVED" : approvalStatus === "REVOKED" ? "REVOKED" : "NOT_GRANTED" };
+}
+
+export async function getOwnerAccessRoster(
+	env: AppBindings, query: z.infer<typeof ownerAccessRosterQuerySchema>, now = new Date(),
+): Promise<OwnerAccessRoster> {
+	const mode = betaAccessMode(env);
+	const admins = betaAdminEmails(env);
+	let after: string | undefined;
+	if (query.cursor) {
+		try {
+			const cursor = rosterCursorSchema.parse(JSON.parse(decodeUtf8(fromBase64Url(query.cursor))));
+			if (cursor.mode !== mode || cursor.email !== normalizeBetaEmail(cursor.email)) throw new Error("Roster changed");
+			after = cursor.email;
+		} catch {
+			throw new ClientInputError("Current access roster cursor is invalid. Refresh the roster.");
+		}
+	}
+	const cte = `WITH named AS (
+		SELECT email FROM beta_access WHERE status='APPROVED' AND email=LOWER(TRIM(email))
+		UNION SELECT value AS email FROM json_each(?)
+	), ranked_users AS (
+		SELECT id,name,email,deleted_at,
+			ROW_NUMBER() OVER(PARTITION BY LOWER(TRIM(email)) ORDER BY CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END,created_at DESC,id DESC) AS rn
+		FROM users
+	), roster AS (
+		SELECT n.email,u.id,u.name,u.deleted_at,ba.status AS approval_status,
+			CASE WHEN u.id IS NOT NULL AND u.deleted_at IS NULL THEN 1 ELSE 0 END AS registered
+		FROM named n LEFT JOIN ranked_users u ON LOWER(TRIM(u.email))=n.email AND u.rn=1
+		LEFT JOIN beta_access ba ON ba.email=n.email
+	)`;
+	const adminJson = JSON.stringify([...admins]);
+	const [summary, rows] = await Promise.all([
+		env.DB.prepare(`${cte} SELECT COUNT(*) AS namedGrants,COALESCE(SUM(registered),0) AS registeredEntries,
+			COALESCE(SUM(CASE WHEN id IS NOT NULL AND deleted_at IS NOT NULL THEN 1 ELSE 0 END),0) AS deletedAccountEntries,
+			COALESCE(SUM(CASE WHEN approval_status='APPROVED' THEN 1 ELSE 0 END),0) AS approvedEmailEntries FROM roster`)
+			.bind(adminJson).first<{ namedGrants: number; registeredEntries: number; deletedAccountEntries: number; approvedEmailEntries: number }>(),
+		env.DB.prepare(`${cte} SELECT email,id,name,deleted_at,approval_status,registered FROM roster
+			${after ? "WHERE email > ?" : ""} ORDER BY email ASC LIMIT ?`)
+			.bind(adminJson, ...(after ? [after] : []), PAGE_SIZE + 1)
+			.all<{ email: string; id: string | null; name: string | null; deleted_at: string | null; approval_status: BetaAccessStatus | null; registered: number }>(),
+	]);
+	if (!summary) throw new Error("Current access roster totals were unavailable.");
+	const page = rows.results.slice(0, PAGE_SIZE);
+	const last = page.at(-1);
+	return {
+		fetchedAt: now.toISOString(), mode,
+		summary: { ...summary, noCurrentAccountEntries: summary.namedGrants - summary.registeredEntries, configuredOwners: admins.size },
+		entries: page.map((row) => ({
+			email: normalizeBetaEmail(row.email), name: row.registered ? row.name : null, userId: row.registered ? row.id : null,
+			registration: row.registered ? "REGISTERED" : row.id ? "DELETED" : "NOT_REGISTERED",
+			source: admins.has(row.email) ? row.approval_status === "APPROVED" ? "OWNER_AND_APPROVAL" : "OWNER" : "APPROVAL",
+		})),
+		pageSize: PAGE_SIZE,
+		nextCursor: rows.results.length > PAGE_SIZE && last
+			? toBase64Url(utf8(JSON.stringify({ email: last.email, mode }))) : null,
+	};
 }
 
 export async function getOwnerActivity(
@@ -182,9 +264,10 @@ export async function getOwnerActivity(
 			      ${cursor ? "AND (created_at < ? OR (created_at = ? AND id < ?))" : ""}
 			    ORDER BY created_at DESC, id DESC LIMIT ?
 			 )
-			 SELECT u.id, u.name, u.email, u.created_at,
+			 SELECT u.id, u.name, u.email, u.created_at,ba.status AS access_status,
 			        MAX(ae.created_at) AS last_event_at, ${aggregateColumns}
-			   FROM page_users u LEFT JOIN audit_events ae
+			   FROM page_users u LEFT JOIN beta_access ba ON ba.email=LOWER(TRIM(u.email))
+			   LEFT JOIN audit_events ae
 			     ON ae.user_id = u.id AND ae.created_at >= ? AND ae.created_at <= ?
 			  GROUP BY u.id
 			  ORDER BY u.created_at DESC, u.id DESC`,
@@ -209,6 +292,7 @@ export async function getOwnerActivity(
 			registeredAt: row.created_at,
 			counts: counts(row),
 			lastRecordedEventAt: row.last_event_at,
+			currentAccess: currentAccess(env, row.email, row.access_status),
 		})),
 		pageSize: PAGE_SIZE,
 		nextCursor: accounts.results.length > PAGE_SIZE && last

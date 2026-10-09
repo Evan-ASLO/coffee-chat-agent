@@ -5,7 +5,7 @@ import type { AppBindings } from "../src/types";
 import { createSession, getCredential, upsertUser } from "../src/lib/db";
 import { readCredential, saveCredential } from "../src/lib/credentials";
 import { sha256 } from "../src/lib/encoding";
-import { getProspect, getSettings, insertProspects, type Prospect } from "../src/lib/store";
+import { getProspect, getSettings, insertProspects, transitionProspect, type Prospect } from "../src/lib/store";
 import { linkProspectToJob } from "../src/lib/jobs";
 import { enrichWithApollo, researchSource, validRecipientEmail } from "../src/lib/preparation";
 import { prepareProspect } from "../src/lib/workflow";
@@ -420,6 +420,55 @@ describe("approved persisted preparation", { timeout: 30000 }, () => {
 		expect((await call(auth, path(auth), "POST", undefined, { MAX_DRAFTS_PER_HOUR: "0" })).status).toBe(429);
 		expect((await call(auth, path(auth, "preparation/retry"), "POST", { stage: "EVERYTHING", expectedVersion: 0 })).status).toBe(400);
 		expect((await call(auth, path(auth), "POST", undefined, { BETA_ACCESS_MODE: "ALLOWLIST" })).status).toBe(401);
+		expect(fetch).not.toHaveBeenCalled();
+	});
+
+	it.each(["DISCOVERED", "ERROR", "DRAFT_READY"])("removes unsent %s people without provider access and prevents stale revival or send", async (status) => {
+		const auth = await fixture("NONE");
+		await linkProspectToJob(bindings, auth.user.id, jobId, auth.person.id);
+		await bindings.DB.prepare(`UPDATE prospects SET status=?,contact_approved_at=?,email=?,subject='Historical draft',
+			draft_body=?,draft_version=1,draft_hash='historical-hash',draft_approved_at=? WHERE id=? AND user_id=?`)
+			.bind(status, new Date().toISOString(), recipient, draftBody, new Date().toISOString(), auth.person.id, auth.user.id).run();
+		const removed = await call(auth, path(auth, "reject"));
+		expect(removed.status).toBe(200);
+		const person = await stored(auth);
+		expect(person).toMatchObject({ status: "REJECTED", draftBody, draftVersion: 1, draftApprovedAt: null });
+		expect(person.contactApprovedAt).toBeTruthy();
+		const link = await bindings.DB.prepare("SELECT COUNT(*) AS count FROM job_prospects WHERE user_id=? AND job_id=? AND prospect_id=?")
+			.bind(auth.user.id, jobId, auth.person.id).first<{ count: number }>();
+		expect(link?.count).toBe(1);
+		for (const action of ["prepare", "regenerate"]) {
+			expect((await call(auth, path(auth, action))).status).toBe(409);
+		}
+		expect((await call(auth, path(auth, "preparation/retry"), "POST", { stage: "RESEARCH", expectedVersion: 1 })).status).toBe(409);
+		const staleEdit = await call(auth, path(auth, "draft"), "PATCH", { email: recipient, subject: "Stale edit", body: draftBody, expectedVersion: 1 });
+		expect(staleEdit.status).toBe(400);
+		expect(await staleEdit.json()).toMatchObject({ message: "Draft was not found." });
+		expect((await call(auth, path(auth, "send"), "POST", { expectedVersion: 1, idempotencyKey: crypto.randomUUID() })).status).not.toBe(200);
+		expect(await transitionProspect(bindings, {
+			userId: auth.user.id, prospectId: auth.person.id, from: ["PREPARING"], to: "DRAFT_READY",
+		})).toBe(false);
+		expect((await stored(auth)).status).toBe("REJECTED");
+		expect(fetch).not.toHaveBeenCalled();
+	});
+	it("removal is independent of writing readiness but retains auth, CSRF, beta and ownership checks", async () => {
+		const auth = await fixture("NONE");
+		const other = await fixture("NONE");
+		await bindings.DB.prepare("UPDATE prospects SET status='ERROR',contact_approved_at=? WHERE id=?").bind(new Date().toISOString(), auth.person.id).run();
+		await bindings.DB.prepare("UPDATE user_settings SET sender_name='',personal_context_json='[]' WHERE user_id=?").bind(auth.user.id).run();
+		expect((await call(null, path(auth, "reject"))).status).toBe(401);
+		expect((await call(auth, path(auth, "reject"), "POST", undefined, {}, "wrong")).status).toBe(403);
+		expect((await call(other, path(auth, "reject"))).status).toBe(409);
+		expect((await call(other, path(other, "reject"), "POST", undefined, { BETA_ACCESS_MODE: "ALLOWLIST" })).status).toBe(401);
+		expect((await stored(auth)).status).toBe("ERROR");
+		expect((await call(auth, path(auth, "reject"))).status).toBe(200);
+		expect(fetch).not.toHaveBeenCalled();
+	});
+	it.each(["PREPARING", "SENDING", "SENT", "REPLIED"])("does not remove an in-flight or completed %s person", async (status) => {
+		const auth = await fixture("NONE");
+		await bindings.DB.prepare("UPDATE prospects SET status=? WHERE id=?").bind(status, auth.person.id).run();
+		expect((await call(auth, path(auth, "reject"))).status).toBe(409);
+		expect((await stored(auth)).status).toBe(status);
 		expect(fetch).not.toHaveBeenCalled();
 	});
 

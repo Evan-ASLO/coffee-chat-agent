@@ -22,7 +22,7 @@ function client() {
 	}));
 	const c = {
 		state: {
-			tab: "networking", networkingJob: null, preparationRequest: null,
+			tab: "networking", networkingJob: null, preparationRequest: null, networkingContacts: { status: "ready", prospects: [person] },
 			session: { authenticated: true, user: { id: "user-a" }, prospects: [person],
 				settings: { draftProvider: "OPENAI", enrichmentProvider: "APOLLO" },
 				features: { apolloEnrichment: true },
@@ -41,6 +41,7 @@ function client() {
 		showToast: (message, error) => c.toasts.push({ message, error }),
 		refresh: async () => { c.reloads += 1; c.state.preparationRequest = null; },
 		loadNetworkingContacts: async () => {},
+		loadAnalyticsData: async () => { c.analyticsReloads = (c.analyticsReloads || 0) + 1; },
 		api: async (url, options) => {
 			c.calls.push({ url, options });
 			return url === "/api/session" ? structuredClone(c.state.session) : { userId: "user-a", prospect: person };
@@ -48,14 +49,120 @@ function client() {
 		escapeHtml: (value) => String(value).replaceAll("<", "&lt;"),
 		escapeAttr: (value) => String(value).replaceAll('"', "&quot;"),
 		formatDate: (value) => value,
+		formatDateOnly: (value) => value, formatStatus: (value) => value,
+		companyInitials: () => "FA", icon: () => "", truncate: (value, length) => String(value).slice(0, length),
+		jobContactFor: () => null, linkedJobChips: () => "",
 	};
 	vm.createContext(c);
 	vm.runInContext([
-		"cancelPreparation", "currentProspectAction", "runProspectAction", "validDraftReview", "draftHasUnsavedChanges",
+		"cancelPreparation", "currentProspectAction", "applyPersonRemoval", "runProspectAction", "validDraftReview", "draftHasUnsavedChanges",
 		"syncDraftControls", "saveDraft", "sendDraft", "prepare", "regenerate", "retryPreparation",
 		"preparationBudget", "renderPreparationCosts", "preparationStatus", "renderPreparationContext",
+		"reject", "networkingPeople", "removePersonAction", "networkingTableRow", "networkFilterButton",
 	].map(definition).join("\n"), c);
 	return c;
+}
+
+test("failed approved and unapproved people have Remove even with an incomplete writing profile", () => {
+	for (const approved of [null, "approved"]) {
+		const c = client();
+		const person = { ...c.state.session.prospects[0], status: "ERROR", contactApprovedAt: approved };
+		const html = c.networkingTableRow(person, false);
+		assert.match(html, /data-reject="person-a"/);
+		assert.match(html, /aria-label="Remove Fictional Alex from active queues"/);
+		assert.match(html, />Remove<\/button>/);
+		assert.doesNotMatch(c.removePersonAction(person), /disabled/);
+		assert.match(html, approved ? /Retry draft/ : /Approve & prepare/);
+		c.state.networkingJob = { id: "job-a" };
+		assert.match(c.networkingTableRow(person, false), />Remove<\/button>/);
+	}
+	const c = client();
+	for (const status of ["PREPARING", "SENDING", "SENT", "REPLIED", "REJECTED"]) {
+		assert.equal(c.removePersonAction({ ...c.state.session.prospects[0], status }), "");
+	}
+});
+
+test("removal confirmation cancellation performs no API calls", async () => {
+	const c = client();
+	c.confirm = (message) => { c.confirmations.push(message); return false; };
+	await c.reject("person-a");
+	assert.equal(c.calls.length, 0);
+	assert.match(c.confirmations[0], /Remove Fictional Alex from the active approval and outreach queues/);
+	assert.match(c.confirmations[0], /record and history are kept/);
+	assert.match(c.confirmations[0], /does not permanently delete/);
+});
+
+test("confirmed removal closes stale draft review and updates active counts in general and linked contexts", async () => {
+	for (const job of [null, { id: "job-a" }]) {
+		const c = client();
+		c.state.networkingJob = job;
+		c.api = async (url, options) => {
+			c.calls.push({ url, options });
+			return url === "/api/session" ? structuredClone(c.state.session) : { ok: true };
+		};
+		await c.reject("person-a");
+		assert.match(c.calls[0].url, /\/person-a\/reject$/);
+		assert.equal(c.networkingPeople().length, 0);
+		assert.match(c.networkFilterButton("TO_APPROVE", "To approve"), /<span>0<\/span>/);
+		assert.equal(c.state.draftReview, null);
+		assert.equal(c.analyticsReloads, 1);
+		assert.equal(c.toasts.at(-1).message, "Removed from active approval and outreach queues.");
+		assert.equal(c.state.session.prospects[0].status, "REJECTED");
+		await c.sendDraft();
+		assert.equal(c.calls.filter((call) => call.url.endsWith("/send")).length, 0);
+	}
+});
+
+test("blocked removal retains the person and reports the backend failure", async () => {
+	const c = client();
+	c.api = async (url) => {
+		if (url === "/api/session") return structuredClone(c.state.session);
+		throw new Error("This person is being prepared. Reload.");
+	};
+	await c.reject("person-a");
+	assert.equal(c.networkingPeople().length, 1);
+	assert.equal(c.toasts.at(-1).error, true);
+	assert.match(c.toasts.at(-1).message, /being prepared/);
+});
+
+test("a confirmed removal stays inactive even if its saved-state refresh fails", async () => {
+	const c = client();
+	c.api = async (url) => {
+		if (url === "/api/session") throw new Error("Offline");
+		return { ok: true };
+	};
+	await c.reject("person-a");
+	assert.equal(c.networkingPeople().length, 0);
+	assert.equal(c.state.draftReview, null);
+	assert.match(c.toasts.at(-1).message, /could not be refreshed/);
+	assert.equal(c.toasts.at(-1).error, true);
+});
+
+test("a stale session refresh cannot restore a person whose removal was confirmed", async () => {
+	const c = client();
+	const stale = structuredClone(c.state.session);
+	c.api = async (url) => url === "/api/session" ? stale : { ok: true };
+	await c.reject("person-a");
+	assert.equal(c.networkingPeople().length, 0);
+	assert.equal(c.state.draftReview, null);
+});
+
+for (const change of ["account", "job", "logout", "navigation"]) {
+	test(`a late removal response cannot repopulate changed ${change} state`, async () => {
+		const c = client();
+		let finish;
+		c.api = async () => new Promise((resolve) => { finish = resolve; });
+		const pending = c.reject("person-a");
+		c.cancelPreparation();
+		if (change === "account") c.state.session = { authenticated: true, user: { id: "user-b" }, prospects: [] };
+		if (change === "job") c.state.networkingJob = { id: "job-b" };
+		if (change === "logout") c.state.session = { authenticated: false };
+		if (change === "navigation") c.state.tab = "settings";
+		const state = JSON.stringify(c.state);
+		finish({ ok: true });
+		await pending;
+		assert.equal(JSON.stringify(c.state), state);
+	});
 }
 
 test("preparation duplicate clicks authorize one action with explicit budgets", async () => {

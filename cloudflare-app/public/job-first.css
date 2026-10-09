@@ -307,6 +307,7 @@ dialog::backdrop { background: var(--cp-overlay); }
 .person-review-card > p { color: var(--cp-text-muted); max-width: 65ch; font-size: 15px; margin-block: 20px; overflow-wrap: anywhere; }
 .person-review-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; margin-top: 20px; }
 .person-review-card .table-actions { flex-wrap: wrap; }
+.remove-person-action { min-height: 44px; }
 .person-review-card .job-contact-priority { margin-top: 16px; }
 .people-cards .unconfirmed-contacts { grid-column: 1 / -1; font-size: 14px; }
 .tracker-right-rail { margin-top: 16px; }
