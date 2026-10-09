@@ -157,6 +157,7 @@ export const jobListQuerySchema = z
 				z.string().regex(/^(WINTER|SPRING|SUMMER|FALL)-20\d{2}$/),
 			])
 			.default(""),
+		posted: z.enum(["", "24h", "7d", "30d", "UNAVAILABLE"]).default(""),
 		page: z.coerce.number().int().min(1).max(100).default(1),
 		pageSize: z.coerce.number().int().min(1).max(50).default(24),
 	})
@@ -695,7 +696,8 @@ export async function listJobs(
 	catalog: JobCatalogFreshness;
 	facets: JobFacets;
 }> {
-	const filter = buildJobFilter(query);
+	const now = Date.now();
+	const filter = buildJobFilter(query, now);
 	const selection = jobSelection(userId);
 	const offset = (query.page - 1) * query.pageSize;
 	const [result, count, catalog, facets] = await Promise.all([
@@ -718,7 +720,7 @@ export async function listJobs(
 			.bind(...filter.bindings)
 			.first<{ count: number }>(),
 		getCatalogFreshness(env),
-		getJobFacets(env, query),
+		getJobFacets(env, query, now),
 	]);
 	const total = Number(count?.count || 0);
 	return {
@@ -737,10 +739,11 @@ export async function listJobs(
 async function getJobFacets(
 	env: AppBindings,
 	query: JobListQuery,
+	now: number,
 ): Promise<JobFacets> {
-	const industryFilter = buildJobFilter(query, "industry");
-	const lengthFilter = buildJobFilter(query, "length");
-	const termFilter = buildJobFilter(query, "term");
+	const industryFilter = buildJobFilter(query, now, "industry");
+	const lengthFilter = buildJobFilter(query, now, "length");
+	const termFilter = buildJobFilter(query, now, "term");
 	const [
 		industryRows,
 		lengthRows,
@@ -1388,6 +1391,14 @@ function activeCatalogResult(
 	};
 }
 
+function reliablePostedAt(value: string | null): string | null {
+	if (!value) return null;
+	const timestamp = Date.parse(value);
+	if (!Number.isFinite(timestamp) || timestamp > Date.now()) return null;
+	const canonical = new Date(timestamp).toISOString();
+	return value === canonical || value === canonical.replace(".000Z", "Z") ? value : null;
+}
+
 function mapJob(row: JobRow): JobRecord {
 	let categories: string[] = [];
 	let lengthMonths: number[] = [];
@@ -1427,7 +1438,7 @@ function mapJob(row: JobRow): JobRecord {
 		region: row.region,
 		categories,
 		url: row.url,
-		postedAt: row.posted_at,
+		postedAt: reliablePostedAt(row.posted_at),
 		postedText: row.posted_text,
 		description: row.description,
 		industry: row.industry,
@@ -1668,6 +1679,7 @@ function chunkValues<T>(values: T[], size: number): T[][] {
 
 function buildJobFilter(
 	query: JobListQuery,
+	now: number,
 	omit?: "industry" | "length" | "term",
 ): { clause: string; bindings: unknown[] } {
 	const where = ["j.is_active = 1"];
@@ -1716,6 +1728,22 @@ function buildJobFilter(
 			const [season, year] = query.term.split("-");
 			where.push("j.term_season = ? AND j.term_year = ?");
 			bindings.push(season, Number(year));
+		}
+	}
+	if (query.posted) {
+		// Round-trip UTC timestamps so SQLite's permissive date parsing cannot make invalid dates recent.
+		const reliable = `COALESCE((
+			(strftime('%Y-%m-%dT%H:%M:%SZ', j.posted_at) = j.posted_at OR
+			 strftime('%Y-%m-%dT%H:%M:%fZ', j.posted_at) = j.posted_at)
+			AND substr(j.posted_at, 12, 2) BETWEEN '00' AND '23'
+			AND julianday(j.posted_at) <= julianday(?)
+		), 0)`;
+		where.push(query.posted === "UNAVAILABLE" ? `NOT (${reliable})` : reliable);
+		bindings.push(new Date(now).toISOString());
+		if (query.posted !== "UNAVAILABLE") {
+			const hours = { "24h": 24, "7d": 7 * 24, "30d": 30 * 24 }[query.posted];
+			where.push("julianday(j.posted_at) >= julianday(?)");
+			bindings.push(new Date(now - hours * 60 * 60 * 1000).toISOString());
 		}
 	}
 	return { clause: where.join(" AND "), bindings };

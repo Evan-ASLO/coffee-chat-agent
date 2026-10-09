@@ -43,6 +43,7 @@ const state = {
 		industry: "",
 		length: "",
 		term: "",
+		posted: "",
 		page: 1,
 		pageSize: 24,
 	},
@@ -547,13 +548,14 @@ function renderJobs() {
 				</div>
 				${
 					state.jobMode === "all"
-						? `<details id="more-job-filters" class="filter-disclosure" ${state.jobFiltersOpen ? "open" : ""}><summary>More filters <span>${["company", "region", "category", "industry", "length", "term"].filter((key) => state.jobQuery[key]).length} active</span></summary><div class="filter-panel" aria-label="Job filters">
+						? `<details id="more-job-filters" class="filter-disclosure" ${state.jobFiltersOpen ? "open" : ""}><summary>More filters <span>${["company", "region", "category", "industry", "length", "term", "posted"].filter((key) => state.jobQuery[key]).length} active</span></summary><div class="filter-panel" aria-label="Job filters">
 								<label>Industry<select id="job-industry">${facetOptions(state.jobs.facets?.industries, state.jobQuery.industry, "All industries")}</select></label>
 								<label>Career track<input id="job-category" value="${escapeAttr(state.jobQuery.category)}" placeholder="Any role" /></label>
 								<label>Term<select id="job-term">${facetOptions(state.jobs.facets?.terms, state.jobQuery.term, "Any term")}</select></label>
 								<label>Company<input id="job-company" value="${escapeAttr(state.jobQuery.company)}" placeholder="Search companies…" /></label>
 								<label>Region<input id="job-region" value="${escapeAttr(state.jobQuery.region)}" placeholder="Canada, Ontario…" /></label>
 								<label>Length<select id="job-length">${facetOptions(state.jobs.facets?.lengths, state.jobQuery.length, "Any length")}</select></label>
+								<label><span id="job-posted-label">Date posted</span><select id="job-posted" aria-labelledby="job-posted-label" aria-describedby="job-posted-help">${[["", "Any time"], ["24h", "Past 24 hours"], ["7d", "Past 7 days"], ["30d", "Past 30 days"], ["UNAVAILABLE", "Date unavailable"]].map(([entry, label]) => `<option value="${entry}" ${state.jobQuery.posted === entry ? "selected" : ""}>${label}</option>`).join("")}</select><small id="job-posted-help">Source posting dates only. Missing or unreliable dates are unavailable.</small></label>
 								${jobQuickFilters("Location", "location", locationOptions.map((value) => ({ value, label: value })), state.jobQuery.location)}
 								${jobQuickFilters("Industry", "industry", state.jobs.facets?.industries || [], state.jobQuery.industry, 3)}
 								${jobQuickFilters("Term", "term", state.jobs.facets?.terms || [], state.jobQuery.term, 2)}
@@ -1326,6 +1328,7 @@ function wireTab() {
 		.getElementById("clear-home-job-search")
 		?.addEventListener("click", clearHomeJobSearch);
 	document.getElementById("job-filter-form")?.addEventListener("submit", filterJobs);
+	document.getElementById("job-posted")?.addEventListener("change", filterJobs);
 	document.getElementById("clear-job-filters")?.addEventListener("click", clearJobFilters);
 	document.querySelectorAll("[data-job-quick-key]").forEach((button) =>
 		button.addEventListener("click", () =>
@@ -1595,13 +1598,11 @@ async function filterJobs(event) {
 		industry: value("job-industry"),
 		length: value("job-length"),
 		term: value("job-term"),
+		posted: value("job-posted"),
 		page: 1,
 	};
 	syncJobQueryToUrl();
-	await run("Searching jobs…", async () => {
-		state.jobs = await fetchJobs();
-		render();
-	});
+	await loadFilteredJobs("Searching jobs…");
 }
 
 async function clearJobFilters() {
@@ -1615,13 +1616,11 @@ async function clearJobFilters() {
 		industry: "",
 		length: "",
 		term: "",
+		posted: "",
 		page: 1,
 	};
 	syncJobQueryToUrl();
-	await run("Clearing filters…", async () => {
-		state.jobs = await fetchJobs();
-		render();
-	});
+	await loadFilteredJobs("Clearing filters…");
 }
 
 async function changeQuickJobFilter(key, entry) {
@@ -1637,20 +1636,31 @@ async function changeQuickJobFilter(key, entry) {
 	state.jobQuery[key] = state.jobQuery[key] === entry ? "" : entry;
 	state.jobQuery.page = 1;
 	syncJobQueryToUrl();
-	await run("Updating job filters…", async () => {
-		state.jobs = await fetchJobs();
-		render();
-	});
+	await loadFilteredJobs("Updating job filters…");
 }
 
 async function changeJobPage(page) {
 	if (!Number.isInteger(page) || page < 1) return;
 	state.jobQuery.page = page;
 	syncJobQueryToUrl();
-	await run("Loading jobs…", async () => {
-		state.jobs = await fetchJobs();
+	await loadFilteredJobs("Loading jobs…", true);
+}
+
+let jobResultsRequest = 0;
+async function loadFilteredJobs(message, scroll = false) {
+	const request = ++jobResultsRequest;
+	const identity = state.session?.user?.id;
+	const query = JSON.stringify(state.jobQuery);
+	const navigation = navigationRestore;
+	const focusId = document.activeElement?.id;
+	await run(message, async () => {
+		const result = await fetchJobs();
+		if (request !== jobResultsRequest || identity !== state.session?.user?.id ||
+			query !== JSON.stringify(state.jobQuery) || navigation !== navigationRestore) return;
+		state.jobs = result;
 		render();
-		window.scrollTo({ top: 0, behavior: preferredScrollBehavior() });
+		if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
+		if (scroll) window.scrollTo({ top: 0, behavior: preferredScrollBehavior() });
 	});
 }
 
@@ -2813,6 +2823,7 @@ function loadJobQueryFromUrl() {
 		"industry",
 		"length",
 		"term",
+		"posted",
 	]) {
 		state.jobQuery[key] = params.get(key) || "";
 	}
@@ -2832,6 +2843,7 @@ function syncJobQueryToUrl() {
 		"industry",
 		"length",
 		"term",
+		"posted",
 		"page",
 	]) {
 		url.searchParams.delete(key);
@@ -2845,6 +2857,7 @@ function syncJobQueryToUrl() {
 		"industry",
 		"length",
 		"term",
+		"posted",
 	]) {
 		if (state.jobQuery[key]) {
 			url.searchParams.set(key, state.jobQuery[key]);
@@ -2890,7 +2903,7 @@ function initialView() {
 	const params = new URLSearchParams(location.search);
 	if (!hash && state.session?.authenticated && window.JobFirstUI.isJobId(params.get("contactJob"))) return "networking";
 	if (!hash && (window.JobFirstUI.isJobId(params.get("selectedJob")) ||
-		["q", "company", "location", "region", "category", "industry", "length", "term"].some((key) => params.has(key)))) return "jobs";
+		["q", "company", "location", "region", "category", "industry", "length", "term", "posted"].some((key) => params.has(key)))) return "jobs";
 	return "home";
 }
 

@@ -60,7 +60,7 @@ export function safeAppReturnPath(origin: string, input?: string): string {
 	const url = new URL(input, origin);
 	if (url.origin !== new URL(origin).origin || url.pathname !== "/" || url.username || url.password) throw new ClientInputError("Invalid app return destination.");
 	const result = new URL("/", origin);
-	for (const key of ["q", "company", "location", "region", "category", "industry", "length", "term", "page", "pageSize", "selectedJob", "contactJob"]) {
+	for (const key of ["q", "company", "location", "region", "category", "industry", "length", "term", "posted", "page", "pageSize", "selectedJob", "contactJob"]) {
 		const value = url.searchParams.get(key);
 		if (value !== null) {
 			if (value.length > 240) throw new ClientInputError("Invalid app return destination.");
