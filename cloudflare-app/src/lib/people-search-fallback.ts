@@ -3,7 +3,6 @@ import { fetchJson, ProviderHttpError } from "./fetch";
 import {
 	employerProfessionalTopics,
 	employerSearchAliases,
-	sameEmployer,
 } from "./job-discovery";
 import {
 	linkedInDiscoveryPerson,
@@ -14,6 +13,7 @@ import {
 	selectDiscoveryPeople,
 	type DiscoveredPerson,
 	type DiscoveryCriteria,
+	type DiscoveryRejectionCounts,
 } from "./providers";
 
 export type PeopleSearchFallbackProvider =
@@ -49,7 +49,7 @@ const groundedPersonSchema = z
 	.object({
 		fullName: z.string().trim().min(3).max(150),
 		title: z.string().trim().max(200),
-		company: z.string().trim().min(1).max(200),
+		company: z.string().trim().max(200),
 		location: z.string().trim().max(200),
 		sourceUrl: z.string().url().max(2048),
 		evidence: z.string().trim().min(1).max(1200),
@@ -116,6 +116,7 @@ interface GroundedOutput {
 }
 
 export interface PeopleSearchFallbackResult {
+	rejectionCounts?: DiscoveryRejectionCounts;
 	provider: PeopleSearchFallbackProvider;
 	model: string;
 	status: "SUCCESS" | "SEARCH_LIMITED";
@@ -186,12 +187,13 @@ export async function discoverWithPeopleSearchFallback(input: {
 				.filter(Boolean),
 		);
 		const people = new Map<string, DiscoveredPerson>();
+		const rejectionCounts = { unsafeOrNonProfile: 0, noIdentifiablePerson: 0, nonProfessional: 0, duplicate: 0, uncitedSource: 0 };
 		for (const candidate of parsed.people) {
 			const sourceUrl = normalizeProfessionalSourceUrl(candidate.sourceUrl);
-			if (!sourceUrl || !citedUrls.has(sourceUrl)) continue;
-			if (input.criteria.jobContext && !sameEmployer(candidate.company, input.criteria.jobContext.company)) continue;
+			if (!sourceUrl) { rejectionCounts.unsafeOrNonProfile += 1; continue; }
+			if (!citedUrls.has(sourceUrl)) { rejectionCounts.uncitedSource += 1; continue; }
 			const result = {
-				title: `${candidate.fullName} - ${candidate.title}`,
+				title: `${candidate.fullName} - ${candidate.title || "Profile"}${candidate.company ? ` - ${candidate.company}` : ""}`,
 				url: sourceUrl,
 				content: input.criteria.jobContext
 					? candidate.evidence
@@ -200,12 +202,12 @@ export async function discoverWithPeopleSearchFallback(input: {
 			const accepted =
 				linkedInDiscoveryPerson(result, input.criteria) ||
 				professionalBioPerson(result, input.criteria);
-			if (!accepted) continue;
+			if (!accepted) { rejectionCounts.nonProfessional += 1; continue; }
+			if (people.has(discoveryPersonKey(accepted, input.criteria))) { rejectionCounts.duplicate += 1; continue; }
 			people.set(discoveryPersonKey(accepted, input.criteria), {
 				...accepted,
 				discoveryProvider: groundedDiscoveryProvider(provider),
 			});
-			if (!input.criteria.jobContext && people.size >= input.count) break;
 		}
 		const selected = selectDiscoveryPeople([...people.values()], {
 			...input.criteria, count: Math.min(Math.max(input.count, 1), 10),
@@ -217,6 +219,7 @@ export async function discoverWithPeopleSearchFallback(input: {
 			reason: output.searchLimited ? "max_uses_exceeded" : null,
 			returned: parsed.people.length,
 			accepted: selected.length,
+			rejectionCounts,
 			people: selected,
 		};
 	} catch (error) {
@@ -285,9 +288,6 @@ async function requestGroundedSearch(input: {
 							{
 								type: "web_search",
 								search_context_size: "low",
-								filters: {
-									allowed_domains: input.allowedDomains.slice(0, 100),
-								},
 							},
 						],
 						tool_choice: "auto",
@@ -318,7 +318,6 @@ async function requestGroundedSearch(input: {
 								type: "web_search_20250305",
 								name: "web_search",
 								max_uses: anthropicSearchLimit(input.anthropicSearchMaxUses),
-								allowed_domains: input.allowedDomains,
 							},
 						],
 						messages: [{ role: "user", content: input.prompt }],
@@ -358,7 +357,7 @@ function groundedPrompt(
 				"Another entry-level employee currently at this employer.",
 			],
 			jobRequirements: [
-				"All priorities require cited current-employer evidence; exclude former employees and other employers.",
+				"Confirmed priorities require cited current-employer evidence. Other identifiable people may be returned for review but remain unconfirmed, not promoted to these priorities.",
 				"Evidence must state the person's current role and junior/entry-level status or explicit early-career recruiting remit.",
 				"Do not infer entry level from analyst/associate alone, age, photos or invented years; senior/lead/director/VP roles are not entry level.",
 				"A generic recruiter is not confirmed as a campus recruiter or as the hiring owner of this vacancy.",
@@ -366,10 +365,11 @@ function groundedPrompt(
 			],
 		} : {}),
 		location: criteria.locations,
-		approvedDomains: allowedDomains,
+		preferredDomains: allowedDomains,
 		requirements: [
-			"Use only public person-specific professional sources on the approved domains.",
-			"Each person must have a direct cited LinkedIn /in page or approved public biography page.",
+			"Use public person-specific professional sources; preferred domains are not a restriction.",
+			"Each person must have a direct cited LinkedIn /in page or public professional biography page.",
+			"Prioritize strong role/employer fits but retain plausible identifiable people with incomplete or differing criteria for human review. Leave unknown fields empty.",
 			"Reject job, careers, search, news, list, social-feed, and data-broker pages.",
 			"Do not invent or infer names, roles, company, location, evidence, or URLs.",
 			"sourceUrl must exactly equal a cited source URL.",
@@ -380,7 +380,7 @@ function groundedPrompt(
 				{
 					fullName: "string",
 					title: "string or empty string",
-					company: "string",
+					company: "string or empty string",
 					location: "string or empty string",
 					sourceUrl: "absolute cited URL",
 					evidence: "short cited factual sentence",

@@ -119,7 +119,7 @@
 		{
 			id: "networking-review", chapter: 1, view: "networking", target: "networking-review",
 			title: "First approval: the person",
-			body: () => `<p>Review the person's public profile, relevance, and match quality. <strong>Broader company</strong> matches may not fit the exact role; inspect them carefully rather than treating them as verified contacts.</p>
+			body: () => `<p>Review the person's public profile, evidence, and match quality. <strong>Possible/uncertain</strong> matches may have an unknown or different employer or role. Inspect the source before approving; neither this label nor a strong match verifies identity or authorizes sending.</p>
 				<p><strong>Approve &amp; prepare</strong> shows costs before at most one selected email lookup, one targeted Tavily research search, and one saved drafting-model request. An authorized Apollo lookup may cost 1 credit for demographics or email even if no email is found; legacy plans differ. No phone, personal-email reveal, waterfall or automatic provider switching is enabled.</p>
 				<p>Only identity-associated public professional snippets and your factual saved experience feed the draft. Review sources in <strong>Email &amp; research context</strong>. Missing, unverified or wrong-person email is never guessed; failed/empty research remains labelled as limited context. Completed stages are saved independently.</p>
 				<p>The workflow rail remains useful when your network is empty. This tour never approves or prepares a person, and never uses a real contact as a scripted exercise.</p>`,

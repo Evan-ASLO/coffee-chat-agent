@@ -215,17 +215,17 @@ describe("cited people-search fallback providers", () => {
 			});
 			expect(result.people).toEqual([
 				expect.objectContaining({
+					fullName: "Jamie Example",
+					discoveryProvider: testCase.discoveryProvider,
+					linkedinUrl: "https://www.linkedin.com/in/jamie-bmo",
+					matchQuality: "STRONG",
+				}),
+				expect.objectContaining({
 					fullName: "Alexander Spark",
 					discoveryProvider: testCase.discoveryProvider,
 					sourceUrl:
 						"https://privatewealth.bmo.com/en/people/alexander-spark",
 					matchQuality: "BROADER_COMPANY",
-				}),
-				expect.objectContaining({
-					fullName: "Jamie Example",
-					discoveryProvider: testCase.discoveryProvider,
-					linkedinUrl: "https://www.linkedin.com/in/jamie-bmo",
-					matchQuality: "STRONG",
 				}),
 			]);
 			expect(fetchSpy).toHaveBeenCalledTimes(1);
@@ -249,29 +249,21 @@ describe("cited people-search fallback providers", () => {
 				expect(body.tools[0]).toMatchObject({
 					type: "web_search",
 					search_context_size: "low",
-					filters: {
-						allowed_domains: expect.arrayContaining([
-							"privatewealth.bmo.com",
-							"linkedin.com",
-						]),
-					},
 				});
+				expect(body.tools[0].filters).toBeUndefined();
 			} else {
 				expect(body).toMatchObject({ max_tokens: 1400, temperature: 0.1 });
 				expect(body.tools[0]).toMatchObject({
 					type: "web_search_20250305",
 					name: "web_search",
 					max_uses: 1,
-					allowed_domains: expect.arrayContaining([
-						"privatewealth.bmo.com",
-						"linkedin.com",
-					]),
 				});
+				expect(body.tools[0].allowed_domains).toBeUndefined();
 			}
 		});
 	}
 
-	it("rejects uncited, host-mismatched, job, and Google redirect objects", async () => {
+	it("retains cited imperfect matches but rejects uncited jobs and redirect sources", async () => {
 		const fetchSpy = vi.spyOn(globalThis, "fetch");
 		const candidates = [
 			{
@@ -344,15 +336,17 @@ describe("cited people-search fallback providers", () => {
 					criteria,
 					count: 1,
 				});
+				const reviewable = [1, 4, 5].includes(index);
 				expect(result).toMatchObject({
 					status:
 						testCase.provider === "ANTHROPIC"
 							? "SEARCH_LIMITED"
 							: "SUCCESS",
 					returned: 1,
-					accepted: 0,
-					people: [],
+					accepted: reviewable ? 1 : 0,
 				});
+				if (reviewable) expect(result.people[0]?.matchQuality).toBe("BROADER_COMPANY");
+				else expect(result.people).toEqual([]);
 			}
 		}
 	});
@@ -487,9 +481,9 @@ describe("cited people-search fallback providers", () => {
 			returned: 3,
 			accepted: 2,
 		});
-		expect(result.people.map((person) => person.sourceUrl)).toEqual(citations);
+		expect(result.people.map((person) => person.sourceUrl)).toEqual([...citations].reverse());
 		expect(result.people.map((person) => person.matchQuality)).toEqual([
-			"BROADER_COMPANY", "STRONG",
+			"STRONG", "BROADER_COMPANY",
 		]);
 		expect(fetchSpy).toHaveBeenCalledTimes(1);
 	});

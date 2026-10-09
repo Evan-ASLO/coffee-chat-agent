@@ -10,12 +10,89 @@ import {
 	buildProfessionalBioQuery,
 	discoverWithTavily,
 	parseProfessionalBioTitle,
+	professionalBioPerson,
+	linkedInDiscoveryPerson,
+	normalizeProfessionalSourceUrl,
+	selectDiscoveryPeople,
 	professionalBioDomains,
 	type DiscoveryCriteria,
 } from "../src/lib/providers";
 
 afterEach(() => {
 	vi.restoreAllMocks();
+});
+
+describe("recall-first identifiable professional candidates", () => {
+	const criteria: DiscoveryCriteria = {
+		roles: ["Investment Analyst"], industries: [], companies: ["BMO Financial Group"],
+		locations: ["Toronto"], keywords: [], seniority: [], objective: "", count: 3,
+	};
+	it("accepts an unfamiliar public bio with compact delimiters without claiming the target employer", () => {
+		const person = professionalBioPerson({
+			title: "Jane Doe|Designer at Other Firm",
+			url: "https://alumni.university.edu/people/jane-doe?utm_source=search",
+			content: "Jane Doe works as a designer at Other Firm.",
+		}, criteria);
+		expect(person).toMatchObject({
+			fullName: "Jane Doe", company: "Other Firm", companyDomain: "",
+			title: "Designer", matchQuality: "BROADER_COMPANY",
+			sourceUrl: "https://alumni.university.edu/people/jane-doe",
+		});
+		expect(person?.whyRelevant).toContain("need review");
+	});
+	it("recovers a bare person name and a snippet-led identity, without inventing a title or company", () => {
+		for (const title of ["Jamie Rivera", "Professional biography"]) {
+			const person = professionalBioPerson({
+				title, url: "https://consultancy.com/bio/jamie-rivera",
+				content: "Jamie Rivera works with a professional research team.",
+			}, criteria);
+			expect(person).toMatchObject({ fullName: "Jamie Rivera", title: "", company: "", matchQuality: "BROADER_COMPANY" });
+		}
+	});
+	it("does not turn a requested employer mention into a confirmed employment field", () => {
+		const person = professionalBioPerson({
+			title: "Casey Morgan", url: "https://consultancy.com/bio/casey",
+			content: "Casey Morgan is an independent professional analyst interested in events hosted by BMO Financial Group in Toronto.",
+		}, criteria);
+		expect(person).toMatchObject({ fullName: "Casey Morgan", company: "", title: "", matchQuality: "BROADER_COMPANY" });
+	});
+	it("rejects non-person and unsafe pages even when a plausible name is supplied", () => {
+		for (const url of [
+			"javascript:alert(1)", "https://user:secret@consultancy.com/bio/jane",
+			"http://127.0.0.1/people/jane", "http://[::1]/people/jane",
+			"https://localhost/people/jane", "https://firm.internal/bio/jane",
+			"https://consultancy.com/jobs/jane", "https://consultancy.com/search",
+			"https://consultancy.com/login", "https://consultancy.com/people",
+			"https://consultancy.com/", "https://linkedin.com/company/firm",
+			"https://consultancy.com/jobs.html", "https://consultancy.com/j%6fbs/jane",
+			"https://consultancy.com/company/firm", "https://consultancy.com/bio/jane.exe",
+			"https://consultancy.com/bio/jane%00", "https://consultancy.com/bio/jane%ZZ",
+		]) expect(professionalBioPerson({ title: "Jane Doe - Analyst", url, content: "Jane Doe is an analyst." }, criteria)).toBeNull();
+		expect(professionalBioPerson({ title: "Conference Speakers", url: "https://conference.com/speakers/event", content: "Our professional team." }, criteria)).toBeNull();
+		expect(normalizeProfessionalSourceUrl("https://consultancy.com/people/jane#bio")).toBe("https://consultancy.com/people/jane");
+	});
+	it("ranks strong evidence before uncertain matches and retains bounded deduplication counts", async () => {
+		const weak = { title: "Jane Doe|Designer|Other Firm", url: "https://linkedin.com/in/jane-doe", content: "Designer at Other Firm." };
+		const strong = { title: "Jamie Rivera - Investment Analyst - BMO | LinkedIn", url: "https://linkedin.com/in/jamie-rivera", content: "Investment Analyst at BMO Financial Group in Toronto." };
+		const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({ results: [weak, weak, strong] })));
+		const result = await discoverWithTavily("fake", { ...criteria, count: 2 });
+		expect(result.people.map((person) => person.fullName)).toEqual(["Jamie Rivera", "Jane Doe"]);
+		expect(result.rejectionCounts?.duplicate).toBe(1);
+		expect(spy).toHaveBeenCalledTimes(1);
+	});
+	it("a wrong employer is reviewable but never promoted to a confirmed job tier", () => {
+		const jobCriteria = deriveJobDiscoveryCriteria({
+			id: "b".repeat(64), title: "Investment Analyst Intern", company: "BMO",
+			location: "Toronto", region: "Canada", industry: null,
+		});
+		const candidate = linkedInDiscoveryPerson({
+			title: "Jane Doe - Junior Investment Analyst - Other Firm | LinkedIn",
+			url: "https://linkedin.com/in/jane-doe", content: "Jane Doe is a junior Investment Analyst at Other Firm.",
+		}, jobCriteria);
+		expect(candidate?.company).toBe("Other Firm");
+		expect(candidate?.jobContact?.tier).toBeNull();
+		expect(selectDiscoveryPeople(candidate ? [candidate] : [], jobCriteria)[0]?.jobContact?.tier).toBeNull();
+	});
 });
 
 describe("job-derived networking criteria", () => {
@@ -337,11 +414,11 @@ describe("professional bio fallback", () => {
 			fallbackProviderReturned: 5,
 			fallbackAccepted: 3,
 			insufficientMatchRejected: 0,
-			strongAccepted: 3,
-			broaderAccepted: 0,
+			strongAccepted: 2,
+			broaderAccepted: 1,
 		});
 		expect(result.people).toHaveLength(3);
-		expect(result.people[0]).toMatchObject({
+		expect(result.people.find((person) => person.fullName === "Alexander Spark")).toMatchObject({
 			fullName: "Alexander Spark",
 			company: "BMO Financial Group",
 			companyDomain: "bmo.com",
@@ -349,7 +426,7 @@ describe("professional bio fallback", () => {
 			sourceUrl:
 				"https://privatewealth.bmo.com/en/people/alexander-spark",
 		});
-		expect(result.people[1]).toMatchObject({
+		expect(result.people.find((person) => person.fullName === "Brent Joyce")).toMatchObject({
 			fullName: "Brent Joyce",
 			company: "BMO Financial Group",
 			companyDomain: "bmo.com",
@@ -357,7 +434,7 @@ describe("professional bio fallback", () => {
 			sourceUrl:
 				"https://privatewealth-insights.bmo.com/en/people/brent-joyce",
 		});
-		expect(result.people[2]).toMatchObject({
+		expect(result.people.find((person) => person.fullName === "Natalya Demberg")).toMatchObject({
 			fullName: "Natalya Demberg",
 			company: "BMO Financial Group",
 			linkedinUrl: "",
@@ -380,13 +457,8 @@ describe("professional bio fallback", () => {
 		);
 		expect(fallbackBody.query).not.toContain("site:linkedin.com/in");
 		expect(fallbackBody.query).not.toContain("site:");
-		expect(fallbackBody.include_domains).toEqual([
-			"privatewealth.bmo.com",
-			"privatewealth-insights.bmo.com",
-			"bmo.com",
-			"theorg.com",
-		]);
-		expect(fallbackBody.include_domains_mode).toBe("restrict");
+		expect(fallbackBody.include_domains).toBeUndefined();
+		expect(fallbackBody.include_domains_mode).toBeUndefined();
 	});
 
 	it("preserves accepted LinkedIn results without invoking fallback", async () => {
@@ -551,12 +623,12 @@ describe("professional bio fallback", () => {
 			matchQuality: "BROADER_COMPANY",
 		});
 		expect(td.people[0]).toMatchObject({
-			company: "TD Bank Group",
+			company: "TD",
 			matchQuality: "BROADER_COMPANY",
 		});
 	});
 
-	it("rejects company-only profiles without location or hiring relevance", async () => {
+	it("retains company-only profiles for uncertain human review", async () => {
 		const fetchSpy = vi
 			.spyOn(globalThis, "fetch")
 			.mockResolvedValueOnce(
@@ -588,15 +660,15 @@ describe("professional bio fallback", () => {
 			count: 1,
 		});
 		expect(result).toMatchObject({
-			people: [],
 			strongAccepted: 0,
-			broaderAccepted: 0,
-			insufficientMatchRejected: 1,
+			broaderAccepted: 1,
+			insufficientMatchRejected: 0,
 		});
-		expect(fetchSpy).toHaveBeenCalledTimes(2);
+		expect(result.people[0]?.whyRelevant).toContain("need review");
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
 	});
 
-	it("rejects a Lyft query result without Lyft company evidence", async () => {
+	it("retains a differing employer without asserting the requested employer", async () => {
 		const fetchSpy = vi
 			.spyOn(globalThis, "fetch")
 			.mockResolvedValueOnce(
@@ -636,15 +708,16 @@ describe("professional bio fallback", () => {
 		});
 		expect(result).toMatchObject({
 			primaryProviderReturned: 1,
-			primaryAccepted: 0,
+			primaryAccepted: 1,
 			fallbackProviderReturned: 0,
 			fallbackAccepted: 0,
-			insufficientMatchRejected: 1,
+			insufficientMatchRejected: 0,
 			strongAccepted: 0,
-			broaderAccepted: 0,
-			people: [],
+			broaderAccepted: 1,
 		});
-		expect(fetchSpy).toHaveBeenCalledTimes(2);
+		expect(result.people[0]?.company).toBe("UMBC");
+		expect(result.people[0]?.matchQuality).toBe("BROADER_COMPANY");
+		expect(fetchSpy).toHaveBeenCalledTimes(1);
 	});
 
 	it("preserves manual no-company venture capital discovery", async () => {

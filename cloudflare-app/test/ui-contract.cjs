@@ -103,11 +103,11 @@ test("reflows shared controls without hiding filters or losing navigation focus"
 	assert.match(read("public/index.html"), /viewport-fit=cover/);
 });
 
-test("bounds accessible tables and native dialogs instead of clipping their actions", () => {
+test("uses semantic tracked rows and people cards with accessible native dialogs", () => {
 	const app = read("public/app.js");
 	const styles = read("public/styles.css");
-	assert.match(app, /class="responsive-table-wrap" tabindex="0" role="region"/);
-	assert.match(app, /<th scope="col">/);
+	assert.match(app, /class="tracked-role-row"/);
+	assert.match(app, /class="person-review-card/);
 	assert.match(app, /aria-labelledby="application-dialog-title"/);
 	assert.match(app, /aria-labelledby="discovery-title"/);
 	assert.match(app, /aria-labelledby="profile-settings-title"/);
@@ -159,9 +159,10 @@ test("renders the native-density Jobs composition and every real filter", () => 
 	assert.match(styles, /\.jobs-reference-layout\s*\{[^}]*208px;/s);
 });
 
-test("uses compact Applications table editing without invented reminders", () => {
+test("uses tracked-role rows and horizontal stages without invented reminders", () => {
 	const app = read("public/app.js");
-	assert.match(app, /class="data-table applications-table"/);
+	assert.match(app, /class="tracked-role-list applications-table"/);
+	assert.match(app, /class="workflow-tabs"/);
 	assert.match(app, /id="application-dialog"/);
 	assert.match(app, /id="application-dialog-stage"/);
 	assert.match(app, /id="application-dialog-notes"/);
@@ -172,16 +173,16 @@ test("uses compact Applications table editing without invented reminders", () =>
 	assert.doesNotMatch(app, /upcoming interview|reminder due|next interview/i);
 });
 
-test("keeps networking approval-first in a compact table and discovery dialog", () => {
+test("keeps networking approval-first in people cards and discovery dialog", () => {
 	const app = read("public/app.js");
-	assert.match(app, /class="data-table networking-table"/);
+	assert.match(app, /class="people-cards networking-table"/);
 	assert.match(app, /id="discovery-dialog"/);
 	assert.match(app, /Search never prepares or sends outreach automatically/);
 	assert.match(app, /data-prepare/);
 	assert.match(app, /data-review/);
 	assert.match(app, /data-regenerate/);
 	assert.match(app, /Approve & prepare/);
-	assert.match(app, /Broader company/);
+	assert.match(app, /Possible \/ uncertain/);
 	assert.match(app, /Email needed before send/);
 	assert.match(app, /LinkedIn profile/);
 	assert.match(app, /Public profile/);

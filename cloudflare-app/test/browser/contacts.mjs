@@ -113,6 +113,7 @@ try {
 		async function aiAction(action, text) {
 			const before = paid.length;
 			planned = { mode: "AI_SUPPLEMENT", jobId: software, ...action };
+			if (!await page.locator("#find-more-ai").isVisible()) await page.locator(".ai-discovery > summary").click();
 			await page.locator("#find-more-ai").click();
 			await waitForResult("AI_SUPPLEMENT", text);
 			assert.equal(paid.length, before + 1, "Exactly one API action per explicit AI click.");
@@ -156,6 +157,7 @@ try {
 		await waitForResult("TAVILY", "already tracked");
 		assert.equal(paid.length, 1);
 		assert.deepEqual(paid.map((call) => call.mode), ["TAVILY"]);
+		await page.locator(".ai-discovery > summary").click();
 		await page.locator("#anthropic-expanded-search").check();
 		await page.locator("#retry-job-discovery").click();
 		assert.equal(paid.length, 1, "Ordinary Retry only opens the Tavily form.");
@@ -180,6 +182,7 @@ try {
 		});
 		assert.ok(separation >= 4);
 		await screenshot("ai-partial-preserved");
+		await page.locator(".ai-discovery > summary").click();
 		await page.locator("#anthropic-expanded-search").check();
 		await aiAction({ budget: 3, summary: { fallbackStatus: "SEARCH_LIMITED", fallbackReason: "max_uses_exceeded" } }, "3-search limit");
 		assert.equal(await page.locator(".networking-table .person-cell").count(), 6);
@@ -227,6 +230,7 @@ try {
 		await page.locator(`[data-job-network="${software}"]`).click();
 		await readyContacts();
 		planned = { mode: "AI_SUPPLEMENT", jobId: software, defer: true };
+		await page.locator(".ai-discovery > summary").click();
 		await page.locator("#find-more-ai").click();
 		await page.locator("#cancel-people-search").waitFor();
 		await navigate("settings");
@@ -242,7 +246,7 @@ try {
 		await page.locator(`[data-job-network="${software}"]`).click();
 		await page.getByText("No saved contacts for this job yet.", { exact: false }).waitFor();
 		assert.equal(await page.locator(".networking-table .person-cell").count(), 0);
-		assert.match(await page.locator(".ai-discovery").innerText(), /AI discovery is disabled/);
+		assert.match(await page.locator(".ai-discovery").textContent(), /AI discovery is disabled/);
 		assert.equal(await page.locator("#find-more-ai").isDisabled(), true);
 		await page.locator("#open-discovery-dialog").click();
 		assert.equal(await page.locator("#find-form button[type=submit]").isDisabled(), true);
@@ -264,7 +268,7 @@ try {
 		await navigate("jobs");
 		await page.locator(`[data-job-network="${software}"]`).click();
 		await readyContacts();
-		assert.match(await page.locator(".ai-discovery").innerText(), /No API key is configured for OpenAI/);
+		assert.match(await page.locator(".ai-discovery").textContent(), /No API key is configured for OpenAI/);
 		assert.equal(await page.locator("#find-more-ai").isDisabled(), true);
 		assert.equal(paid.length, 10);
 		assert.deepEqual(external, []);

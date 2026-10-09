@@ -19,6 +19,7 @@ import {
 	type DiscoveredPerson,
 	type DiscoveryCriteria,
 	type DiscoveryProviderResult,
+	type DiscoveryRejectionCounts,
 } from "./providers";
 import { readResumeAttachment } from "./resume";
 import {
@@ -73,6 +74,7 @@ type PeopleSearchFallbackStatus =
 export type DiscoveryMode = "TAVILY" | "AI_SUPPLEMENT";
 
 export interface DiscoverySummary {
+	rejectionCounts?: DiscoveryRejectionCounts;
 	mode: DiscoveryMode;
 	tavilyAttempted: boolean;
 	providerReturned: number;
@@ -144,6 +146,7 @@ export async function discoverProspects(
 	const anthropicSearchMaxUses = mode === "AI_SUPPLEMENT"
 		? anthropicSearchLimit(authorizedAnthropicSearchMaxUses) : 1;
 	let providerResult: DiscoveryProviderResult | null = null;
+	let aiRejectionCounts: DiscoveryRejectionCounts | undefined;
 	let people: DiscoveredPerson[] = [];
 	let fallbackProvider: "NONE" | PeopleSearchFallbackProvider = "NONE";
 	let fallbackAttempted = false;
@@ -200,6 +203,7 @@ export async function discoverProspects(
 					fallbackReason = grounded.reason;
 					fallbackModel = grounded.model;
 					fallbackReturned = grounded.returned;
+					aiRejectionCounts = grounded.rejectionCounts;
 					people = grounded.people;
 				} catch (error) {
 					if (error instanceof PeopleSearchFallbackError) {
@@ -250,6 +254,7 @@ export async function discoverProspects(
 		professionalBioProviderReturned: providerResult?.fallbackProviderReturned ?? 0,
 		professionalBioAccepted: providerResult?.fallbackAccepted ?? 0,
 		insufficientMatchRejected: providerResult?.insufficientMatchRejected ?? 0,
+		rejectionCounts: providerResult?.rejectionCounts || aiRejectionCounts,
 		strongAccepted,
 		broaderAccepted,
 		fallbackProvider,

@@ -106,6 +106,22 @@ test("off-page selected detail remains usable without inventing a replacement jo
 	assert.equal(c.findJob("selected"), c.state.selectedJob);
 	assert.equal(c.findJob("missing"), null);
 });
+test("saved general People ranks stronger matches first, without changing job-priority sorting", () => {
+	const inline = definition("renderNetworking").match(/\.sort\((\(left, right\) => \{[\s\S]*?)\n\t\t\}\);/);
+	assert.ok(inline);
+	const c = client();
+	vm.runInContext(`comparePeople = ${inline[1]}\n}`, c);
+	const people = [
+		{ id: "weak", fullName: "Weak Example", matchQuality: "BROADER_COMPANY", relevanceScore: 90, updatedAt: "2026-10-09" },
+		{ id: "strong", fullName: "Strong Example", matchQuality: "STRONG", relevanceScore: 55, updatedAt: "2026-10-01" },
+		{ id: "other", fullName: "Other Example", matchQuality: "BROADER_COMPANY", relevanceScore: 20, updatedAt: "2026-10-10" },
+	];
+	assert.deepEqual(people.sort(c.comparePeople).map((person) => person.id), ["strong", "weak", "other"]);
+	c.state.networkingJob = { id: "job" };
+	c.jobContactFor = (person) => ({ tier: person.id === "other" ? 1 : null, score: person.relevanceScore });
+	assert.equal(people.sort(c.comparePeople)[0].id, "other");
+	assert.doesNotMatch(source, /profile matches the employer|Broader company match/);
+});
 test("guide and self-hosted Demo do not search, collect Apollo keys, autoplay or pretend to be real", () => {
 	assert.match(helper, /fictional concept demonstration/);
 	assert.match(helper, /<video controls playsinline preload="none"/);
@@ -165,9 +181,51 @@ test("phone navigation, theme-first loading and reduced motion remain explicit",
 	const css = fs.readFileSync(path.join(root, "public", "job-first.css"), "utf8");
 	const index = fs.readFileSync(path.join(root, "public", "index.html"), "utf8");
 	assert.ok(index.indexOf('src="/job-first.js') < index.indexOf('src="/app.js'));
+	assert.ok(index.indexOf('src="/theme.js') < index.indexOf('rel="stylesheet"'));
 	assert.match(css, /visibility: visible; opacity: 1; pointer-events: auto/);
 	assert.match(css, /prefers-reduced-motion: reduce/);
 	assert.match(css, /\.top-nav \{ position: fixed;[^}]*inset: auto 0 0/);
 	assert.match(css, /\.job-detail-open \.jobs-reference-hero/);
 	assert.doesNotMatch(source, /mountJourneyScene\(\);/);
+});
+test("light bootstrap ignores OS dark, preserves explicit choices and shares public reading theme", () => {
+	const theme = fs.readFileSync(path.join(root, "public", "theme.js"), "utf8");
+	for (const [saved, query, expected] of [[null, "", "light"], ["dark", "", "dark"], ["light", "?scoutTheme=dark", "light"], [null, "?scoutTheme=dark", "dark"], ["invalid", "", "light"]]) {
+		const storage = new Map(saved ? [["coffee-chat-theme", saved]] : []);
+		const c = {
+			location: { search: query }, URLSearchParams, console, events: {},
+			document: {
+				documentElement: { dataset: {}, setAttribute(_name, value) { this.dataset.theme = value; } },
+				querySelectorAll: () => [],
+				addEventListener: (name, callback) => { c.events[name] = callback; },
+			},
+			matchMedia: () => ({ matches: true }),
+			localStorage: { getItem: (key) => storage.get(key), setItem: (key, value) => storage.set(key, value) },
+		};
+		c.window = c;
+		vm.runInNewContext(theme, c);
+		assert.equal(c.document.documentElement.dataset.theme, expected);
+		c.WorkspaceTheme.choose("dark");
+		assert.equal(storage.get("coffee-chat-theme"), "dark");
+		assert.equal(c.document.documentElement.dataset.theme, "dark");
+		assert.throws(() => c.WorkspaceTheme.choose("system"), /Invalid theme/);
+	}
+	for (const file of ["index.html", "privacy.html", "terms.html"]) {
+		const html = fs.readFileSync(path.join(root, "public", file), "utf8");
+		assert.ok(html.indexOf('src="/theme.js') < html.indexOf('rel="stylesheet"'));
+		assert.match(html, /job-first\.css/);
+	}
+	assert.doesNotMatch(theme, /\/api\/|fetch\(/);
+});
+test("mockup composition retains filters context stages and real notes", () => {
+	assert.match(source, /page-animated-hero/);
+	assert.match(source, /id="more-job-filters"/);
+	assert.match(source, /More filters <span>/);
+	assert.match(source, /data-job-detail-tab/);
+	assert.match(source, /id="return-to-networking-role"/);
+	assert.match(source, /Role progress/);
+	assert.match(source, /data-note-owner/);
+	assert.match(source, /Possible match · review relevance/);
+	assert.match(source, /no identifiable person with a safe public professional source/);
+	assert.doesNotMatch(source, /Broaden the roles or location/);
 });

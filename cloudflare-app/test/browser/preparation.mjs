@@ -151,6 +151,7 @@ try {
 		await page.locator(".view-networking").waitFor();
 		assert.equal((await session()).user.id, userId);
 		await scenario("success", true);
+		await page.locator(".preparation-costs > summary").click();
 		assert.match(await page.locator(".preparation-costs").innerText(), /1 ordinary Apollo.*1 basic Tavily.*1 OPENAI/s);
 		await screenshot("preparation-costs");
 		await action("prepare", prepareButton(), { confirmation: /1 credit.*even with no email/s });

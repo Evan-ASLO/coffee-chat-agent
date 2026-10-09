@@ -48,7 +48,16 @@ export interface DiscoveryProviderResult {
 	insufficientMatchRejected: number;
 	strongAccepted: number;
 	broaderAccepted: number;
+	rejectionCounts?: DiscoveryRejectionCounts;
 	people: DiscoveredPerson[];
+}
+
+export interface DiscoveryRejectionCounts {
+	unsafeOrNonProfile: number;
+	noIdentifiablePerson: number;
+	nonProfessional: number;
+	duplicate: number;
+	uncitedSource: number;
 }
 
 export interface DraftResult {
@@ -96,28 +105,23 @@ export async function discoverWithTavily(
 	const seen = new Set<string>();
 	const people: DiscoveredPerson[] = [];
 	let insufficientMatchRejected = 0;
+	const rejectionCounts = { unsafeOrNonProfile: 0, noIdentifiablePerson: 0, nonProfessional: 0, duplicate: 0, uncitedSource: 0 };
+	const rejected = (result: { title?: string; url?: string; content?: string }) => {
+		const url = normalizeProfessionalSourceUrl(result.url || "");
+		if (!url || isRejectedProfilePage(url)) rejectionCounts.unsafeOrNonProfile += 1;
+		else if (!parsePersonEvidence(result)) rejectionCounts.noIdentifiablePerson += 1;
+		else rejectionCounts.nonProfessional += 1;
+	};
 	const primaryResults = primary.results ?? [];
 	for (const result of primaryResults) {
 		const candidate = linkedInPerson(result, criteria);
 		if (candidate.insufficientMatch) insufficientMatchRejected += 1;
 		const person = candidate.person;
-		if (!person) continue;
+		if (!person) { rejected(result); continue; }
 		const key = discoveryPersonKey(person, criteria);
-		if (seen.has(key)) continue;
+		if (seen.has(key)) { rejectionCounts.duplicate += 1; continue; }
 		seen.add(key);
 		people.push(person);
-		if (!criteria.jobContext && people.length >= criteria.count) {
-			return {
-				providerReturned: primaryResults.length,
-				primaryProviderReturned: primaryResults.length,
-				primaryAccepted: people.length,
-				fallbackProviderReturned: 0,
-				fallbackAccepted: 0,
-				insufficientMatchRejected,
-				...matchQualityCounts(people),
-				people,
-			};
-		}
 	}
 
 	const primaryKeys = new Set(seen);
@@ -134,8 +138,6 @@ export async function discoverWithTavily(
 			headers: { Authorization: `Bearer ${apiKey}` },
 			body: {
 				query: buildProfessionalBioQuery(criteria),
-				include_domains: professionalBioDomains(criteria),
-				include_domains_mode: "restrict",
 				search_depth: "basic",
 				max_results: Math.min(remaining * 4, 20),
 				topic: "general",
@@ -153,12 +155,11 @@ export async function discoverWithTavily(
 			const person =
 				linkedIn.person ||
 				professionalBioPerson(result, criteria);
-			if (!person) continue;
+			if (!person) { rejected(result); continue; }
 			const key = discoveryPersonKey(person, criteria);
-			if (seen.has(key)) continue;
+			if (seen.has(key)) { rejectionCounts.duplicate += 1; continue; }
 			seen.add(key);
 			people.push(person);
-			if (!criteria.jobContext && people.length >= criteria.count) break;
 		}
 	}
 	const selected = selectDiscoveryPeople(people, criteria);
@@ -172,6 +173,7 @@ export async function discoverWithTavily(
 		fallbackProviderReturned: fallbackResults.length,
 		fallbackAccepted: selected.length - primaryAccepted,
 		insufficientMatchRejected,
+		rejectionCounts,
 		...matchQualityCounts(selected),
 		people: selected,
 	};
@@ -191,7 +193,11 @@ export function discoveryPersonKey(person: DiscoveredPerson, criteria: Discovery
 }
 
 export function selectDiscoveryPeople(people: DiscoveredPerson[], criteria: DiscoveryCriteria): DiscoveredPerson[] {
-	if (!criteria.jobContext) return people.slice(0, criteria.count);
+	if (!criteria.jobContext) return [...people].sort((left, right) =>
+		Number(right.matchQuality === "STRONG") - Number(left.matchQuality === "STRONG") ||
+		right.relevanceScore - left.relevanceScore ||
+		left.fullName.localeCompare(right.fullName, "en"),
+	).slice(0, criteria.count);
 	const job = criteria.jobContext;
 	return people.map((person) => ({
 		...person, jobContact: rankJobContact(person, job),
@@ -736,55 +742,37 @@ function linkedInPerson(
 ): { person: DiscoveredPerson | null; insufficientMatch: boolean } {
 	const linkedinUrl = normalizeLinkedIn(result.url || "");
 	if (!linkedinUrl) return { person: null, insufficientMatch: false };
-	const parsed = parseSearchTitle(result.title || "");
+	const parsed = parsePersonEvidence(result);
+	if (!parsed) return { person: null, insufficientMatch: false };
 	if (!isPersonName(parsed.fullName)) {
 		return { person: null, insufficientMatch: false };
 	}
-	if (criteria.jobContext && parsed.company && !sameEmployer(parsed.company, criteria.jobContext.company)) {
-		return { person: null, insufficientMatch: true };
-	}
 	const evidence = `${result.title || ""} ${result.content || ""}`;
 	const score = scoreEvidence(evidence, criteria);
-	let company = matchedRequestedCompany(evidence, criteria.companies);
+	const matchedCompany = evidencedRequestedCompany(evidence, criteria.companies);
+	let company = parsed.company && (!matchedCompany || !sameEmployer(parsed.company, matchedCompany)) ? parsed.company : matchedCompany || parsed.company;
 	const roleMatch = matchesRoleEvidence(evidence, criteria);
 	const sourceSnippet = cleanText(
-		criteria.jobContext ? `${result.title || ""}\n${result.content || ""}` : result.content || "",
+		`${result.title || ""}\n${result.content || ""}`,
 		2500,
 	);
 	const jobContact = criteria.jobContext ? rankJobContact({
 		...parsed, company, sourceSnippet, sourceUrl: linkedinUrl,
 	}, criteria.jobContext) : undefined;
-	let matchQuality: "STRONG" | "BROADER_COMPANY" = "STRONG";
+	let matchQuality: "STRONG" | "BROADER_COMPANY" = "BROADER_COMPANY";
 	if (jobContact) {
-		if (!jobContact.currentCompany) return { person: null, insufficientMatch: true };
-		company = employerDisplayName(criteria.jobContext!.company);
+		if (jobContact.currentCompany) company = employerDisplayName(criteria.jobContext!.company);
 		matchQuality = jobContact.tier === 1 ? "STRONG" : "BROADER_COMPANY";
 	} else if (criteria.companies.length) {
-		if (!company) {
-			return { person: null, insufficientMatch: true };
-		}
-		if (roleMatch && score.value >= 55) {
+		if (parsed.title && company && criteria.companies.some((target) => sameEmployer(company, target)) && roleMatch && score.value >= 55) {
 			matchQuality = "STRONG";
-		} else if (
-			isBroaderCompanyMatch(
-				parsed.title,
-				evidence,
-				criteria,
-				score.value,
-			)
-		) {
-			matchQuality = "BROADER_COMPANY";
-		} else {
-			return { person: null, insufficientMatch: true };
 		}
 	} else {
 		const independentMatch =
 			roleMatch ||
 			matchesAnyCriterion(evidence, criteria.industries) ||
 			matchesAnyCriterion(evidence, criteria.locations);
-		if (!independentMatch || score.value < 35) {
-			return { person: null, insufficientMatch: true };
-		}
+		if (parsed.title && independentMatch && score.value >= 35) matchQuality = "STRONG";
 	}
 	return {
 		person: {
@@ -799,11 +787,11 @@ function linkedInPerson(
 			whyRelevant:
 				[
 					...(matchQuality === "BROADER_COMPANY"
-						? ["Broader company match"]
+						? ["Possible match; company, role and current employment need review"]
 						: []),
 					...(score.reasons.length
 						? score.reasons
-						: ["Matched the requested public profile criteria."]),
+						: ["Identifiable person on a public professional profile; requested criteria not confirmed."]),
 				].join("; "),
 			outreachObjective: cleanText(criteria.objective, 1000),
 			relevanceScore: score.value,
@@ -827,48 +815,39 @@ export function professionalBioPerson(
 ): DiscoveredPerson | null {
 	const sourceUrl = normalizeProfessionalSourceUrl(result.url || "");
 	if (!sourceUrl || isRejectedProfilePage(sourceUrl)) return null;
-	const parsed = parseProfessionalBioTitle(result.title || "");
+	const parsed = parsePersonEvidence(result);
 	if (!parsed) return null;
 	const evidence = `${result.title || ""} ${result.content || ""}`;
-	const company = matchedRequestedCompany(evidence, criteria.companies);
-	if (!company) return null;
+	const matchedCompany = evidencedRequestedCompany(evidence, criteria.companies);
+	const company = parsed.company && (!matchedCompany || !sameEmployer(parsed.company, matchedCompany)) ? parsed.company : matchedCompany || parsed.company;
 	const url = new URL(sourceUrl);
 	const officialDomains = employerProfileDomains(criteria.companies);
 	const official = officialDomains.some(
 		(domain) =>
 			url.hostname === domain || url.hostname === `www.${domain}`,
 	);
-	const vetted =
-		url.hostname === "theorg.com" || url.hostname.endsWith(".theorg.com");
-	if (!official && !vetted) return null;
-	const score = scoreEvidence(evidence, {
-		...criteria,
-		companies: [company],
-	});
+	if (!/\b(?:analyst|engineer|developer|recruiter|consultant|manager|director|officer|founder|partner|professor|researcher|designer|associate|specialist|advisor|president|strategist|investment|portfolio|employee|intern|professional|works|career|joined|serves|team|biography)\b/i.test(evidence)) return null;
+	const score = scoreEvidence(evidence, criteria);
 	const sourceSnippet = cleanText(
-		criteria.jobContext ? `${result.title || ""}\n${result.content || ""}` : result.content || "",
+		`${result.title || ""}\n${result.content || ""}`,
 		2500,
 	);
 	const jobContact = criteria.jobContext ? rankJobContact({
 		...parsed, company, sourceSnippet, sourceUrl,
 	}, criteria.jobContext) : undefined;
-	let matchQuality: "STRONG" | "BROADER_COMPANY";
+	let matchQuality: "STRONG" | "BROADER_COMPANY" = "BROADER_COMPANY";
 	if (jobContact) {
-		if (!jobContact.currentCompany) return null;
 		matchQuality = jobContact.tier === 1 ? "STRONG" : "BROADER_COMPANY";
-	} else if (matchesRoleEvidence(evidence, criteria) && score.value >= 55) {
+	} else if (parsed.title && (!criteria.companies.length || (company && criteria.companies.some((target) => sameEmployer(company, target)))) &&
+		(!parsed.company || !criteria.companies.length || criteria.companies.some((target) => sameEmployer(parsed.company, target))) &&
+		matchesRoleEvidence(evidence, criteria) && score.value >= 55 &&
+		(official || url.hostname === "theorg.com" || url.hostname.endsWith(".theorg.com"))) {
 		matchQuality = "STRONG";
-	} else if (
-		isBroaderCompanyMatch(parsed.title, evidence, criteria, score.value)
-	) {
-		matchQuality = "BROADER_COMPANY";
-	} else {
-		return null;
 	}
 	return {
 		...parsed,
 		company,
-		companyDomain: officialDomains.at(-1) || "",
+		companyDomain: official ? officialDomains.at(-1) || "" : "",
 		location: matchedLocation(evidence, criteria.locations),
 		linkedinUrl: "",
 		discoveryProvider: "TAVILY",
@@ -877,12 +856,12 @@ export function professionalBioPerson(
 		whyRelevant:
 			[
 				...(matchQuality === "BROADER_COMPANY"
-					? ["Broader company match"]
+					? ["Possible match from a public professional biography; identity, role and employer need review"]
 					: []),
 				...(score.reasons.length
 					? score.reasons
 					: [
-							"Matched a public professional biography for the requested company.",
+							"Identifiable person with professional evidence; requested criteria not confirmed.",
 						]),
 			].join("; "),
 		outreachObjective: cleanText(criteria.objective, 1000),
@@ -897,18 +876,43 @@ function parseSearchTitle(title: string): Pick<
 	"firstName" | "lastName" | "fullName" | "title" | "company"
 > {
 	const clean = cleanText(title, 500)
-		.replace(/\s*[|–-]\s*LinkedIn\s*$/i, "")
+		.replace(/\s*[|–—-]\s*LinkedIn\s*$/i, "")
 		.replace(/\s+/g, " ");
-	const parts = clean.split(/\s+(?:-|–|\|)\s+/).filter(Boolean);
+	const parts = clean.split(/\s*[\u2013\u2014|]\s*|\s+-\s+/).filter(Boolean);
 	const fullName = parts[0] || "";
 	const names = fullName.split(/\s+/);
 	return {
 		firstName: names[0] || "",
 		lastName: names.slice(1).join(" "),
 		fullName,
-		title: parts[1] || "",
+		title: isGenericProfileTitle(parts[1] || "") ? "" : parts[1] || "",
 		company: parts[2] || "",
 	};
+}
+
+function parsePersonEvidence(result: { title?: string; content?: string; url?: string }): Pick<
+	DiscoveredPerson, "firstName" | "lastName" | "fullName" | "title" | "company"
+> | null {
+	const linked = normalizeLinkedIn(result.url || "");
+	const search = linked ? parseSearchTitle(result.title || "") : null;
+	if (search && isPersonName(search.fullName)) return search;
+	const bio = parseProfessionalBioTitle(result.title || "");
+	if (bio) {
+		const employment = bio.title.match(/^(.+?)\s+(?:at|@)\s+(.+)$/i);
+		return { ...bio, title: employment?.[1] || bio.title, company: employment?.[2] || "" };
+	}
+	const snippetName = cleanText(result.content || "", 1000).match(
+		/^((?:[\p{L}][\p{L}'’.-]*\s+){1,4}[\p{L}][\p{L}'’.-]*)\s+(?:is|works|serves|joined)\b/u,
+	)?.[1];
+	if (!snippetName || !isPersonName(snippetName)) return null;
+	const names = snippetName.split(/\s+/);
+	return { firstName: names[0]!, lastName: names.slice(1).join(" "), fullName: snippetName, title: "", company: "" };
+}
+
+function evidencedRequestedCompany(evidence: string, companies: string[]): string {
+	const associated = [...evidence.matchAll(/\b(?:works|working|employed|serves|analyst|engineer|developer|recruiter|manager|director|officer|head|strategist|advisor|team|consultant)[^\n.;|]{0,150}?\b(?:at|for|with)\s+(?:the\s+)?([^\n.;|]+)/gi)]
+		.map((match) => match[1] || "").join(" ");
+	return matchedRequestedCompany(associated, companies);
 }
 
 export function parseProfessionalBioTitle(
@@ -918,6 +922,7 @@ export function parseProfessionalBioTitle(
 	"firstName" | "lastName" | "fullName" | "title"
 > | null {
 	const clean = cleanText(title, 500)
+		.replace(/^(?:Dr\.?|Prof\.?)\s+/i, "")
 		.replace(/\s*[|]\s*(?:The Org|BMO.*|Company Profile)\s*$/i, "")
 		.replace(/\s+/g, " ")
 		.trim();
@@ -931,13 +936,15 @@ export function parseProfessionalBioTitle(
 		role = teamMatch[2] || "";
 	} else {
 		const commaMatch = clean.match(/^([^,]+),\s*(.+)$/);
-		const dashMatch = clean.match(/^(.+?)\s+[-–—|]\s+(.+)$/);
+		const dashMatch = clean.match(/^(.+?)(?:\s*[\u2013\u2014|:]\s*|\s+-\s+)(.+)$/);
 		if (commaMatch) {
 			name = commaMatch[1] || "";
 			role = commaMatch[2] || "";
 		} else if (dashMatch) {
 			name = dashMatch[1] || "";
 			role = dashMatch[2] || "";
+		} else if (isPersonName(clean)) {
+			name = clean;
 		}
 	}
 	name = cleanText(name, 150);
@@ -1039,11 +1046,13 @@ function matchedReason(value: string, label: string): string {
 
 function normalizeLinkedIn(value: string): string {
 	try {
-		const url = new URL(value.replace(/^http:/, "https:"));
+		const safe = normalizeProfessionalSourceUrl(value.replace(/^http:/, "https:"));
+		if (!safe) return "";
+		const url = new URL(safe);
 		if (
 			url.protocol !== "https:" ||
 			!(url.hostname === "linkedin.com" || url.hostname.endsWith(".linkedin.com")) ||
-			!url.pathname.startsWith("/in/")
+			!/^\/in\/[a-z0-9_%.-]+\/?$/i.test(url.pathname)
 		) {
 			return "";
 		}
@@ -1057,6 +1066,11 @@ export function normalizeProfessionalSourceUrl(value: string): string {
 	try {
 		const url = new URL(value);
 		if (url.protocol !== "https:" && url.protocol !== "http:") return "";
+		if (url.username || url.password || url.port || /[\u0000-\u0020\u007f]/.test(value)) return "";
+		if (/[\u0000-\u001f\u007f]/.test(decodeURIComponent(url.pathname))) return "";
+		const host = url.hostname.toLowerCase();
+		if (!host.includes(".") || /^[\d.]+$/.test(host) || host.includes(":") ||
+			/(?:^|\.)(?:localhost|local|internal|lan)$/.test(host)) return "";
 		url.hash = "";
 		for (const key of [...url.searchParams.keys()]) {
 			if (
@@ -1091,14 +1105,19 @@ function isRejectedProfilePage(value: string): boolean {
 			"signalhire.com",
 			"contactout.com",
 			"crunchbase.com",
+			"vertexaisearch.cloud.google.com",
 		].some(
 			(domain) => hostname === domain || hostname.endsWith(`.${domain}`),
 		)
 	) {
 		return true;
 	}
-	return /\/(jobs?|careers?|search|news|press|articles?|blog|feed|tag|category)(\/|$)/i.test(
-		url.pathname,
+	if (hostname === "linkedin.com" || hostname.endsWith(".linkedin.com")) return !normalizeLinkedIn(value);
+	const path = decodeURIComponent(url.pathname);
+	if (path === "/" || /\/(?:team|people|staff|directory|leadership)\/?$/i.test(path)) return true;
+	if (/\.(?:exe|msi|bat|cmd|ps1|vbs|scr|jar|apk|dmg|zip|rar|7z|iso|docm|xlsm|pptm)$/i.test(path)) return true;
+	return /\/(jobs?|careers?|search|news|press|articles?|blog|feed|tag|category|login|signin|auth|company|companies|listings?|redirect|grounding-api-redirect)(\/|$|[._-])/i.test(
+		path,
 	);
 }
 
@@ -1137,29 +1156,6 @@ function matchesRoleEvidence(
 			"hiring",
 		]),
 	);
-}
-
-function isBroaderCompanyMatch(
-	profileTitle: string,
-	evidence: string,
-	criteria: DiscoveryCriteria,
-	relevanceScore: number,
-): boolean {
-	if (
-		relevanceScore < 35 ||
-		!profileTitle.trim() ||
-		isGenericProfileTitle(profileTitle)
-	) {
-		return false;
-	}
-	const locationMatch =
-		criteria.locations.length > 0 &&
-		matchesAnyCriterion(evidence, criteria.locations);
-	const hiringMatch =
-		/\b(talent acquisition|recruit(?:er|ing)|hiring|human resources)\b/i.test(
-			evidence,
-		);
-	return locationMatch || hiringMatch;
 }
 
 function matchQualityCounts(people: DiscoveredPerson[]): {
@@ -1242,6 +1238,9 @@ function isPersonName(value: string): boolean {
 		"investment",
 		"professionals",
 		"profile",
+		"analyst", "engineer", "recruiter", "internship", "opportunities", "contact",
+		"search", "results", "login", "sign", "in", "about", "services", "financial",
+		"conference", "speakers", "events", "privacy", "policy", "terms", "service",
 	]);
 	if (words.some((word) => generic.has(word.toLowerCase()))) return false;
 	if (

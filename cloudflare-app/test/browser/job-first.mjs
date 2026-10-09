@@ -17,7 +17,7 @@ try {
 		const context = await browser.newContext({ viewport, reducedMotion: "reduce", isMobile: viewport.width < 500, hasTouch: viewport.width < 500 });
 		const page = await context.newPage();
 		activePage = page;
-		const errors = [], forbidden = [], screenshots = [];
+		const errors = [], forbidden = [], screenshots = [], legalTypography = [];
 		page.on("pageerror", (error) => errors.push(error.message));
 		await page.route("**/*", (route) => {
 			const request = route.request(), url = new URL(request.url());
@@ -43,6 +43,35 @@ try {
 		async function stage() {
 			return page.evaluate(async (id) => (await (await fetch(`/api/jobs/${id}`)).json()).job.userState, jobId);
 		}
+		async function checkLegal(path) {
+			const metrics = await page.evaluate(() => {
+				const canvas = document.createElement("canvas").getContext("2d");
+				const rgba = (color) => {
+					canvas.clearRect(0, 0, 1, 1); canvas.fillStyle = color; canvas.fillRect(0, 0, 1, 1);
+					const channels = [...canvas.getImageData(0, 0, 1, 1).data]; channels[3] /= 255; return channels;
+				};
+				const blend = (foreground, background) => foreground.slice(0, 3).map((channel, index) => channel * (foreground[3] ?? 1) + background[index] * (1 - (foreground[3] ?? 1)));
+				const light = (rgb) => rgb.reduce((sum, channel, index) => {
+					const value = channel / 255;
+					return sum + (value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4) * [.2126, .7152, .0722][index];
+				}, 0);
+				const contrasts = [...document.querySelectorAll(".legal-brand small, .legal-nav a")].map((node) => {
+					const ancestors = []; for (let parent = node; parent; parent = parent.parentElement) ancestors.unshift(parent);
+					const background = ancestors.reduce((color, parent) => blend(rgba(getComputedStyle(parent).backgroundColor), color), [255, 255, 255]);
+					const foreground = blend(rgba(getComputedStyle(node).color), background);
+					const values = [light(foreground), light(background)].sort((a, b) => b - a);
+					return (values[0] + .05) / (values[1] + .05);
+				});
+				const paragraph = document.querySelector(".legal-lede"), style = getComputedStyle(paragraph);
+				canvas.font = `${style.fontSize} ${style.fontFamily}`;
+				return { minimumHeaderContrast: Math.min(...contrasts), paragraphFontPx: parseFloat(style.fontSize),
+					paragraphMeasureCh: paragraph.getBoundingClientRect().width / canvas.measureText("0").width };
+			});
+			assert.ok(metrics.minimumHeaderContrast >= 4.5, `${path} header contrast ${metrics.minimumHeaderContrast}`);
+			assert.ok(metrics.paragraphFontPx >= 16, JSON.stringify(metrics));
+			if (viewport.width > 760) assert.ok(metrics.paragraphMeasureCh >= 65 && metrics.paragraphMeasureCh <= 75, JSON.stringify(metrics));
+			legalTypography.push({ path, ...metrics });
+		}
 		await page.goto(`${origin}/__review/preparation`);
 		await page.locator(".app-frame").waitFor();
 		await page.evaluate(async (id) => {
@@ -56,22 +85,26 @@ try {
 		await page.goto(`${origin}/?q=Fictional#find-jobs`);
 		await page.locator(".view-jobs").waitFor();
 		assert.equal(await page.locator("#primary-navigation a").count(), 3);
+		await page.locator("#more-job-filters summary").click();
 		await page.locator("#job-term").selectOption("");
 		await page.locator("#job-filter-form").evaluate((form) => form.requestSubmit());
 		await page.locator(`.job-card [data-job-detail="${jobId}"]`).waitFor();
 		await shot("find-jobs");
 		await page.locator(`.job-card [data-job-detail="${jobId}"]`).click();
+		await page.locator('[data-job-detail-tab="progress"]').click();
 		await page.locator(`#job-notes-${jobId}`).fill("Fictional review: unsaved notes survive navigation");
 		const detailUrl = page.url();
 		await navigate("applications");
 		await page.goBack();
 		await page.locator(".view-jobs").waitFor();
+		await page.locator('[data-job-detail-tab="progress"]').click();
 		assert.equal(page.url(), detailUrl);
 		await page.waitForFunction((id) => document.getElementById(`job-notes-${id}`)?.value === "Fictional review: unsaved notes survive navigation", jobId);
 		await page.locator("[data-save-job-notes]").click();
 		await page.waitForFunction((id) => !Object.hasOwn(state.jobNoteDrafts, id), jobId);
 		assert.equal((await stage()).notes, "Fictional review: unsaved notes survive navigation");
 		await page.reload();
+		await page.locator('[data-job-detail-tab="progress"]').click();
 		await page.locator(`#job-notes-${jobId}`).waitFor();
 		assert.equal(await page.locator(`#job-notes-${jobId}`).inputValue(), "Fictional review: unsaved notes survive navigation");
 		await page.locator(`.job-detail-card [data-job-apply="${jobId}"]`).click();
@@ -83,11 +116,18 @@ try {
 		await page.locator(".job-detail-card .status-interviewing").waitFor();
 		await shot("role-notes-interview");
 		const filters = new URL(page.url()).searchParams.get("q");
+		await page.locator('[data-job-detail-tab="people"]').click();
 		await page.locator(".job-detail-card [data-job-network]").click();
 		await page.locator(".view-networking .networking-context").waitFor();
 		assert.equal(new URL(page.url()).searchParams.get("q"), filters);
 		assert.equal(new URL(page.url()).searchParams.get("contactJob"), jobId);
 		await shot("linked-people");
+		await page.locator("#return-to-networking-role").click();
+		await page.locator(".view-jobs").waitFor();
+		assert.equal(await page.locator('[data-job-detail-tab="people"]').getAttribute("aria-pressed"), "true");
+		assert.equal(new URL(page.url()).searchParams.get("q"), filters);
+		await page.goBack();
+		await page.locator(".view-networking").waitFor();
 		await page.goBack();
 		await page.locator(".view-jobs").waitFor();
 		await navigate("applications");
@@ -125,11 +165,28 @@ try {
 		await page.emulateMedia({ colorScheme: "dark", reducedMotion: "reduce" });
 		await page.reload();
 		await page.locator(".view-home").waitFor();
+		assert.equal(await page.locator("html").getAttribute("data-theme"), "light", "OS-dark users with no explicit preference start light.");
+		await page.locator(".account-menu > summary").click();
+		await page.locator('.account-menu [data-theme-choice="dark"]').click();
+		await page.locator(".account-menu > summary").click();
+		await page.reload();
+		await page.locator(".view-home").waitFor();
 		assert.equal(await page.locator("html").getAttribute("data-theme"), "dark");
 		assert.equal(await page.locator(".home-reference-stats").evaluate((node) => getComputedStyle(node).position), "static");
 		await shot("home-dark");
 		await navigate("settings");
 		await shot("setup-profile-dark");
+		await page.goto(`${origin}/privacy`);
+		assert.equal(await page.locator("html").getAttribute("data-theme"), "dark");
+		await page.locator('[data-theme-choice="light"]').click();
+		await page.reload();
+		assert.equal(await page.locator("html").getAttribute("data-theme"), "light");
+		await shot("privacy-light");
+		await checkLegal("/privacy");
+		await page.goto(`${origin}/terms`);
+		assert.equal(await page.locator("html").getAttribute("data-theme"), "light");
+		await shot("terms-light");
+		await checkLegal("/terms");
 		await page.goto(`${origin}/__review/preparation-second`);
 		await page.locator(".app-frame").waitFor();
 		await navigate("jobs");
@@ -138,7 +195,7 @@ try {
 		assert.doesNotMatch(await page.locator("body").innerText(), /editor draft survives/);
 		assert.deepEqual(errors, []);
 		assert.deepEqual(forbidden, []);
-		receipts.push({ viewport, persistedNotes: true, interviewNotRegressed: true, linkedFiltersPreserved: true, history: true, accountIsolated: true, screenshots, errors, forbidden });
+		receipts.push({ viewport, persistedNotes: true, interviewNotRegressed: true, linkedFiltersPreserved: true, history: true, accountIsolated: true, legalTypography, screenshots, errors, forbidden });
 		await context.close();
 	}
 	await writeFile(join(evidence, "receipt.json"), JSON.stringify({ mockOnly: true, realProviderCalls: 0, outreachSends: 0, cases: receipts }, null, 2));
@@ -146,7 +203,7 @@ try {
 } catch (error) {
 	if (activePage && !activePage.isClosed()) {
 		await activePage.screenshot({ path: join(evidence, "failure.png"), fullPage: true });
-		console.error(await activePage.evaluate(() => ({
+		console.error(await activePage.evaluate(() => typeof state === "undefined" ? ({ url: location.href }) : ({
 			url: location.href, notes: state.jobNoteDrafts,
 			selected: state.selectedJob?.userState,
 			jobs: state.jobs.jobs.map((job) => ({ id: job.id, userState: job.userState })),

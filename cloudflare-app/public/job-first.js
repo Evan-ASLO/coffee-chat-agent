@@ -1,8 +1,5 @@
 (function (root) {
 	"use strict";
-	const param = new URLSearchParams(root.location.search).get("scoutTheme");
-	root.document.documentElement.setAttribute("data-theme",
-		param === "light" || param === "dark" ? param : root.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
 	let initialSession = root.fetch("/api/session", {
 		headers: { Accept: "application/json" }, credentials: "same-origin",
 	}).then((response) => ({ response }), (error) => ({ error }));

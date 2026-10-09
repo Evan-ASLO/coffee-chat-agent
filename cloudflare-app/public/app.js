@@ -55,6 +55,8 @@ const state = {
 	applicationLocationSearch: "",
 	applicationSort: "UPDATED_DESC",
 	selectedJob: null,
+	jobDetailTab: "role",
+	jobFiltersOpen: false,
 	jobNoteDrafts: {},
 	applicationEditDrafts: {},
 	networkingFilter: "ALL",
@@ -200,7 +202,7 @@ function render() {
 					<button type="button" class="secondary demo-button" data-open-demo>${icon("play")} Demo</button>
 					${
 						authenticated
-							? `<details class="account-menu"><summary aria-label="Account and setup">${icon("settings")}<span>Your setup</span></summary><div class="account-menu-panel"><p>${escapeHtml(user.name || "Your account")}<small>${escapeHtml(user.email)}</small></p><button data-nav="settings">Setup & profile</button><button data-open-guide>Setup guide</button><button data-nav="analytics">Analytics</button><button data-nav="home">Home</button><button id="logout">${icon("logout")} Sign out</button></div></details>`
+							? `<details class="account-menu"><summary aria-label="Account and setup"><b class="account-initials" aria-hidden="true">${escapeHtml(companyInitials(user.name || "Your account"))}</b><span>Your setup</span></summary><div class="account-menu-panel"><p>${escapeHtml(user.name || "Your account")}<small>${escapeHtml(user.email)}</small></p><button data-nav="settings">Setup & profile</button><button data-open-guide>Setup guide</button><button data-nav="analytics">Analytics</button><button data-nav="home">Home</button>${themeChoices()}<button id="logout">${icon("logout")} Sign out</button></div></details>`
 							: '<a class="button sign-in-button" href="/auth/google/login">Sign in</a>'
 					}
 				</div>
@@ -289,6 +291,7 @@ function renderBetaLanding() {
 				<strong>Internship & Coffee Chat</strong>
 				<span>Private Toronto beta</span>
 				<button type="button" class="secondary demo-button" data-open-demo>${icon("play")} Demo</button>
+				${themeChoices()}
 			</div>
 			<div class="beta-landing-grid">
 				<div class="beta-landing-copy">
@@ -515,13 +518,13 @@ function renderJobs() {
 		new Set(state.jobs.jobs.map((job) => job.location).filter(Boolean)),
 	).slice(0, 1);
 	return `
-		<section class="reference-hero jobs-reference-hero">
+		<section class="reference-hero jobs-reference-hero page-animated-hero">
 			<div class="reference-hero-copy">
-				<p class="eyebrow">Opportunities ahead</p>
 				<h1>Find your next <span>opportunity.</span></h1>
 				<p>A thoughtful shortlist starts here. Find a role, save it, then explore the people behind it.${linkingEnabled ? " Job-linked networking is available." : ""}</p>
 				${state.session?.authenticated ? "" : '<a class="button primary" href="/auth/google/login">Sign in to track progress</a>'}
 			</div>
+			${window.JobFirstUI.scene()}
 		</section>
 		${renderCatalogWarning()}
 		<div class="jobs-reference-layout ${state.jobMode === "saved" ? "saved-mode" : ""}">
@@ -529,15 +532,15 @@ function renderJobs() {
 				<div class="job-search-strip" data-tour="jobs-search">
 					<label class="search-field"><span class="sr-only">Search</span>${icon("search")}<input id="job-q" value="${escapeAttr(state.jobQuery.q)}" placeholder="Search by title, company, location, or keyword…" /></label>
 					<label><span>Location</span><input id="job-location" value="${escapeAttr(state.jobQuery.location)}" placeholder="Any location" /></label>
-					<label><span>Industry</span><select id="job-industry">${facetOptions(state.jobs.facets?.industries, state.jobQuery.industry, "All industries")}</select></label>
-					<label><span>Career track</span><input id="job-category" value="${escapeAttr(state.jobQuery.category)}" placeholder="Any role" /></label>
-					<label><span>Term</span><select id="job-term">${facetOptions(state.jobs.facets?.terms, state.jobQuery.term, "Any term")}</select></label>
 					<button class="primary">Search</button>
+					<button type="button" id="clear-job-filters" class="text-button">Clear all</button>
 				</div>
 				${
 					state.jobMode === "all"
-						? `<aside class="filter-panel" aria-label="Job filters">
-								<div class="filter-panel-heading"><strong>Filters</strong><button type="button" id="clear-job-filters" class="text-button">Clear all</button></div>
+						? `<details id="more-job-filters" class="filter-disclosure" ${state.jobFiltersOpen ? "open" : ""}><summary>More filters <span>${["company", "region", "category", "industry", "length", "term"].filter((key) => state.jobQuery[key]).length} active</span></summary><div class="filter-panel" aria-label="Job filters">
+								<label>Industry<select id="job-industry">${facetOptions(state.jobs.facets?.industries, state.jobQuery.industry, "All industries")}</select></label>
+								<label>Career track<input id="job-category" value="${escapeAttr(state.jobQuery.category)}" placeholder="Any role" /></label>
+								<label>Term<select id="job-term">${facetOptions(state.jobs.facets?.terms, state.jobQuery.term, "Any term")}</select></label>
 								<label>Company<input id="job-company" value="${escapeAttr(state.jobQuery.company)}" placeholder="Search companies…" /></label>
 								<label>Region<input id="job-region" value="${escapeAttr(state.jobQuery.region)}" placeholder="Canada, Ontario…" /></label>
 								<label>Length<select id="job-length">${facetOptions(state.jobs.facets?.lengths, state.jobQuery.length, "Any length")}</select></label>
@@ -549,7 +552,7 @@ function renderJobs() {
 									<span>${state.jobs.facets?.terms?.length || 0} terms</span>
 								</div>
 								<button class="secondary full-width">Apply filters</button>
-							</aside>`
+							</div></details>`
 						: `<aside class="filter-panel saved-filter" aria-label="Saved jobs"><strong>Your shortlist</strong><p>Saved roles stay private to your account.</p></aside>`
 				}
 			</form>
@@ -649,8 +652,7 @@ function renderApplications() {
 	return `
 		<section class="reference-hero applications-reference-hero">
 			<div class="reference-hero-copy">
-				<p class="eyebrow">Your private shortlist & tracker</p>
-				<h1>Keep your next<br /><span>step in sight.</span></h1>
+				<h1>Keep your next move in view.</h1>
 				<p>Stay organized, track your progress, and keep every private next step in one place.</p>
 				<div class="reference-hero-actions">
 					<button class="primary" data-nav="jobs">${icon("plus")} Browse jobs</button>
@@ -658,17 +660,10 @@ function renderApplications() {
 				</div>
 			</div>
 		</section>
-		<section class="reference-metrics application-stats" aria-label="Application summary">
-			${referenceMetric(applications.total, "Total applications", "document")}
-			${referenceMetric(applications.inProgress, "In progress", "progress")}
-			${referenceMetric(applications.interviewing, "Interviews", "people")}
-			${referenceMetric(applications.offers, "Offers", "spark")}
-		</section>
 		<div class="tracker-layout applications-layout">
 			<aside class="tracker-filters" aria-label="Application filters">
-				<div class="tracker-filter-heading"><strong>Filters</strong><button class="text-button" data-application-filter="ALL">Clear all</button></div>
-				<fieldset>
-					<legend>Application status</legend>
+				<fieldset class="workflow-tabs">
+					<legend class="sr-only">Application status</legend>
 					${applicationFilterButton("ALL", "All", allJobs.length)}
 					${applicationFilterButton("SAVED", "Saved")}
 					${applicationFilterButton("APPLIED", "Applied")}
@@ -677,13 +672,16 @@ function renderApplications() {
 					${applicationFilterButton("REJECTED", "Rejected")}
 					${applicationFilterButton("ARCHIVED", "Archived")}
 				</fieldset>
+				<details class="filter-disclosure"><summary>Filter tracked roles</summary>
+				<button id="clear-application-filters" class="text-button">Clear all</button>
 				<label>Company<input id="application-company-filter" value="${escapeAttr(state.applicationCompanySearch)}" placeholder="Search companies…" /></label>
 				<label>Location<input id="application-location-filter" value="${escapeAttr(state.applicationLocationSearch)}" placeholder="Search locations…" /></label>
 				<p class="filter-footnote">Dates shown are recorded update dates. The app does not invent deadlines or reminders.</p>
+				</details>
 			</aside>
 			<section class="tracker-table-panel" data-tour="applications">
 				<div class="table-panel-heading">
-					<div><h2>My jobs</h2><p>Saved roles, application stages and private next steps.</p></div>
+					<div><h2>Tracked roles</h2><p>Saved roles, application stages and private next steps.</p></div>
 					<form id="application-search-form" class="table-tools">
 						<label class="inline-search"><span class="sr-only">Search applications</span>${icon("search")}<input id="application-search" value="${escapeAttr(state.applicationSearch)}" placeholder="Search applications…" /></label>
 						<label>Sort by<select id="application-sort">
@@ -695,15 +693,17 @@ function renderApplications() {
 				</div>
 				${
 					jobs.length
-						? `<div class="responsive-table-wrap" tabindex="0" role="region" aria-label="Applications table. Scroll to view every column."><table class="data-table applications-table">
-								<caption class="sr-only">Your applications and private next steps</caption>
-								<thead><tr><th scope="col">Company</th><th scope="col">Role</th><th scope="col">Location</th><th scope="col">Status</th><th scope="col">Updated</th><th scope="col">Next step</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
-								<tbody>${jobs.map(applicationTableRow).join("")}</tbody>
-							</table></div>`
+						? `<div class="tracked-role-list applications-table" aria-label="Tracked roles">${jobs.map(applicationTableRow).join("")}</div>`
 						: empty(allJobs.length ? "No tracked jobs match this stage and search." : "Save a role in Find jobs to start your shortlist, then mark it Applied when you have actually applied.")
 				}
 			</section>
-			<aside class="tracker-right-rail" aria-label="Application progress">
+			<details class="workspace-insights"><summary>Summary, progress & next-step notes</summary>
+			<section class="reference-metrics application-stats" aria-label="Application summary">
+				${referenceMetric(applications.total, "Total applications", "document")}
+				${referenceMetric(applications.inProgress, "In progress", "progress")}
+				${referenceMetric(applications.interviewing, "Interviews", "people")}
+				${referenceMetric(applications.offers, "Offers", "spark")}
+			</section><aside class="tracker-right-rail" aria-label="Application progress">
 				<section class="rail-panel">
 					<div class="rail-panel-heading"><h2>Application progress</h2><button data-nav="analytics" class="text-button">View analytics →</button></div>
 					${renderApplicationDonut(applications)}
@@ -717,7 +717,7 @@ function renderApplications() {
 					}
 				</section>
 				<div class="rail-art rail-art-applications" aria-hidden="true"></div>
-			</aside>
+			</aside></details>
 		</div>
 		<dialog id="application-dialog" class="editor-dialog" aria-labelledby="application-dialog-title">
 			<form method="dialog" class="dialog-card" id="application-editor-form">
@@ -739,10 +739,12 @@ function renderNetworking() {
 				<div>
 					<strong>People to contact for ${escapeHtml(state.networkingJob.title)}</strong>
 					<span>${escapeHtml(state.networkingJob.company)} · ${escapeHtml(state.networkingJob.location || state.networkingJob.region || "Location not listed")}</span>
+					<details><summary>Role priorities & search behavior</summary>
 					<p>Priority: entry-level in this function, then internship/new-grad recruiters, then other entry-level employees at this firm. Public evidence can be incomplete; no contact or vacancy ownership is guaranteed.</p>
 					<p>Opening this list only reads your saved contacts. A new provider search requires the Search button after reviewing costs.</p>
+					</details>
 				</div>
-				<div class="actions"><button id="reload-job-contacts" ${state.networkingContacts.status === "loading" ? "disabled" : ""}>Reload saved contacts</button><button id="clear-networking-job" ${searching ? "disabled" : ""}>All networking</button></div>
+				<div class="actions"><button id="return-to-networking-role" class="secondary">← Return to role</button><button id="reload-job-contacts" ${state.networkingContacts.status === "loading" ? "disabled" : ""}>Reload saved contacts</button><button id="clear-networking-job" ${searching ? "disabled" : ""}>All people</button></div>
 			</section>`
 		: "";
 	const previewNotice = linkingEnabled
@@ -813,7 +815,9 @@ function renderNetworking() {
 					left.fullName.localeCompare(right.fullName, "en") ||
 					left.id.localeCompare(right.id, "en");
 			}
-			return String(right.updatedAt).localeCompare(String(left.updatedAt));
+			return Number(right.matchQuality === "STRONG") - Number(left.matchQuality === "STRONG") ||
+				(right.relevanceScore || 0) - (left.relevanceScore || 0) ||
+				String(right.updatedAt).localeCompare(String(left.updatedAt));
 		});
 	const replies = state.session.prospects
 		.filter((person) => person.status === "REPLIED" && person.lastReplyAt)
@@ -824,8 +828,7 @@ function renderNetworking() {
 	return `
 		<section class="reference-hero networking-reference-hero">
 			<div class="reference-hero-copy">
-				<p class="eyebrow">People create opportunities</p>
-				<h1>People behind<br /><span>the opportunity.</span></h1>
+				<h1>A little closer to your network.</h1>
 				<p>Find relevant public profiles, approve each person, review every exact draft, and send only when you are ready.</p>
 				<div class="reference-hero-actions">
 					<button id="open-discovery-dialog" data-tour="networking-find" class="primary">${icon("plus")} Find people</button>
@@ -833,36 +836,32 @@ function renderNetworking() {
 				</div>
 			</div>
 		</section>
-		<section class="reference-metrics networking-stats" aria-label="Networking summary">
-			${referenceMetric(networking.tracked, "People tracked", "people")}
-			${referenceMetric(networking.drafts, "Drafts ready", "edit")}
-			${referenceMetric(networking.sent, "Emails sent", "send")}
-			${referenceMetric(networking.replied, "Replies", "reply")}
-		</section>
 		${previewNotice}${context}${state.networkingJob ? renderDiscoverySetup() : ""}${renderNetworkingSearchState()}${renderAiDiscovery()}
 		${state.networkingJob && state.networkingContacts.status === "loading" ? '<p class="notice" role="status">Loading saved contacts only. No provider search is running.</p>' : ""}
 		${state.networkingJob && state.networkingContacts.status === "error" ? `<p class="notice warning" role="alert">${escapeHtml(state.networkingContacts.message)} Use Reload saved contacts to retry without a provider search.</p>` : ""}
 		<div class="tracker-layout networking-layout">
 			<aside class="tracker-filters" aria-label="Networking filters">
-				<div class="tracker-filter-heading"><strong>Filters</strong><button class="text-button" data-network-filter="ALL">Clear all</button></div>
-				<fieldset>
-					<legend>Workflow stage</legend>
+				<fieldset class="workflow-tabs">
+					<legend class="sr-only">Workflow stage</legend>
 					${networkFilterButton("ALL", "All", people.length)}
 					${networkFilterButton("TO_APPROVE", "To approve")}
 					${networkFilterButton("DRAFTS", "Drafts")}
 					${networkFilterButton("SENT", "Sent")}
 					${networkFilterButton("REPLIED", "Replied")}
 				</fieldset>
+				<details class="filter-disclosure"><summary>Filter people</summary>
+				<button id="clear-network-filters" class="text-button">Clear all</button>
 				<fieldset>
 					<legend>Match quality</legend>
 					<button data-network-quality="ALL" class="${state.networkingQuality === "ALL" ? "active" : ""}">All matches</button>
 					<button data-network-quality="STRONG" class="${state.networkingQuality === "STRONG" ? "active" : ""}">Strong</button>
-					<button data-network-quality="BROADER_COMPANY" class="${state.networkingQuality === "BROADER_COMPANY" ? "active" : ""}">Broader company</button>
+					<button data-network-quality="BROADER_COMPANY" class="${state.networkingQuality === "BROADER_COMPANY" ? "active" : ""}">Possible / uncertain</button>
 				</fieldset>
 				<label>Search people<input id="networking-filter-search" value="${escapeAttr(state.networkingSearchText)}" placeholder="Name, company, role…" /></label>
 				<label>Company<input id="networking-company-filter" value="${escapeAttr(state.networkingCompanySearch)}" placeholder="Search companies…" /></label>
 				<label>Location<input id="networking-location-filter" value="${escapeAttr(state.networkingLocationSearch)}" placeholder="Search locations…" /></label>
 				<p class="filter-footnote">A sent email or reply is not shown as a completed coffee chat unless you record that evidence elsewhere.</p>
+				</details>
 			</aside>
 			<section class="tracker-table-panel" data-tour="networking-review">
 				<div class="table-panel-heading">
@@ -873,15 +872,17 @@ function renderNetworking() {
 				${state.preparationRequest ? '<p class="notice" role="status">An explicitly approved action is running. Completed stages are saved independently. <button id="cancel-preparation" class="secondary">Stop waiting</button></p>' : ""}
 				${
 					prospects.length
-						? `<div class="responsive-table-wrap" tabindex="0" role="region" aria-label="Networking table. Scroll to view every column."><table class="data-table networking-table">
-								<caption class="sr-only">Your network and approval-first outreach workflow</caption>
-								<thead><tr><th scope="col">Name</th><th scope="col">Role</th><th scope="col">Company</th><th scope="col">Status</th><th scope="col">${state.networkingJob ? "Contact priority" : "Match"}</th><th scope="col">Next step</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
-								<tbody>${prospects.map((person, index) => `${state.networkingJob && !jobContactFor(person)?.tier && (index === 0 || jobContactFor(prospects[index - 1])?.tier) ? '<tr class="unconfirmed-contacts"><th colspan="7">Unconfirmed fits - not part of the three ranked priorities. Review the public evidence before approaching.</th></tr>' : ""}${networkingTableRow(person, profileReady)}`).join("")}</tbody>
-							</table></div>`
+						? `<div class="people-cards networking-table" aria-label="People and approval-first outreach">${prospects.map((person, index) => `${state.networkingJob && !jobContactFor(person)?.tier && (index === 0 || jobContactFor(prospects[index - 1])?.tier) ? '<p class="unconfirmed-contacts">Unconfirmed fits - not part of the three ranked priorities. Review the public evidence before approaching.</p>' : ""}${networkingTableRow(person, profileReady)}`).join("")}</div>`
 						: empty(people.length ? "No people match these filters." : state.networkingJob ? "No saved contacts for this job yet. Choose Find people, review the costs, then explicitly search. Results are not guaranteed." : "Use Find people to search public professional profiles.")
 				}
 			</section>
-			<aside class="tracker-right-rail" aria-label="Networking activity">
+			<details class="workspace-insights"><summary>Summary, approval workflow & activity</summary>
+			<section class="reference-metrics networking-stats" aria-label="Networking summary">
+				${referenceMetric(networking.tracked, "People tracked", "people")}
+				${referenceMetric(networking.drafts, "Drafts ready", "edit")}
+				${referenceMetric(networking.sent, "Emails sent", "send")}
+				${referenceMetric(networking.replied, "Replies", "reply")}
+			</section><aside class="tracker-right-rail" aria-label="Networking activity">
 				<section class="rail-panel workflow-rail" data-tour="networking-workflow">
 					<h2>Approval workflow</h2>
 					<ol><li><b>1</b><span>Discover</span></li><li><b>2</b><span>Approve</span></li><li><b>3</b><span>Review draft</span></li><li><b>4</b><span>Send</span></li><li><b>5</b><span>Reply</span></li></ol>
@@ -901,7 +902,7 @@ function renderNetworking() {
 					}
 				</section>
 				<div class="rail-art rail-art-networking" aria-hidden="true"></div>
-			</aside>
+			</aside></details>
 		</div>
 		<dialog id="discovery-dialog" class="editor-dialog discovery-dialog" aria-labelledby="discovery-title">
 			<div class="dialog-card">
@@ -973,8 +974,9 @@ function renderAiDiscovery() {
 	const model = state.session.settings[{ GEMINI: "geminiModel", OPENAI: "openAiModel", ANTHROPIC: "anthropicModel" }[provider]] || "";
 	const retry = state.networkingSearch.mode === "AI_SUPPLEMENT" &&
 		["error", "partial"].includes(state.networkingSearch.status);
-	return `<section class="panel ai-discovery" aria-labelledby="ai-discovery-title">
-		<div class="panel-head"><div><h2 id="ai-discovery-title">Optional: find more with AI</h2><p>Keep your saved contacts and Tavily results. This separate action uses the same criteria, never reruns Tavily, and may find only duplicates or no new people.</p></div></div>
+	return `<details class="ai-discovery filter-disclosure" id="ai-discovery-options">
+		<summary id="ai-discovery-title">Optional: find more with AI</summary>
+		<p>Keep your saved contacts and Tavily results. This separate action uses the same criteria, never reruns Tavily, and may find only duplicates or no new people.</p>
 		${provider === "NONE" ? '<p class="notice warning">AI discovery is disabled. Choose an optional AI discovery provider in Settings to enable this action. Tavily Search remains separate.</p>' : `<p>Selected provider: <strong>${escapeHtml(label)}</strong> · Saved model: <strong>${escapeHtml(model)}</strong>. At most ${Math.min(Number(state.networkingCriteria.count || 5), 10)} candidate profiles per request; evidence checks still apply.</p>`}
 		${provider !== "NONE" && !configured ? `<p class="notice warning">No API key is configured for ${escapeHtml(label)}. Add your own key in Settings; no other provider will be used.</p>` : ""}
 		${state.networkingJob && state.networkingContacts.status !== "ready" ? '<p class="notice warning">Reload saved contacts before starting another search.</p>' : ""}
@@ -988,7 +990,7 @@ function renderAiDiscovery() {
 			Charges belong to <strong>your own API account</strong>. Each click authorizes one new selected-provider request, without automatic retries or provider switches. More searches do not guarantee new contacts. This never approves, enriches, drafts or sends outreach.</p>
 		${provider === "ANTHROPIC" ? `<label class="search-budget-choice"><input id="anthropic-expanded-search" type="checkbox" ${ready ? "" : "disabled"} /><span>I authorize up to 3 Anthropic web searches for this AI request, with additional search and model-token charges to my own API account. Unchecked: at most 1 search. This consent resets after every request or context change.</span></label>` : ""}
 		<div class="actions"><button type="button" id="find-more-ai" class="secondary" ${ready ? "" : "disabled"}>${retry ? "Retry with AI" : "Find more with AI"}</button>${!configured ? '<button type="button" class="secondary" data-nav="settings">Configure AI discovery</button>' : ""}</div>
-	</section>`;
+	</details>`;
 }
 
 function networkingPeople() {
@@ -1217,6 +1219,7 @@ function renderSettings() {
 			<section class="settings-reference-card appearance-card">
 				<div class="settings-card-heading"><span>${icon("palette")}</span><div><h2>Appearance</h2><p>The warm job-first workspace follows your device's light or dark preference.</p></div></div>
 				<dl class="appearance-summary"><div><dt>Theme</dt><dd>Warm job-first · ${document.documentElement.dataset.theme === "dark" ? "Dark" : "Light"}</dd></div><div><dt>Motion</dt><dd>Follows your system reduced-motion preference</dd></div></dl>
+				${themeChoices()}<p>Light is the default. Your explicit choice stays in this browser, including on Privacy and Terms; no profile or provider data is stored with it.</p>
 				<div class="appearance-swatches" role="img" aria-label="Warm workspace theme palette"><span></span><span></span><span></span><span></span><span></span></div>
 			</section>
 			<section class="settings-reference-card about-card">
@@ -1252,6 +1255,32 @@ function renderSettings() {
 }
 
 function wireTab() {
+	document.getElementById("more-job-filters")?.addEventListener("toggle", (event) => {
+		state.jobFiltersOpen = event.currentTarget.open;
+	});
+	document.querySelectorAll("[data-job-detail-tab]").forEach((button) =>
+		button.addEventListener("click", () => {
+			state.jobDetailTab = button.dataset.jobDetailTab;
+			render();
+			document.querySelector(`[data-job-detail-tab="${state.jobDetailTab}"]`)?.focus();
+		}));
+	document.getElementById("return-to-networking-role")?.addEventListener("click", () => {
+		const job = state.networkingJob;
+		if (!job) return;
+		state.selectedJob = job;
+		state.jobDetailTab = "people";
+		navigate("jobs");
+	});
+	document.getElementById("clear-application-filters")?.addEventListener("click", () => {
+		state.applicationFilter = "ALL";
+		state.applicationSearch = state.applicationCompanySearch = state.applicationLocationSearch = "";
+		render();
+	});
+	document.getElementById("clear-network-filters")?.addEventListener("click", () => {
+		state.networkingFilter = state.networkingQuality = "ALL";
+		state.networkingSearchText = state.networkingCompanySearch = state.networkingLocationSearch = "";
+		render();
+	});
 	document.querySelectorAll("#application-dialog-notes, #application-dialog-stage").forEach((input) =>
 		input.addEventListener("input", captureJobEdits));
 	document.querySelectorAll("[data-job-detail]").forEach((button) =>
@@ -2015,7 +2044,7 @@ function discoverySuccessMessage(summary) {
 	}
 	if (summary.broaderAccepted) {
 		details.push(
-			`${summary.broaderAccepted} broader company ${summary.broaderAccepted === 1 ? "match" : "matches"} requiring role review`,
+			`${summary.broaderAccepted} possible / uncertain ${summary.broaderAccepted === 1 ? "match" : "matches"} requiring identity, employer and role review`,
 		);
 	}
 	if (summary.fallbackAccepted) {
@@ -2030,7 +2059,7 @@ function discoverySuccessMessage(summary) {
 	}
 	if (summary.rejected) {
 		details.push(
-			`${summary.rejected} ${summary.rejected === 1 ? "result was" : "results were"} not a usable public professional profile`,
+			`${summary.rejected} search results were not retained (non-person, unsafe, uncited, duplicate or outside the bounded selection)`,
 		);
 	}
 	const fallbackFailure = discoveryFallbackFailureMessage(summary);
@@ -2039,8 +2068,16 @@ function discoverySuccessMessage(summary) {
 
 function discoveryEmptyMessage(summary) {
 	const fallbackFailure = discoveryFallbackFailureMessage(summary);
+	const counts = summary.rejectionCounts;
+	const reasons = counts ? [
+		counts.unsafeOrNonProfile ? `${counts.unsafeOrNonProfile} unsafe or non-person pages` : "",
+		counts.noIdentifiablePerson ? `${counts.noIdentifiablePerson} results without an identifiable name` : "",
+		counts.nonProfessional ? `${counts.nonProfessional} results without usable person-specific professional evidence` : "",
+		counts.uncitedSource ? `${counts.uncitedSource} sources not cited by the selected AI provider` : "",
+		counts.duplicate ? `${counts.duplicate} duplicate sources` : "",
+	].filter(Boolean).join("; ") : "";
 	if (summary.jobQualified === 0) {
-		return `No qualified matches were confirmed in this search. ${summary.jobUnconfirmed || 0} company contacts have unconfirmed fit and are shown separately. Existing linked contacts remain available. A contact is not guaranteed for every job.${fallbackFailure ? ` ${fallbackFailure}` : ""}`;
+		return `No qualified matches were confirmed in this search. ${summary.jobUnconfirmed || 0} possible people have unconfirmed employer / role fit and are shown separately. Existing linked contacts remain available. A contact is not guaranteed for every job.${reasons ? ` Not retained: ${reasons}.` : ""}${fallbackFailure ? ` ${fallbackFailure}` : ""}`;
 	}
 	if (summary.duplicates > 0) {
 		return `No new people were added. ${summary.duplicates} matching ${summary.duplicates === 1 ? "profile is" : "profiles are"} already tracked.${fallbackFailure ? ` ${fallbackFailure}` : " Edit the criteria to search for different roles."}`;
@@ -2050,7 +2087,7 @@ function discoveryEmptyMessage(summary) {
 		return `${summary.mode === "AI_SUPPLEMENT" ? fallbackProviderLabel(summary.fallbackProvider) : "Tavily"} returned no profiles. Existing contacts are unchanged. ${summary.mode === "AI_SUPPLEMENT" ? "Another AI request may also return no new people." : "Edit the criteria and retry Tavily, or explicitly choose Find more with AI."}`;
 	}
 	if (summary.insufficientMatchRejected > 0) {
-		return `${summary.insufficientMatchRejected} ${summary.insufficientMatchRejected === 1 ? "candidate was" : "candidates were"} rejected because the profile did not match both the requested company and a professional role/topic. Edit the role terms or location and retry.`;
+		return `${summary.insufficientMatchRejected} candidates were excluded by an earlier strict relevance check. New searches retain plausible people with uncertain employer or role fit for review. Existing contacts are unchanged.`;
 	}
 	if (summary.accepted === 0 && summary.rejected > 0) {
 		const stages = [];
@@ -2064,7 +2101,7 @@ function discoveryEmptyMessage(summary) {
 				`${summary.professionalBioProviderReturned} public-bio ${summary.professionalBioProviderReturned === 1 ? "candidate" : "candidates"}`,
 			);
 		}
-		return `The search returned ${stages.length ? stages.join(" and ") : `${summary.providerReturned} candidate results`}, but none were usable public professional profiles. Broaden the roles or location and retry.`;
+		return `The search returned ${stages.length ? stages.join(" and ") : `${summary.providerReturned} candidate results`}, but no identifiable person with a safe public professional source could be retained.${reasons ? ` Not retained: ${reasons}.` : " Results may have been non-person pages, lacked identifiable names or professional evidence, or lacked a cited source."} This is not proof that your role or location is too narrow. Existing contacts are unchanged; another explicit search may still return no person.`;
 	}
 	return "No new people matched these criteria. Edit the fields below and retry.";
 }
@@ -2173,10 +2210,10 @@ function preparationBudget(person = null, stage = "INITIAL") {
 }
 
 function renderPreparationCosts(person = null, stage = "INITIAL") {
-	return `<p class="notice preparation-costs"><strong>Before approving preparation:</strong> ${escapeHtml(preparationBudget(person, stage))}
+	return `<details class="preparation-costs filter-disclosure"><summary>Preparation uses your selected email lookup, Tavily research and drafting model. Review costs & privacy before approving.</summary><p class="notice"><strong>Before approving preparation:</strong> ${escapeHtml(preparationBudget(person, stage))}
 		<a href="https://docs.apollo.io/docs/api-pricing" target="_blank" rel="noopener">Apollo pricing</a> ·
 		<a href="https://docs.tavily.com/documentation/api-credits" target="_blank" rel="noopener">Tavily pricing</a>.
-		Only your selected drafting model receives saved public professional evidence and your factual profile/experience (including resume suggestions you reviewed and saved). Your resume, private drafts and background are not sent to Apollo or Tavily.</p>`;
+		Only your selected drafting model receives saved public professional evidence and your factual profile/experience (including resume suggestions you reviewed and saved). Your resume, private drafts and background are not sent to Apollo or Tavily.</p></details>`;
 }
 
 function preparationStatus(status, kind) {
@@ -2335,6 +2372,11 @@ function openDraft(id) {
 	document.getElementById("draft-version").value = prospect.draftVersion;
 	document.getElementById("draft-name").textContent =
 		`Review outreach to ${prospect.fullName}`;
+	const roleContext = document.getElementById("draft-role-context");
+	roleContext.hidden = !state.networkingJob;
+	roleContext.textContent = state.networkingJob
+		? `For ${state.networkingJob.title} at ${state.networkingJob.company}. Closing this review returns to this role's People; nothing is sent until exact-draft approval.`
+		: "";
 	document.getElementById("draft-email").value = prospect.email;
 	document.getElementById("draft-subject").value = prospect.subject;
 	document.getElementById("draft-body").value = prospect.draftBody;
@@ -2623,6 +2665,8 @@ function clearPrivateDialogs(clearJobEdits = true) {
 	document.getElementById("draft-form").reset();
 	document.getElementById("draft-name").textContent = "Review draft";
 	document.getElementById("draft-audit").textContent = "";
+	document.getElementById("draft-role-context").textContent = "";
+	document.getElementById("draft-role-context").hidden = true;
 	document.getElementById("draft-context").textContent = "";
 	document.getElementById("draft-save-state").textContent = "";
 }
@@ -2870,10 +2914,12 @@ function captureJobEdits() {
 
 async function openJobDetail(id) {
 	const identity = state.session?.user?.id;
+	if (state.tab === "applications") navigate("jobs");
 	await run("Opening job details…", async () => {
 		const job = findJob(id) || (await api(`/api/jobs/${id}`)).job;
 		if (state.session?.user?.id !== identity || state.tab !== "jobs") return;
 		state.selectedJob = job;
+		state.jobDetailTab = "role";
 		syncViewToUrl(true);
 		render();
 		document.getElementById("job-detail-title")?.focus({ preventScroll: false });
@@ -2884,14 +2930,21 @@ function renderJobDetail(job) {
 	if (!job) return "";
 	const status = job.userState?.status;
 	const notes = state.jobNoteDrafts[job.id] ?? job.userState?.notes ?? "";
+	const linked = (state.session?.prospects || []).filter((person) => person.linkedJobs?.some((entry) => entry.id === job.id));
 	return `<article class="job-detail-card" aria-labelledby="job-detail-title">
 		<button id="back-to-job-results" class="secondary mobile-detail-back">← Back to results</button>
 		<p class="job-detail-company">${escapeHtml(job.company)} · ${escapeHtml(job.location || job.region || "Location not listed")}</p>
 		<h2 id="job-detail-title" tabindex="-1">${escapeHtml(job.title)}</h2>
 		<div class="chips">${status ? `<span class="status status-${status.toLowerCase()}">${formatStatus(status)}</span>` : ""}<span class="chip">${escapeHtml(JobSourceUi.sourceLabel(job.source))}</span>${job.lengthLabel ? `<span class="chip">${escapeHtml(job.lengthLabel)}</span>` : ""}${job.term?.label ? `<span class="chip">${escapeHtml(job.term.label)}</span>` : ""}</div>
-		<div class="actions"><a class="button primary" href="${escapeAttr(job.url)}" target="_blank" rel="noopener">Open original posting</a>${!status || status === "SAVED" ? `<button data-job-save="${job.id}">${status ? "Unsave" : "Save role"}</button>` : ""}<button data-job-apply="${job.id}" ${status && status !== "SAVED" ? "disabled" : ""}>Mark applied</button>${jobContactAction(job)}</div>
+		<div class="actions"><a class="button primary" href="${escapeAttr(job.url)}" target="_blank" rel="noopener">Open original posting</a>${!status || status === "SAVED" ? `<button data-job-save="${job.id}">${status ? "Unsave" : "Save role"}</button>` : ""}<button data-job-apply="${job.id}" ${status && status !== "SAVED" ? "disabled" : ""}>Mark applied</button></div>
+		<div class="workflow-tabs role-detail-tabs" role="group" aria-label="Role detail sections">${[["role", "Role"], ["people", "People"], ["progress", "Progress"]].map(([tab, label]) => `<button data-job-detail-tab="${tab}" aria-pressed="${(state.jobDetailTab || "role") === tab}" class="${(state.jobDetailTab || "role") === tab ? "active" : ""}">${label}</button>`).join("")}</div>
+		<section ${state.jobDetailTab && state.jobDetailTab !== "role" ? "hidden" : ""} aria-label="Role information">
 		<h3>About this role</h3><p class="detail-description">${escapeHtml(job.description || "No description was supplied. Review the original posting for requirements and availability.")}</p>${JobSourceUi.attributionHtml(job.source)}
+		</section>
+		<section ${state.jobDetailTab !== "people" ? "hidden" : ""} aria-label="People for this role"><h3>People behind this role</h3><p>${jobOutreachLinkingEnabled() ? "Open saved contacts for this employer and role. Opening People does not start a search or prepare outreach." : "Job-linked networking is not ready yet. Independent People search remains available; no capability is enabled by this tab."}</p>${jobContactAction(job)}${linked.length ? `<ul class="role-linked-people">${linked.map((person) => `<li><strong>${escapeHtml(person.fullName)}</strong> · ${escapeHtml(person.title || "Role not confirmed")} <span class="status">${formatStatus(person.status)}</span></li>`).join("")}</ul>` : '<p>No linked people are saved for this role yet.</p>'}</section>
+		<section ${state.jobDetailTab !== "progress" ? "hidden" : ""} aria-label="Role progress"><h3>Your progress</h3>
 		${status ? `<label>Tracking stage<select data-job-status="${job.id}">${jobStatusOptions(status)}</select></label><label for="job-notes-${job.id}">Private notes & next step</label><textarea id="job-notes-${job.id}" data-job-note="${job.id}" data-note-owner="${escapeAttr(state.session.user.id)}" rows="5" maxlength="4000">${escapeHtml(notes)}</textarea><p id="job-detail-notes-state" class="notes-state">${Object.hasOwn(state.jobNoteDrafts, job.id) ? "Unsaved notes. Choose Save notes." : "Saved notes stay private to your account."}</p><button data-save-job-notes="${job.id}" class="secondary">Save notes</button>` : '<p class="notice">Save this role to keep private notes and track your next step.</p>'}
+		</section>
 	</article>`;
 }
 function journeyMetrics() {
@@ -2899,6 +2952,11 @@ function journeyMetrics() {
 		trackedJobs: state.trackedJobs.jobs,
 		prospects: state.session?.prospects || [],
 	});
+}
+
+function themeChoices() {
+	const current = document.documentElement.dataset.theme;
+	return `<div class="theme-choices" role="group" aria-label="Appearance">${["light", "dark"].map((theme) => `<button type="button" class="secondary" data-theme-choice="${theme}" aria-pressed="${current === theme}">${theme === "light" ? "Light" : "Dark"}</button>`).join("")}</div>`;
 }
 
 async function mountJourneyScene(renderToken) {
@@ -3140,15 +3198,12 @@ function jobCard(job) {
 
 function applicationTableRow(job) {
 	const status = job.userState?.status || "";
-	return `<tr>
-		<td><span class="table-company"><span class="company-tile company-tone-${companyTone(job.company)}" aria-hidden="true">${escapeHtml(companyInitials(job.company))}</span><strong>${escapeHtml(job.company)}</strong></span></td>
-		<td><span class="table-role">${escapeHtml(job.title)}</span></td>
-		<td>${escapeHtml([job.location, job.region].filter(Boolean).join(" · ") || "Not listed")}</td>
-		<td><span class="status status-${status.toLowerCase()}">${formatStatus(status)}</span></td>
-		<td><time datetime="${escapeAttr(job.userState.updatedAt)}">${formatDateOnly(job.userState.updatedAt)}</time></td>
-		<td><span class="table-note">${escapeHtml(job.userState.notes?.trim() ? truncate(job.userState.notes, 54) : "—")}</span></td>
-		<td><div class="table-actions">${jobContactAction(job)}<button class="row-action-button" data-application-edit="${job.id}" aria-label="Edit ${escapeAttr(job.title)} at ${escapeAttr(job.company)}">${icon("more")}</button></div></td>
-	</tr>`;
+	return `<article class="tracked-role-row">
+		<span class="company-tile company-tone-${companyTone(job.company)}" aria-hidden="true">${escapeHtml(companyInitials(job.company))}</span>
+		<div class="tracked-role-copy"><h3><button class="text-button" data-job-detail="${job.id}">${escapeHtml(job.title)}</button></h3><p>${escapeHtml(job.company)} · ${escapeHtml(job.location || job.region || "Location not listed")}</p><p class="table-note">${escapeHtml(job.userState.notes?.trim() ? truncate(job.userState.notes, 120) : "No next-step notes yet")}</p></div>
+		<div class="tracked-role-stage"><span class="status status-${status.toLowerCase()}">${formatStatus(status)}</span><small>Updated <time datetime="${escapeAttr(job.userState.updatedAt)}">${formatDateOnly(job.userState.updatedAt)}</time></small></div>
+		<div class="table-actions">${jobContactAction(job)}<button class="secondary" data-application-edit="${job.id}" aria-label="Edit ${escapeAttr(job.title)} at ${escapeAttr(job.company)}">Edit</button></div>
+	</article>`;
 }
 
 function applicationFilterButton(status, label, explicitCount) {
@@ -3157,7 +3212,7 @@ function applicationFilterButton(status, label, explicitCount) {
 		state.trackedJobs.jobs.filter(
 			(job) => job.userState?.status === status,
 		).length;
-	return `<button data-application-filter="${status}" class="${state.applicationFilter === status ? "active" : ""}">${escapeHtml(label)} <span>${count}</span></button>`;
+	return `<button data-application-filter="${status}" aria-pressed="${state.applicationFilter === status}" class="${state.applicationFilter === status ? "active" : ""}">${escapeHtml(label)} <span>${count}</span></button>`;
 }
 
 function networkFilterButton(filter, label, explicitCount) {
@@ -3173,7 +3228,7 @@ function networkFilterButton(filter, label, explicitCount) {
 			if (filter === "REPLIED") return person.status === "REPLIED";
 			return true;
 		}).length;
-	return `<button data-network-filter="${filter}" class="${state.networkingFilter === filter ? "active" : ""}">${escapeHtml(label)} <span>${count}</span></button>`;
+	return `<button data-network-filter="${filter}" aria-pressed="${state.networkingFilter === filter}" class="${state.networkingFilter === filter ? "active" : ""}">${escapeHtml(label)} <span>${count}</span></button>`;
 }
 
 function networkingTableRow(person, profileReady) {
@@ -3182,8 +3237,8 @@ function networkingTableRow(person, profileReady) {
 	const contact = state.networkingJob ? jobContactFor(person) : null;
 	const priority = state.networkingJob ? `<div class="job-contact-priority">
 		<strong>${escapeHtml(contact?.label || "Unconfirmed fit")}</strong>
-		<details><summary>Reason & public evidence</summary><p>${escapeHtml(contact?.reason || "This legacy link has no confirmed job-specific evidence.")}</p>${contact?.evidence ? `<blockquote>${escapeHtml(contact.evidence)}</blockquote>` : ""}${person.sourceUrl ? `<a href="${escapeAttr(person.sourceUrl)}" target="_blank" rel="noopener">Open public source</a>` : ""}</details>
-		${person.matchQuality === "BROADER_COMPANY" ? '<small>Broader company match - review role relevance.</small>' : ""}
+		<details><summary>Reason & public evidence</summary><p>${escapeHtml(contact?.reason || "This legacy link has no confirmed job-specific evidence.")}</p>${person.sourceSnippet || contact?.evidence ? `<blockquote>${escapeHtml(person.sourceSnippet || contact.evidence)}</blockquote>` : ""}${person.sourceUrl ? `<a href="${escapeAttr(person.sourceUrl)}" target="_blank" rel="noopener">Open public source</a>` : ""}</details>
+		${person.matchQuality === "BROADER_COMPANY" ? '<small>Possible match - review identity, employer and role relevance.</small>' : ""}
 	</div>` : "";
 	let nextStep = "";
 	if (["DISCOVERED", "ERROR"].includes(person.status)) {
@@ -3199,15 +3254,15 @@ function networkingTableRow(person, profileReady) {
 	} else {
 		nextStep = `<span class="table-muted">${formatStatus(person.status)}</span>`;
 	}
-	return `<tr class="${person.matchQuality === "BROADER_COMPANY" ? "broader-match-row" : ""}">
-		<td><span class="person-cell"><span class="person-avatar" aria-hidden="true">${escapeHtml(companyInitials(person.fullName))}</span><span><strong>${escapeHtml(person.fullName)}</strong>${person.email ? `<small>${escapeHtml(person.email)}</small>` : '<small>Email needed before send</small>'}</span></span></td>
-		<td>${escapeHtml(person.title || "Role not listed")}</td>
-		<td>${escapeHtml(person.company || "Company not listed")}</td>
-		<td><span class="status status-${person.status.toLowerCase()}">${formatStatus(person.status)}</span></td>
-		<td>${priority || (person.matchQuality === "BROADER_COMPANY" ? '<span class="chip chip-warning" title="Matches the company and a broader professional signal; review role relevance.">Broader</span>' : '<span class="chip chip-strong">Strong</span>')}</td>
-		<td><div class="table-actions">${nextStep}</div>${person.contactApprovedAt ? renderPreparationContext(person) : ""}${person.errorMessage ? `<small class="row-error">${escapeHtml(person.errorMessage)}</small>` : ""}</td>
-		<td>${profileUrl ? `<a class="row-action-button" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" aria-label="${profileLabel} for ${escapeAttr(person.fullName)}">${icon("external")}</a>` : ""}</td>
-	</tr>`;
+	return `<article class="person-review-card ${person.matchQuality === "BROADER_COMPANY" ? "broader-match-row" : ""}">
+		<div class="card-head"><span class="person-cell"><span class="person-avatar" aria-hidden="true">${escapeHtml(companyInitials(person.fullName))}</span><span><strong>${escapeHtml(person.fullName)}</strong><small>${escapeHtml(person.title || "Role not confirmed")} · ${escapeHtml(person.company || "Company not confirmed")}</small></span></span><span class="status status-${person.status.toLowerCase()}">${formatStatus(person.status)}</span></div>
+		<p>${escapeHtml(person.whyRelevant || person.sourceSnippet || "Review this public profile before approving.")}</p>
+		${priority || (person.matchQuality === "STRONG" ? '<span class="chip chip-strong">Strong match</span>' : '<span class="chip chip-warning">Possible match · review relevance</span>')}
+		${!state.networkingJob ? `<details class="job-contact-priority"><summary>Public search evidence</summary><blockquote>${escapeHtml(person.sourceSnippet || "No search snippet was saved. Review the linked public profile before approving.")}</blockquote></details>` : ""}
+		<span class="chip">${person.email ? "Email on file · review before send" : "Email needed before send"}</span>
+		<div class="person-review-actions"><div class="table-actions">${nextStep}</div>${profileUrl ? `<a class="button secondary" href="${escapeAttr(profileUrl)}" target="_blank" rel="noopener" aria-label="${profileLabel} for ${escapeAttr(person.fullName)}">Public profile ${icon("external")}</a>` : ""}</div>
+		${person.contactApprovedAt ? renderPreparationContext(person) : ""}${person.errorMessage ? `<p class="notice warning">${escapeHtml(person.errorMessage)}</p>` : ""}
+	</article>`;
 }
 
 function prospectCard(person, profileReady) {
@@ -3225,10 +3280,10 @@ function prospectCard(person, profileReady) {
 			<span class="chip">Relevance ${person.relevanceScore}/100</span>
 			${person.email ? '<span class="chip">Email found</span>' : ""}
 			${person.matchQuality === "STRONG" ? '<span class="chip chip-strong">Strong match</span>' : ""}
-			${person.matchQuality === "BROADER_COMPANY" ? '<span class="chip chip-warning">Broader match</span>' : ""}
+			${person.matchQuality === "BROADER_COMPANY" ? '<span class="chip chip-warning">Possible match</span>' : ""}
 			${linkedJobChips(person)}
 		</div>
-		${person.matchQuality === "BROADER_COMPANY" ? '<p class="notice warning"><strong>Broader company match — review role relevance.</strong> The profile matches the employer and a professional/location or hiring signal, but not the exact target role/topic.</p>' : ""}
+		${person.matchQuality === "BROADER_COMPANY" ? '<p class="notice warning"><strong>Possible match - review before approving.</strong> Identity, employer, role or requested criteria may be incomplete or different. Review the public evidence; this is not a verified contact.</p>' : ""}
 		<p>${escapeHtml(person.whyRelevant || person.sourceSnippet)}</p>
 		${person.errorMessage ? `<p class="notice danger">${escapeHtml(person.errorMessage)}</p>` : ""}
 		<div class="actions">
