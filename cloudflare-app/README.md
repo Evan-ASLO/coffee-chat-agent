@@ -16,6 +16,14 @@ Startup begins the single same-origin session read while the remaining scripts l
 
 The former live networking design is preserved in the annotated source tag **`archive-live-networking-20261008`** at `4403c5f77d81d7206048550a2d875c86c1c2dab3`. Its Worker version is `f1939c6e-968f-434b-8396-54377c5be54f`. An operator can restore that UI with `wrangler rollback <version> --config wrangler.jsonc --message "Restore archived networking design; preserve database and gates"`, or redeploy the tag from a separate checkout with `--keep-vars --no-autoconfig`. **Do not restore D1, delete records or reverse migration 0009 for a design rollback.** The source archive and release receipt are retained outside the repository; they contain no credentials. Apollo remains OFF.
 
+## Future access approval notifications
+
+Owner tools **Beta access** offers **Notify by email for new approvals** when the approving owner's existing Gmail OAuth connection is configured, plus the fixed template preview. It is selected by default for that owner, but must be explicitly included in the approval request; old clients and already-approved entries send nothing. Individual, manual and reviewed-bulk new grants persist one notice per unique approval revision in the same D1 transaction. No current entries are backfilled, no applicant Gmail connection is used, and no outreach prospect/draft/send state is involved.
+
+The private D1 outbox is processed in batches of five immediately after opted-in approval and by the existing 15-minute maintenance schedule. This avoids introducing acceptance jobs that an older queue consumer could misinterpret during rollback. Access and email outcomes remain separate: grants are not undone on Gmail failure, and Sent means Gmail returned a message ID, not confirmed delivery. The current grant, approving owner and Gmail connection are rechecked before the send. Definite unsent failures offer an explicit retry by that same owner; network/5xx/missing-ID outcomes and abandoned send locks are uncertain and cannot be resent through the app. Check the approving owner's Gmail Sent instead. Revocation stops queued notices but cannot recall already-started sends. Acceptance attempts use the existing daily send limit, capped at 50 per owner.
+
+Additive migration **0011_beta_acceptance_notifications.sql** adds the approval revision and private notification outbox, with legacy-writer revision invalidation and deleted-sender protection. Apply it before deploying this feature. Code rollback preserves this schema and all report data/cleanup protections; older code neither creates nor dispatches the acceptance outbox. Do not reverse migrations, backfill approvals or restore D1 as a UI rollback.
+
 ## Local development
 
 ```powershell

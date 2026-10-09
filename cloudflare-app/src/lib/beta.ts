@@ -2,6 +2,7 @@ import type { AppBindings } from "../types";
 import { z } from "zod";
 import { ClientInputError, ConflictError } from "./errors";
 import { openPayload, sealPayload } from "./crypto";
+import { acceptanceNotificationInsert, type AcceptanceNotificationStatus } from "./beta-notifications";
 
 export const BETA_APPROVAL_BATCH_LIMIT = 50;
 const SNAPSHOT_LIFETIME_MS = 10 * 60 * 1000;
@@ -24,6 +25,7 @@ export const bulkBetaApprovalSchema = z.object({
 	snapshot: z.string().max(48 * 1024).regex(/^[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]+$/),
 	requestIds: z.array(z.string().uuid()).max(BETA_APPROVAL_BATCH_LIMIT)
 		.refine((ids) => new Set(ids).size === ids.length, "Duplicate request IDs are not allowed."),
+	notifyEmail: z.boolean().default(false),
 }).strict();
 
 export type BetaAccessMode = "OPEN" | "ALLOWLIST";
@@ -35,6 +37,7 @@ export interface BetaAccessEntry {
 	status: BetaAccessStatus;
 	createdAt: string;
 	updatedAt: string;
+	notification: { id: string; status: AcceptanceNotificationStatus; failureCode: string | null; sentAt: string | null; senderIsYou: boolean } | null;
 }
 
 export interface BetaAccessRequestEntry {
@@ -134,6 +137,7 @@ export async function requestVerifiedBetaAccess(
 
 export async function listBetaAccessAdmin(
 	env: AppBindings,
+	adminUserId?: string,
 ): Promise<{
 	requests: BetaAccessRequestEntry[];
 	access: BetaAccessEntry[];
@@ -157,17 +161,24 @@ export async function listBetaAccessAdmin(
 			updated_at: string;
 		}>(),
 		env.DB.prepare(
-			`SELECT email, status, created_at, updated_at
-			   FROM beta_access
+			`SELECT a.email, a.status, a.created_at, a.updated_at,
+			        n.id AS notification_id,n.status AS notification_status,n.failure_code,n.sent_at,n.sender_user_id
+			   FROM beta_access a LEFT JOIN beta_acceptance_notifications n
+			        ON n.email=a.email AND n.grant_revision=a.approval_revision
 			  ORDER BY
-			    CASE status WHEN 'APPROVED' THEN 0 ELSE 1 END,
-			    updated_at DESC
+			    CASE a.status WHEN 'APPROVED' THEN 0 ELSE 1 END,
+			    a.updated_at DESC
 			  LIMIT 500`,
 		).all<{
 			email: string;
 			status: BetaAccessStatus;
 			created_at: string;
 			updated_at: string;
+			notification_id: string | null;
+			notification_status: AcceptanceNotificationStatus | null;
+			failure_code: string | null;
+			sent_at: string | null;
+			sender_user_id: string | null;
 		}>(),
 		env.DB.prepare("SELECT COUNT(*) AS total FROM beta_access_requests WHERE status = 'PENDING'")
 			.first<{ total: number }>(),
@@ -186,6 +197,8 @@ export async function listBetaAccessAdmin(
 			status: row.status,
 			createdAt: row.created_at,
 			updatedAt: row.updated_at,
+			notification: row.notification_id && row.notification_status ? { id: row.notification_id, status: row.notification_status,
+				failureCode: row.failure_code, sentAt: row.sent_at, senderIsYou: row.sender_user_id === adminUserId } : null,
 		})),
 		pendingTotal: Number(pending.total),
 		listLimit: 500,
@@ -277,7 +290,7 @@ export async function approveBetaSnapshot(
 	if (ids.size !== payload.requests.length || payload.requests.some((entry) => !ids.has(entry.id))) {
 		throw new ClientInputError("Approve only the exact requests in the reviewed snapshot.");
 	}
-	return approvePendingRequests(env, payload.requests, adminUserId, requestId);
+	return approvePendingRequests(env, payload.requests, adminUserId, requestId, input.notifyEmail);
 }
 
 async function approvePendingRequests(
@@ -285,6 +298,7 @@ async function approvePendingRequests(
 	requests: ReviewedRequest[],
 	adminUserId: string,
 	requestId: string,
+	notifyEmail = false,
 ) {
 	if (!requests.length) return { reviewed: 0, approved: [], skipped: [] };
 	const now = new Date().toISOString();
@@ -310,13 +324,14 @@ async function approvePendingRequests(
 			    AND a.updated_at IS json_extract(j.value, '$.accessUpdatedAt')`,
 		).bind(adminUserId, requestId, now, targets),
 		env.DB.prepare(
-			`INSERT INTO beta_access(email, status, invited_by_user_id, created_at, updated_at)
-			 SELECT json_extract(j.value, '$.email'), 'APPROVED', ?, ?, ?
+			`INSERT INTO beta_access(email, status, invited_by_user_id, created_at, updated_at, approval_revision)
+			 SELECT json_extract(j.value, '$.email'), 'APPROVED', ?, ?, ?, json_extract(j.value, '$.auditId')
 			   FROM json_each(?) j
 			   JOIN audit_events ae ON ae.id = json_extract(j.value, '$.auditId')
 			  WHERE ae.user_id = ?
 			 ON CONFLICT(email) DO UPDATE SET status = 'APPROVED',
-			   invited_by_user_id = excluded.invited_by_user_id, updated_at = excluded.updated_at`,
+			   invited_by_user_id = excluded.invited_by_user_id, updated_at = excluded.updated_at,
+			   approval_revision = excluded.approval_revision WHERE beta_access.status != 'APPROVED'`,
 		).bind(adminUserId, now, now, targets, adminUserId),
 		env.DB.prepare(
 			`UPDATE beta_access_requests SET status = 'APPROVED', google_sub = '', updated_at = ?
@@ -327,8 +342,9 @@ async function approvePendingRequests(
 			  ) AND status = 'PENDING'
 			 RETURNING id`,
 		).bind(now, targets, adminUserId),
+		acceptanceNotificationInsert(env, targets, adminUserId, now, notifyEmail),
 	]);
-	if (results.some((result) => !result.success) || !results[2]) {
+	if (results.some((result) => !result.success) || !results[2] || !results[3]) {
 		throw new Error("The pending beta approval transaction did not return a confirmed result.");
 	}
 	const approved = results[2].results.map((row) => row.id);
@@ -336,6 +352,7 @@ async function approvePendingRequests(
 	return {
 		reviewed: requests.length,
 		approved,
+		notificationsQueued: results[3].meta.changes,
 		skipped: requests.filter((entry) => !approvedIds.has(entry.id)).map((entry) => ({
 			id: entry.id,
 			reason: "ALREADY_HANDLED_OR_CHANGED" as const,
@@ -348,6 +365,7 @@ export async function approveBetaRequest(
 	requestId: string,
 	adminUserId: string,
 	auditRequestId: string,
+	notifyEmail = false,
 ): Promise<string> {
 	const request = await env.DB.prepare(
 		`SELECT ${pendingReviewColumns}
@@ -357,7 +375,7 @@ export async function approveBetaRequest(
 		.bind(requestId)
 		.first<PendingReviewRow>();
 	if (!request) throw new ConflictError("This request is no longer pending. Refresh beta access.");
-	const result = await approvePendingRequests(env, [reviewedRequest(request)], adminUserId, auditRequestId);
+	const result = await approvePendingRequests(env, [reviewedRequest(request)], adminUserId, auditRequestId, notifyEmail);
 	if (!result.approved.length) throw new ConflictError("This request changed before approval. Refresh beta access.");
 	return request.email;
 }
@@ -382,24 +400,28 @@ export async function approveBetaEmail(
 	env: AppBindings,
 	emailValue: string,
 	adminUserId: string,
+	notifyEmail = false,
 ): Promise<string> {
 	const email = normalizeBetaEmail(emailValue);
 	const now = new Date().toISOString();
+	const revision = crypto.randomUUID();
 	await env.DB.batch([
 		env.DB.prepare(
 			`INSERT INTO beta_access(
-			   email, status, invited_by_user_id, created_at, updated_at
-			 ) VALUES (?, 'APPROVED', ?, ?, ?)
+			   email, status, invited_by_user_id, created_at, updated_at, approval_revision
+			 ) VALUES (?, 'APPROVED', ?, ?, ?, ?)
 			 ON CONFLICT(email) DO UPDATE SET
 			   status = 'APPROVED',
 			   invited_by_user_id = excluded.invited_by_user_id,
-			   updated_at = excluded.updated_at`,
-		).bind(email, adminUserId, now, now),
+			   updated_at = excluded.updated_at,
+			   approval_revision = excluded.approval_revision WHERE beta_access.status != 'APPROVED'`,
+		).bind(email, adminUserId, now, now, revision),
 		env.DB.prepare(
 			`UPDATE beta_access_requests
 			    SET status = 'APPROVED', google_sub = '', updated_at = ?
 			  WHERE email = ? AND status IN ('PENDING', 'DENIED')`,
 		).bind(now, email),
+		acceptanceNotificationInsert(env, JSON.stringify([{ email, auditId: revision }]), adminUserId, now, notifyEmail),
 	]);
 	return email;
 }

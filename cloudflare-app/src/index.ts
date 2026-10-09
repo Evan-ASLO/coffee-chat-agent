@@ -86,6 +86,7 @@ import {
 } from "./lib/beta";
 import { getUserAnalytics } from "./lib/analytics";
 import { bugReportInput, bugReportQuery, bugReportStatusInput, submitBugReport, listBugReports, updateBugReportStatus } from "./lib/bug-reports";
+import { betaNotificationInput, acceptanceTemplate, dispatchAcceptanceNotifications, retryAcceptanceNotification } from "./lib/beta-notifications";
 import {
 	getOwnerActivity,
 	getOwnerAccessRoster,
@@ -253,7 +254,8 @@ app.get("/api/analytics", requireUser, async (c) => {
 
 app.get("/api/beta/admin/access", requireUser, async (c) => {
 	requireBetaAdmin(c.env, c.get("user")!);
-	return c.json(await listBetaAccessAdmin(c.env));
+	const [access, credentials] = await Promise.all([listBetaAccessAdmin(c.env, c.get("user")!.id), credentialStatus(c.env, c.get("user")!.id)]);
+	return c.json({ ...access, acceptanceTemplate: acceptanceTemplate(), gmailConfigured: credentials.GOOGLE.configured });
 });
 
 app.get("/api/beta/admin/activity", requireUser, async (c) => {
@@ -297,7 +299,9 @@ app.post("/api/beta/admin/requests/approve-pending", requireUser, async (c) => {
 	const admin = c.get("user")!;
 	requireBetaAdmin(c.env, admin);
 	const input = bulkBetaApprovalSchema.parse(await readJson(c, 64 * 1024));
-	return c.json(await approveBetaSnapshot(c.env, input, admin.id, c.get("requestId")));
+	const result = await approveBetaSnapshot(c.env, input, admin.id, c.get("requestId"));
+	if (input.notifyEmail) c.executionCtx.waitUntil(dispatchAcceptanceNotifications(c.env, admin.id));
+	return c.json(result);
 });
 
 app.post(
@@ -308,7 +312,9 @@ app.post(
 		const admin = c.get("user")!;
 		requireBetaAdmin(c.env, admin);
 		const requestId = uuid.parse(c.req.param("id"));
-		await approveBetaRequest(c.env, requestId, admin.id, c.get("requestId"));
+		const input = betaNotificationInput.parse(c.req.raw.body ? await readJson(c, 8 * 1024) : {});
+		await approveBetaRequest(c.env, requestId, admin.id, c.get("requestId"), input.notifyEmail);
+		if (input.notifyEmail) c.executionCtx.waitUntil(dispatchAcceptanceNotifications(c.env, admin.id));
 		return c.json({ ok: true });
 	},
 );
@@ -338,8 +344,9 @@ app.post("/api/beta/admin/access/approve", requireUser, async (c) => {
 	await protectMutation(c);
 	const admin = c.get("user")!;
 	requireBetaAdmin(c.env, admin);
-	const input = betaEmailSchema.parse(await readJson(c, 8 * 1024));
-	const email = await approveBetaEmail(c.env, input.email, admin.id);
+	const input = betaEmailSchema.extend({ notifyEmail: z.boolean().default(false) }).parse(await readJson(c, 8 * 1024));
+	const email = await approveBetaEmail(c.env, input.email, admin.id, input.notifyEmail);
+	if (input.notifyEmail) c.executionCtx.waitUntil(dispatchAcceptanceNotifications(c.env, admin.id));
 	await audit(c.env, {
 		userId: admin.id,
 		action: "BETA_ACCESS_APPROVED",
@@ -366,6 +373,16 @@ app.post("/api/beta/admin/access/revoke", requireUser, async (c) => {
 		metadata: { email },
 	});
 	return c.json({ ok: true });
+});
+
+app.post("/api/beta/admin/notifications/:id/retry", requireUser, async (c) => {
+	await protectMutation(c);
+	const admin = c.get("user")!;
+	requireBetaAdmin(c.env, admin);
+	betaNotificationInput.parse(c.req.raw.body ? await readJson(c, 8 * 1024) : {});
+	const result = await retryAcceptanceNotification(c.env, uuid.parse(c.req.param("id")), admin.id);
+	c.executionCtx.waitUntil(dispatchAcceptanceNotifications(c.env, admin.id));
+	return c.json(result);
 });
 
 app.post("/api/workspace/init", requireUser, async (c) => {
@@ -796,6 +813,7 @@ export const worker = {
 	): Promise<void> {
 		context.waitUntil(
 			(async () => {
+				await dispatchAcceptanceNotifications(env);
 				const users = await usersForReplySync(env);
 				for (const userId of users) {
 					await env.MAIL_QUEUE.send({

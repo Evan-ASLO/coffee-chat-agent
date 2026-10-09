@@ -219,6 +219,15 @@
 }
 
 @media (max-width: 760px) {
+	[aria-labelledby="owner-beta-title"] > .panel-head {
+		flex-direction: column;
+		align-items: stretch;
+	}
+
+	#owner-access-refresh {
+		white-space: nowrap;
+	}
+
 	.owner-metrics {
 		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}

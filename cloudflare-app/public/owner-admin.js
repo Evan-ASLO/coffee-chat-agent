@@ -14,6 +14,7 @@
 			roster: null, rosterStatus: "idle", rosterError: "", rosterCursors: [null],
 			reports: null, reportsStatus: "idle", reportsError: "", reportCursors: [null], reportFilter: "OPEN", reportsMutating: false,
 			access: null, accessStatus: "idle", accessError: "",
+			notifyEmail: null,
 			mutating: false, mutationError: "", result: null, bulk: null,
 		};
 	}
@@ -397,6 +398,10 @@
 				${state.accessError ? notice(state.accessError, true) : ""}
 				${state.mutationError ? notice(state.mutationError, true) : ""}
 				${state.result ? resultHtml(state.result) : ""}
+				<label class="check-row"><input id="owner-notify-email" type="checkbox" ${notifyByEmail() ? "checked" : ""} ${disabled || !data?.gmailConfigured || state.bulk ? "disabled" : ""} />Notify by email for new approvals</label>
+				<p>${data?.gmailConfigured ? "Uses your connected Gmail account. Future new grants only; already-approved entries are not emailed." : "Connect your Gmail in Setup &amp; profile to send acceptance notices. Access approval still works without email."}</p>
+				${data?.acceptanceTemplate ? `<details><summary>Preview acceptance email</summary><p><strong>Subject:</strong> ${esc(data.acceptanceTemplate.subject)}</p><p class="bug-report-copy">${esc(data.acceptanceTemplate.body)}</p></details>` : ""}
+				<p>Up to five pending notices are processed just after approval; remaining notices are checked in batches of five about every 15 minutes. Bulk approvals may need several cycles. Sent means Gmail accepted the message, not confirmed delivery. Revoking access stops queued notices, but cannot recall a send already started.</p>
 				<form id="beta-approve-email-form" class="beta-invite-form">
 					<label>Approve or re-approve an email<input id="beta-approve-email" type="email" maxlength="320" autocomplete="off" required ${disabled ? "disabled" : ""} /></label>
 					<button class="primary" ${disabled ? "disabled" : ""}>Approve email</button>
@@ -427,7 +432,28 @@
 		function accessCard(entry, disabled) {
 			return `<article class="card"><h4>${esc(entry.email)}</h4><p>Updated ${esc(date(entry.updatedAt))} &middot; ${esc(entry.status.toLowerCase())}</p><div class="actions">
 				${entry.status === "APPROVED" ? `<button class="danger" data-beta-revoke-email="${esc(entry.email)}" ${disabled ? "disabled" : ""}>Revoke</button>` : `<button class="secondary" data-beta-approve-email="${esc(entry.email)}" ${disabled ? "disabled" : ""}>Re-approve email</button>`}
-			</div></article>`;
+			</div>${notificationHtml(entry, disabled)}</article>`;
+		}
+
+		function notifyByEmail() {
+			return state.access?.gmailConfigured === true && state.notifyEmail !== false;
+		}
+
+		function notificationHtml(entry, disabled) {
+			const n = entry.notification;
+			if (!n) return "<p>No acceptance email requested for this grant.</p>";
+			const labels = {
+				QUEUED: "Acceptance email pending.",
+				SENDING: "Acceptance email sending; outcome not yet confirmed.",
+				SENT: "Acceptance email sent via Gmail. Delivery is not confirmed.",
+				FAILED: n.failureCode === "GMAIL_NOT_CONNECTED" ? "Acceptance email not sent. Connect Gmail, then retry." :
+					"Acceptance email not sent. Check the approving owner's Gmail connection or daily limit before retrying.",
+				UNCERTAIN: "Acceptance email outcome uncertain. The approving owner must check Gmail Sent; do not resend.",
+				CANCELLED: "Acceptance email cancelled because the grant or sender changed.",
+			};
+			return `<p>${esc(labels[n.status] || "Acceptance email status unavailable. Refresh access.")}${n.sentAt ? ` ${esc(date(n.sentAt))}` : ""}</p>
+				${n.status === "FAILED" && n.senderIsYou && entry.status === "APPROVED" ? `<button class="secondary" data-beta-retry-notice="${esc(n.id)}" aria-label="Retry acceptance email for ${esc(entry.email)}" ${disabled || !state.access?.gmailConfigured ? "disabled" : ""}>Retry acceptance email</button>` : ""}
+				${n.status === "FAILED" && !n.senderIsYou ? "<p>Only the approving owner can retry this notice.</p>" : ""}`;
 		}
 
 		async function loadAccess() {
@@ -486,7 +512,7 @@
 
 		async function openBulk() {
 			if (!syncSession() || state.bulk || state.mutating) return;
-			state.bulk = { status: "loading", review: null, error: "" };
+			state.bulk = { status: "loading", review: null, error: "", notifyEmail: notifyByEmail() };
 			modal = doc.createElement("dialog");
 			modal.id = "owner-bulk-dialog";
 			modal.className = "owner-bulk-dialog";
@@ -536,7 +562,7 @@
 			const focus = modal.contains(doc.activeElement) ? doc.activeElement.id : "";
 			modal.innerHTML = `<div class="dialog-card">
 				<div class="dialog-head"><div><p class="eyebrow">Beta access only</p><h2 id="owner-bulk-title">${bulk.status === "complete" ? "Approval results" : "Review pending approvals"}</h2></div></div>
-				<p id="owner-bulk-description">Grant private-beta sign-in and workspace access only to the accounts listed here. This does not grant owner permissions, approve outreach, send emails, or approve future applicants.</p>
+				<p id="owner-bulk-description">Grant private-beta sign-in and workspace access only to the accounts listed here. This does not grant owner permissions, approve outreach, or approve future applicants. ${bulk.notifyEmail ? "Each new grant also queues the previewed acceptance email from your Gmail." : "No acceptance emails are requested."}</p>
 				${bulk.status === "loading" ? notice("Loading the current pending-request snapshot...") : ""}
 				${bulk.error ? notice(bulk.error, true) : ""}
 				${bulk.status === "complete" ? resultHtml(state.result) : review ? `
@@ -567,13 +593,14 @@
 			try {
 				const result = await call("mutation", "/api/beta/admin/requests/approve-pending", {
 					method: "POST",
-					body: { snapshot: bulk.review.snapshot, requestIds: bulk.review.requests.map((entry) => entry.id) },
+					body: { snapshot: bulk.review.snapshot, requestIds: bulk.review.requests.map((entry) => entry.id), notifyEmail: bulk.notifyEmail },
 				});
 				if (!result || state.bulk !== bulk) return;
 				const emails = new Map(bulk.review.requests.map((entry) => [entry.id, entry.email]));
 				state.result = {
 					approved: result.approved.length, reviewed: result.reviewed,
 					skipped: result.skipped.map((entry) => emails.get(entry.id)),
+					notificationsQueued: result.notificationsQueued || 0,
 				};
 				bulk.status = "complete";
 				state.mutating = false;
@@ -593,6 +620,7 @@
 
 		function resultHtml(result) {
 			return `<div class="owner-approval-result" role="status"><strong>${number(result.approved)} approved; ${number(result.skipped.length)} skipped out of ${number(result.reviewed)} reviewed.</strong>
+				<p>${number(result.notificationsQueued || 0)} acceptance notices requested. Check each grant's email status below; queuing is not delivery.</p>
 				${result.skipped.length ? `<p>Skipped because the request or access changed, or was already handled. No new approval was made for:</p><ul>${result.skipped.map((email) => `<li>${esc(email)}</li>`).join("")}</ul>` : "<p>Beta access was granted only to the reviewed pending accounts.</p>"}
 			</div>`;
 		}
@@ -628,6 +656,14 @@
 			on("owner-reports-next", "click", () => { if (state.reports?.nextCursor) { state.reportCursors.push(state.reports.nextCursor); void loadReports(); } });
 			doc?.querySelectorAll("[data-report-id]").forEach((button) => button.addEventListener("click", () => void setReportStatus(button.dataset.reportId, button.dataset.reportStatus)));
 			on("owner-access-refresh", "click", () => void loadAccess());
+			on("owner-notify-email", "change", (event) => { state.notifyEmail = event.target.checked; });
+			doc?.querySelectorAll("[data-beta-retry-notice]").forEach((button) => button.addEventListener("click", () => {
+				const id = button.dataset.betaRetryNotice;
+				const entry = state.access?.access.find((entry) => entry.notification?.id === id);
+				if (entry && confirm(`Retry the confirmed unsent acceptance email for ${entry.email} using your Gmail?`)) {
+					void mutate(`/api/beta/admin/notifications/${id}/retry`, {}, "Acceptance email queued. Check its status; delivery is not yet confirmed.");
+				}
+			}));
 			on("owner-events-retry", "click", () => void loadEvents());
 			for (const kind of ["accounts", "events"]) {
 				on(`owner-${kind}-previous`, "click", () => {
@@ -659,8 +695,9 @@
 			on("beta-approve-email-form", "submit", (event) => {
 				event.preventDefault();
 				const email = doc.getElementById("beta-approve-email").value.trim();
-				if (confirm(`Grant or restore private-beta access for ${email}? This overrides any earlier denial or revocation.`)) {
-					void mutate("/api/beta/admin/access/approve", { email }, "Beta access approved.");
+				const notifyEmail = notifyByEmail();
+				if (confirm(`Grant or restore private-beta access for ${email}? This overrides any earlier denial or revocation. ${notifyEmail ? "A new grant also queues the previewed acceptance email from your Gmail; already-approved entries are not emailed." : "No acceptance email will be sent."}`)) {
+					void mutate("/api/beta/admin/access/approve", { email, notifyEmail }, "Beta access approved. Check the separate acceptance email status below.");
 				}
 			});
 			for (const [attribute, action] of [
@@ -670,15 +707,17 @@
 				doc?.querySelectorAll(`[data-${attribute}]`).forEach((button) => button.addEventListener("click", () => {
 					const value = button.getAttribute(`data-${attribute}`);
 					const byEmail = attribute.endsWith("email");
-					if (action !== "approve" || byEmail) {
+					const notifyEmail = action === "approve" && notifyByEmail();
+					{
+						const email = byEmail ? value : state.access?.requests.find((entry) => entry.id === value)?.email;
 						const message = action === "revoke"
 							? `Revoke beta access for ${value}? Active sessions will end.`
-							: byEmail ? `Restore beta access for ${value}? This overrides the earlier decision.`
+							: action === "approve" ? `Grant or restore beta access for ${email}? ${notifyEmail ? "A new grant also queues the previewed acceptance email from your Gmail." : "No acceptance email will be sent."}`
 								: "Deny this pending beta access request?";
 						if (!confirm(message)) return;
 					}
 					void mutate(byEmail ? `/api/beta/admin/access/${action}` : `/api/beta/admin/requests/${value}/${action}`,
-						byEmail ? { email: value } : undefined, "Beta access decision saved.");
+						byEmail ? { email: value, ...(action === "approve" ? { notifyEmail } : {}) } : action === "approve" ? { notifyEmail } : undefined, "Beta access decision saved. Email status is separate.");
 				}));
 			}
 		}

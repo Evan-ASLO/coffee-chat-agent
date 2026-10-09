@@ -63,6 +63,13 @@
 						timestamps. The subject identifier is cleared when a request is
 						approved or denied. Unapproved requests do not create a normal
 						application account or session.
+						If an owner explicitly chooses an acceptance notice for a future new
+						approval, the app sends a fixed access email using that approving
+						owner's connected Gmail, not the applicant's account. The recipient,
+						approval revision, sender account, notification state, attempt/sent
+						timestamps and Gmail message identifier are retained for duplicate
+						prevention and owner-visible recovery. No outreach text or attachments
+						are included, and existing approved entries are not emailed retroactively.
 					</li>
 					<li>
 						<strong>Google account information:</strong> your Google account
