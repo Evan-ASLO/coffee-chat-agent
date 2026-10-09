@@ -276,23 +276,51 @@ test("distinguishes the latest search from previously saved people", async () =>
 	await client.executeDiscovery({ roles: ["Investment Banking"], companies: ["RBC"], count: 3 }, "TAVILY");
 	const html = client.renderSearchProvenance([{ id: "saved-prior-search" }]);
 	assert.match(html, /0 new people from the latest search; 1 saved person in this account/);
-	assert.match(html, /a saved card appearing again does not mean this search returned it/);
+	assert.doesNotMatch(html, /earlier searches|a saved card appearing again/);
 	client.state.networkingJob = { id: "a".repeat(64) };
 	assert.match(client.renderSearchProvenance([{ id: "saved-prior-search" }]), /1 saved person in this job/);
 	client.state.networkingSearch.summary = null;
 	assert.equal(client.renderSearchProvenance([{ id: "saved-prior-search" }]), "");
 });
 
-test("an empty broad-web search identifies its two Tavily phases honestly", () => {
+test("empty discovery copy uses concise actual rejection counts instead of phase explanations", () => {
 	const client = discoveryClient({});
 	const text = client.discoveryEmptyMessage({
 		mode: "TAVILY", providerReturned: 7, primaryProviderReturned: 3,
 		professionalBioProviderReturned: 4, accepted: 0, rejected: 7, duplicates: 0,
-		rejectionCounts: { unsafeOrNonProfile: 7 },
+		rejectionCounts: { unsafeOrNonProfile: 2, noIdentifiablePerson: 5 },
 	});
-	assert.match(text, /3 first-pass web candidates and 4 public-bio candidates/);
-	assert.match(text, /7 unsafe or non-person pages/);
-	assert.doesNotMatch(text, /LinkedIn-focused/);
+	assert.equal(text, "7 results checked: 2 unsafe or non-profile links; 5 without an identifiable name.");
+	assert.equal(client.discoveryEmptyMessage({
+		mode: "TAVILY", providerReturned: 1, accepted: 0, rejected: 1,
+		rejectionCounts: { unsafeOrNonProfile: 1 },
+	}), "1 result checked: 1 unsafe or non-profile link.");
+	assert.equal(client.discoveryEmptyMessage({
+		mode: "TAVILY", providerReturned: 0, accepted: 0, rejected: 0,
+	}), "Tavily returned no results.");
+	assert.equal(client.discoveryEmptyMessage({
+		mode: "TAVILY", providerReturned: 1, accepted: 1, duplicates: 1,
+	}), "1 matching profile is already saved.");
+	assert.equal(client.discoveryEmptyMessage({
+		mode: "TAVILY", providerReturned: 2, accepted: 2, duplicates: 2,
+	}), "2 matching profiles are already saved.");
+	assert.doesNotMatch(text, /first-pass|public-bio|role or location|Existing contacts|No new people/);
+	const costs = client.renderSearchCosts();
+	assert.match(costs, /Uses Tavily credits\./);
+	assert.match(costs, />Tavily credit usage<\/a>/);
+	assert.match(costs, /AI search is optional and separate\. Searching never sends email\./);
+	assert.doesNotMatch(costs, /Gemini|OpenAI|Anthropic|enriches|approves|drafts/);
+});
+
+test("stale catalog banner is absent while first-import notice and source timestamps remain", () => {
+	const source = read("public/app.js");
+	const client = { state: { jobs: { catalog: { state: "stale" } } } };
+	vm.runInNewContext(source.slice(source.indexOf("function renderCatalogWarning("), source.indexOf("\nfunction jobOutreachLinkingEnabled(")), client);
+	assert.equal(client.renderCatalogWarning(), "");
+	client.state.jobs.catalog.state = "never-imported";
+	assert.match(client.renderCatalogWarning(), /Internship catalog has not refreshed yet/);
+	assert.doesNotMatch(source, /Internship listings may be out of date|The cards below also include earlier searches/);
+	assert.match(source, /catalog\.generatedAt|sourceGeneratedAt/);
 });
 
 test("save acknowledgements are earned only after the operation completes", async () => {
@@ -344,7 +372,7 @@ test("discovery renders failed, partial, duplicate, and completed outcomes hones
 			assert.match(client.toasts[0], /^Partial search:/);
 			assert.match(html, /Only cited profiles that passed validation were retained/);
 		}
-		if (fixture.duplicates) assert.match(html, /already tracked/);
+		if (fixture.duplicates) assert.match(html, /already saved/);
 		if (fixture.status === "empty") assert.match(html, /No new people added/);
 		if (fixture.status === "success") assert.match(html, /People found/);
 	}
@@ -489,7 +517,7 @@ test("Tavily outcomes ignore optional-provider problems and ordinary Retry canno
 	assert.deepEqual(calls.filter(({ url }) => url === "/api/discovery").map(({ body }) => [body.mode, body.anthropicSearchMaxUses]), [
 		["TAVILY", 1], ["TAVILY", 1],
 	]);
-	assert.match(client.renderSearchCosts(), /Search and Retry use Tavily only/);
+	assert.match(client.renderSearchCosts(), /Uses Tavily credits/);
 	assert.doesNotMatch(client.renderSearchCosts(), /model-token|Anthropic pricing|authorize up to 3/);
 });
 

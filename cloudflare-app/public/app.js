@@ -961,14 +961,14 @@ function renderDiscoverySetup() {
 }
 
 function renderSearchCosts() {
-	return `<p class="notice search-cost-notice"><strong>Search and Retry use Tavily only.</strong> Usage follows <a href="https://docs.tavily.com/documentation/api-credits" target="_blank" rel="noopener">your Tavily API plan</a>. No Gemini, OpenAI or Anthropic search runs, even with few or no results. Review the results first; the separate <strong>Find more with AI</strong> action is optional. Searching never approves, enriches, drafts or sends outreach.</p>`;
+	return `<p class="notice search-cost-notice">Uses Tavily credits. <a href="https://docs.tavily.com/documentation/api-credits" target="_blank" rel="noopener">Tavily credit usage</a>. AI search is optional and separate. Searching never sends email.</p>`;
 }
 
 function renderSearchProvenance(people) {
 	const summary = state.networkingSearch.summary;
 	if (!summary) return "";
 	const added = Number(summary.inserted || 0);
-	return `<p class="notice search-provenance">${added} new ${added === 1 ? "person" : "people"} from the latest search; ${people.length} saved ${people.length === 1 ? "person" : "people"} in this ${state.networkingJob ? "job" : "account"}. The cards below also include earlier searches; a saved card appearing again does not mean this search returned it.</p>`;
+	return `<p class="notice search-provenance">${added} new ${added === 1 ? "person" : "people"} from the latest search; ${people.length} saved ${people.length === 1 ? "person" : "people"} in this ${state.networkingJob ? "job" : "account"}.</p>`;
 }
 
 function renderAiDiscovery() {
@@ -2077,40 +2077,30 @@ function discoveryEmptyMessage(summary) {
 	const fallbackFailure = discoveryFallbackFailureMessage(summary);
 	const counts = summary.rejectionCounts;
 	const reasons = counts ? [
-		counts.unsafeOrNonProfile ? `${counts.unsafeOrNonProfile} unsafe or non-person pages` : "",
-		counts.noIdentifiablePerson ? `${counts.noIdentifiablePerson} results without an identifiable name` : "",
-		counts.nonProfessional ? `${counts.nonProfessional} results without usable person-specific professional evidence` : "",
-		counts.uncitedSource ? `${counts.uncitedSource} sources not cited by the selected AI provider` : "",
-		counts.duplicate ? `${counts.duplicate} duplicate sources` : "",
+		counts.unsafeOrNonProfile ? `${counts.unsafeOrNonProfile} unsafe or non-profile ${counts.unsafeOrNonProfile === 1 ? "link" : "links"}` : "",
+		counts.noIdentifiablePerson ? `${counts.noIdentifiablePerson} without an identifiable name` : "",
+		counts.nonProfessional ? `${counts.nonProfessional} without person-specific professional evidence` : "",
+		counts.uncitedSource ? `${counts.uncitedSource} uncited ${counts.uncitedSource === 1 ? "source" : "sources"}` : "",
+		counts.duplicate ? `${counts.duplicate} duplicate ${counts.duplicate === 1 ? "source" : "sources"}` : "",
 	].filter(Boolean).join("; ") : "";
 	if (summary.jobQualified === 0) {
-		return `No qualified matches were confirmed in this search. ${summary.jobUnconfirmed || 0} possible people have unconfirmed employer / role fit and are shown separately. Existing linked contacts remain available. A contact is not guaranteed for every job.${reasons ? ` Not retained: ${reasons}.` : ""}${fallbackFailure ? ` ${fallbackFailure}` : ""}`;
+		const unconfirmed = summary.jobUnconfirmed || 0;
+		return `${unconfirmed} possible ${unconfirmed === 1 ? "person needs" : "people need"} employer and role review.${reasons ? ` Not retained: ${reasons}.` : ""}${fallbackFailure ? ` ${fallbackFailure}` : ""}`;
 	}
 	if (summary.duplicates > 0) {
-		return `No new people were added. ${summary.duplicates} matching ${summary.duplicates === 1 ? "profile is" : "profiles are"} already tracked.${fallbackFailure ? ` ${fallbackFailure}` : " Edit the criteria to search for different roles."}`;
+		return `${summary.duplicates} matching ${summary.duplicates === 1 ? "profile is" : "profiles are"} already saved.${fallbackFailure ? ` ${fallbackFailure}` : ""}`;
 	}
 	if (fallbackFailure) return fallbackFailure;
 	if (summary.providerReturned === 0) {
-		return `${summary.mode === "AI_SUPPLEMENT" ? fallbackProviderLabel(summary.fallbackProvider) : "Tavily"} returned no profiles. Existing contacts are unchanged. ${summary.mode === "AI_SUPPLEMENT" ? "Another AI request may also return no new people." : "Edit the criteria and retry Tavily, or explicitly choose Find more with AI."}`;
+		return `${summary.mode === "AI_SUPPLEMENT" ? fallbackProviderLabel(summary.fallbackProvider) : "Tavily"} returned no results.`;
 	}
 	if (summary.insufficientMatchRejected > 0) {
-		return `${summary.insufficientMatchRejected} candidates were excluded by an earlier strict relevance check. New searches retain plausible people with uncertain employer or role fit for review. Existing contacts are unchanged.`;
+		return `${summary.insufficientMatchRejected} ${summary.insufficientMatchRejected === 1 ? "candidate did" : "candidates did"} not pass the earlier relevance checks.`;
 	}
 	if (summary.accepted === 0 && summary.rejected > 0) {
-		const stages = [];
-		if (summary.primaryProviderReturned) {
-			stages.push(
-				`${summary.primaryProviderReturned} first-pass web ${summary.primaryProviderReturned === 1 ? "candidate" : "candidates"}`,
-			);
-		}
-		if (summary.professionalBioProviderReturned) {
-			stages.push(
-				`${summary.professionalBioProviderReturned} public-bio ${summary.professionalBioProviderReturned === 1 ? "candidate" : "candidates"}`,
-			);
-		}
-		return `The search returned ${stages.length ? stages.join(" and ") : `${summary.providerReturned} candidate results`}, but no identifiable person with a safe public professional source could be retained.${reasons ? ` Not retained: ${reasons}.` : " Results may have been non-person pages, lacked identifiable names or professional evidence, or lacked a cited source."} This is not proof that your role or location is too narrow. Existing contacts are unchanged; another explicit search may still return no person.`;
+		return `${summary.providerReturned} ${summary.providerReturned === 1 ? "result" : "results"} checked: ${reasons || "none retained for review"}.`;
 	}
-	return "No new people matched these criteria. Edit the fields below and retry.";
+	return "No additional profiles were saved.";
 }
 
 function discoveryFallbackFailureMessage(summary) {
@@ -3128,11 +3118,7 @@ function renderCatalogWarning() {
 			<span>Browsing remains available, but there may be no current postings until the first signed snapshot is imported.</span>
 		</section>`;
 	}
-	const ageHours = Math.max(0, Number(catalog.ageSeconds || 0) / 3600);
-	return `<section class="notice warning catalog-warning">
-		<strong>Internship listings may be out of date.</strong>
-		<span>The latest snapshot was generated ${escapeHtml(formatDate(catalog.generatedAt))} (${ageHours.toFixed(1)} hours ago). You can continue browsing while the publisher is checked.</span>
-	</section>`;
+	return "";
 }
 
 function jobOutreachLinkingEnabled() {

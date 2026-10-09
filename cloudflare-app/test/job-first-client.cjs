@@ -226,6 +226,6 @@ test("mockup composition retains filters context stages and real notes", () => {
 	assert.match(source, /Role progress/);
 	assert.match(source, /data-note-owner/);
 	assert.match(source, /Possible match · review relevance/);
-	assert.match(source, /no identifiable person with a safe public professional source/);
+	assert.match(source, /without an identifiable name/);
 	assert.doesNotMatch(source, /Broaden the roles or location/);
 });
