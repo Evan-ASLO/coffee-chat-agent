@@ -62,22 +62,18 @@ test("loads local helpers and the SPA in dependency order", () => {
 	assert.doesNotMatch(index, /cdn|unpkg|jsdelivr/i);
 });
 
-test("matches the compact horizontal product navigation contract", () => {
+test("matches the warm job-first navigation and account setup contract", () => {
 	const app = read("public/app.js");
 	const styles = read("public/styles.css");
-	for (const view of [
-		"home",
-		"jobs",
-		"applications",
-		"networking",
-		"analytics",
-		"settings",
-	]) {
-		assert.match(app, new RegExp(`\\["${view}",\\s*"`, "m"));
+	for (const [view, label] of [["jobs", "Find jobs"], ["applications", "My jobs"], ["networking", "People"]]) {
+		assert.match(app, new RegExp(`\\["${view}",\\s*"${label}"`, "m"));
 	}
 	assert.match(app, /class="top-nav"/);
-	assert.match(app, /<strong>Internship & Coffee Chat<\/strong>/);
-	assert.match(app, /class="dark-side-rail"/);
+	assert.match(app, /<strong>Internship & Coffee Chat<small>/);
+	assert.match(app, /class="account-menu"/);
+	assert.match(app, /data-nav="settings">Setup & profile/);
+	assert.match(app, /data-nav="analytics">Analytics/);
+	assert.doesNotMatch(app, /class="dark-side-rail"/);
 	assert.match(styles, /\.app-frame\.view-analytics,/);
 	assert.match(styles, /\.app-frame\.view-settings\s*\{[^}]*--content-width:/s);
 	assert.match(styles, /#main-content\s*\{[^}]*width:\s*min\(var\(--content-width\), 100%\)/s);
@@ -127,7 +123,8 @@ test("keeps journey controls outside the rendered world and handles direct taps"
 	const app = read("public/app.js");
 	const scene = read("public/journey-scene.js");
 	const styles = read("public/styles.css");
-	assert.match(app, /<\/div>\s*<div class="home-journey-milestones"/);
+	assert.match(app, /<div class="home-journey-milestones"/);
+	assert.match(app, /window\.JobFirstUI\.scene\(\)/);
 	assert.match(app, /journeyMediaConditions/);
 	assert.match(app, /mountToken !== journeyMountToken/);
 	assert.match(scene, /function handleClick\(event\)[\s\S]*const area = areaAtPointer\(event\)/);
@@ -245,8 +242,9 @@ function discoveryClient(summary) {
 		fetchTrackedJobs: async () => ({}),
 		syncViewToUrl: () => {},
 		PRIMARY_VIEWS: ["home", "jobs", "applications", "networking", "analytics", "settings"],
+		navigationRestore: 0,
 		requestAnimationFrame: (callback) => callback(),
-		window: { scrollTo: () => {} },
+		window: { scrollTo: () => {}, JobFirstUI: { routeView: (view) => view } },
 		AbortController,
 		structuredClone,
 		showToast: (message) => client.toasts.push(message),
@@ -594,17 +592,16 @@ test("self-hosts pinned Three.js with full lifecycle and accessible fallback", (
 	]) {
 		assert.match(app, new RegExp(`homeJourneyControl\\("${area}"`));
 	}
-	assert.match(app, /data-journey-target="journey"/);
+	assert.match(app, /state\.journeyFocus = "journey"/);
 });
 
-test("matches the new Home opportunity reference composition", () => {
+test("matches the approved warm home with real metrics and lightweight animation", () => {
 	const app = read("public/app.js");
 	const styles = read("public/styles.css");
-	assert.match(app, /Find your next<br \/><span>opportunity\.<\/span>/);
-	assert.match(app, /Coffee today\.<br \/>Opportunities tomorrow\./);
+	assert.match(app, /A little closer to<br \/>what's next\./);
 	assert.match(app, /class="home-reference-stats"/);
 	assert.match(app, /id="home-job-search-form"/);
-	assert.match(app, /Good<br \/>People<br \/>Great<br \/>Opportunities/);
+	assert.match(app, /window\.JobFirstUI\.scene\(\)/);
 	assert.match(app, /Recent roles/);
 	assert.match(app, /class="home-recent-grid"/);
 	assert.match(app, /class="home-journey-panel"/);

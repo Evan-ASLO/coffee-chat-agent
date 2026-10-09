@@ -153,6 +153,8 @@ export default {
 			const bindings = { ...env, MAIL_QUEUE: queue, ENABLE_APOLLO_ENRICHMENT: scenario?.scenario === "gate-disabled" ? undefined : "true" };
 			const safeMutation = (request.method === "POST" && /^\/api\/prospects\/[a-f0-9-]+\/(?:prepare|regenerate|preparation\/retry)$/.test(url.pathname)) ||
 				(request.method === "PATCH" && /^\/api\/prospects\/[a-f0-9-]+\/draft$/.test(url.pathname)) ||
+				(["PUT", "DELETE"].includes(request.method) && /^\/api\/jobs\/b{64}\/state$/.test(url.pathname)) ||
+				(request.method === "PUT" && url.pathname === "/api/settings") ||
 				(request.method === "PUT" && url.pathname === "/api/onboarding") || (request.method === "POST" && url.pathname === "/logout");
 			if (url.pathname.startsWith("/auth/") || (!["GET", "HEAD"].includes(request.method) && !safeMutation)) {
 				return marked(Response.json({ error: "REVIEW_ONLY", message: "Only fictional stored preparation and draft editing are enabled. Keys, discovery, OAuth, CRM, resume and sends are blocked." }, { status: 403 }));

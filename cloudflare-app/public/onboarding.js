@@ -18,7 +18,7 @@
 		{
 			id: "welcome", chapter: 0, view: "home", target: "home-summary",
 			title: "A small tour. Your own workspace.",
-			body: () => `<p>Welcome to <strong>Internship &amp; Coffee Chat</strong>. First, learn which optional connections power networking. Then explore all six pages.</p>
+			body: () => `<p>Welcome to <strong>Internship &amp; Coffee Chat</strong>. First, learn which optional connections power networking. Then explore Find jobs, My jobs and People, with setup under your account menu.</p>
 				<p>You can browse Jobs, save roles, and track applications <strong>without any API keys</strong>. Nothing in this tutorial searches for people, generates drafts, sends email, or analyzes a resume.</p>
 				<p>API keys are private passwords for a service. Use <strong>your own provider accounts</strong>, not the app owner's keys. Any usage costs and quotas belong to your provider account.</p>`,
 		},
@@ -81,13 +81,13 @@
 			id: "home-summary", chapter: 1, view: "home", target: "home-summary",
 			title: "Home: your live starting point",
 			body: () => `<p>The summary shows current open internships, saved roles, active applications, and people tracked. Recent roles and the live search panel are shortcuts into Jobs.</p>
-				<p>Use the primary navigation for <strong>Home, Jobs, Applications, Networking, Analytics, and Settings</strong>. On a phone, open the navigation menu. No API keys are needed for these pages.</p>`,
+				<p>Use the primary navigation for <strong>Find jobs, My jobs and People</strong>. On a phone these remain visible in the bottom bar. Open the account menu for <strong>Setup &amp; profile, Setup guide, Analytics and Home</strong>, or select the coffee brand for Home. No API keys are needed for browsing and tracking.</p>`,
 		},
 		{
 			id: "home-journey", chapter: 1, view: "home", target: "home-journey",
 			title: "Your Career Journey",
 			body: () => `<p>This optional live desk reflects the same workspace data. Explore, Connect, Apply, Grow, and Journey overview have real keyboard and touch controls.</p>
-				<p>Tab to a control and press Enter or Space to inspect its detail. The accessible fallback works without 3D graphics and respects reduced motion. Reset changes only the scene view, not your records.</p>`,
+				<p>Tab to a control and press Enter or Space to inspect its detail. The lightweight illustration is not live activity and respects reduced motion; you can pause it. Reset clears only the selected overview, not your records.</p>`,
 		},
 		{
 			id: "jobs-search", chapter: 1, view: "jobs", target: "jobs-search",
@@ -97,14 +97,14 @@
 		},
 		{
 			id: "jobs-actions", chapter: 1, view: "jobs", target: "jobs-results",
-			title: "Your shortlist lives in Jobs",
-			body: () => `<p>Save a role with its bookmark or Save button; find it in the <strong>Saved</strong> collection here. View details opens the original posting in a new tab.</p>
-				<p>The More tracking actions menu lets you mark Applied or change the stage. Applied roles appear in Applications. These account-scoped actions do not need provider keys.</p>
+			title: "Your shortlist lives in My jobs",
+			body: () => `<p>Save a role with its bookmark or Save button; find it in the <strong>Saved</strong> collection or <strong>My jobs</strong>. View details opens the role panel; Open original posting uses a new tab.</p>
+				<p>Keep private notes in the role panel or My jobs editor and choose Save. Unsaved notes survive navigation within this account, not logout or reload. Mark applied records a real application without regressing an existing Interview or Offer; use the stage selector for intentional changes. These account-scoped actions do not need provider keys.</p>
 				<p>If enabled, <strong>People to contact</strong> opens that job's saved contacts, ordered by entry-level role peers, internship/new-grad recruiters, then other entry-level employees at the firm. Opening the list does not search. Review costs and explicitly choose Search public profiles to run a provider search. If there are no roles, continue safely and return when the catalog has data.</p>`,
 		},
 		{
 			id: "applications", chapter: 1, view: "applications", target: "applications",
-			title: "Applications: record your real next step",
+			title: "My jobs: record your real next step",
 			body: () => `<p>Filter by stage, company, or location, search the table, and sort by update time or company. The row action opens the actual <strong>Edit application</strong> dialog.</p>
 				<p>There you can save a stage and private next-step notes, open the job posting, or remove tracking. People to contact, when enabled, opens saved job contacts; only a later, cost-disclosed Search action calls providers.</p>
 				<p>No applications yet? Mark a role Applied in Jobs when you have actually applied. Dates are recorded updates, not invented deadlines or reminders.</p>`,

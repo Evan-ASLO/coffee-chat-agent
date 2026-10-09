@@ -54,6 +54,9 @@ const state = {
 	applicationCompanySearch: "",
 	applicationLocationSearch: "",
 	applicationSort: "UPDATED_DESC",
+	selectedJob: null,
+	jobNoteDrafts: {},
+	applicationEditDrafts: {},
 	networkingFilter: "ALL",
 	networkingSearchText: "",
 	networkingQuality: "ALL",
@@ -106,10 +109,12 @@ const onboarding = window.WorkspaceOnboarding?.create({
 	notify: showToast,
 	openPreferences: openProfileSettings,
 	openDiscovery: openDiscoveryDialog,
-	clearPrivateDialogs,
+	clearPrivateDialogs: () => clearPrivateDialogs(false),
 });
 
 document.addEventListener("DOMContentLoaded", load);
+window.addEventListener("popstate", restoreNavigation);
+window.addEventListener("hashchange", restoreNavigation);
 document.addEventListener("keydown", handleNavigationKeydown);
 compactNavigation.addEventListener("change", () => {
 	if (!compactNavigation.matches && state.mobileNavOpen) {
@@ -135,6 +140,10 @@ async function load() {
 				loadJobData(),
 				loadAnalyticsData(),
 			]);
+			const selectedId = new URLSearchParams(location.search).get("selectedJob");
+			if (/^[a-f0-9]{64}$/.test(selectedId || "")) {
+				state.selectedJob = findJob(selectedId) || (await api(`/api/jobs/${selectedId}`)).job;
+			}
 			const jobId = new URLSearchParams(location.search).get("contactJob");
 			if (state.session.authenticated && jobOutreachLinkingEnabled() && /^[a-f0-9]{64}$/.test(jobId || "")) {
 				state.networkingJob = findJob(jobId) || { id: jobId, title: "Loading job...", company: "" };
@@ -148,6 +157,7 @@ async function load() {
 }
 
 function render() {
+	captureJobEdits();
 	ownerAdmin.syncSession();
 	setMobileNavOpen(false, false);
 	onboarding?.beforeRender();
@@ -162,21 +172,18 @@ function render() {
 	const user = state.session?.user;
 	const navItems = authenticated
 		? [
-				["home", "Home", "home"],
-				["jobs", "Jobs", "briefcase"],
-				["applications", "Applications", "layers"],
-				["networking", "Networking", "people"],
-				["analytics", "Analytics", "chart"],
-				["settings", "Settings", "settings"],
+				["jobs", "Find jobs", "search"],
+				["applications", "My jobs", "briefcase"],
+				["networking", "People", "people"],
 			]
-		: [["jobs", "Jobs", "briefcase"]];
+		: [["jobs", "Find jobs", "search"]];
 	app.innerHTML = `
 		<a class="skip-link" href="#main-content">Skip to main content</a>
-		<div class="app-frame view-${state.tab} ${state.mobileNavOpen ? "nav-open" : ""}">
+		<div class="app-frame view-${state.tab} ${state.tab === "jobs" && state.selectedJob ? "job-detail-open" : ""} ${state.mobileNavOpen ? "nav-open" : ""}">
 			<header class="topbar">
 				<button class="brand brand-button" data-nav="${authenticated ? "home" : "jobs"}" aria-label="Internship & Coffee Chat home">
-					<span class="brand-mark" aria-hidden="true">CC</span>
-					<strong>Internship & Coffee Chat</strong>
+					<span class="brand-mark" aria-hidden="true">${icon("cup")}</span>
+					<strong>Internship & Coffee Chat<small>A little closer to what's next</small></strong>
 				</button>
 				<button class="mobile-nav-toggle" id="mobile-nav-toggle" aria-expanded="${state.mobileNavOpen}" aria-controls="primary-navigation">
 					${icon("menu")}<span class="sr-only">Toggle navigation</span>
@@ -185,14 +192,15 @@ function render() {
 					<button class="mobile-nav-close" id="mobile-nav-close" aria-label="Close navigation">×</button>
 					${navItems
 						.map(
-							([id, label]) => `<button data-nav="${id}" class="${state.tab === id ? "active" : ""}" ${state.tab === id ? 'aria-current="page"' : ""}>${label}</button>`,
+							([id, label, symbol]) => `<a href="#${window.JobFirstUI.routeHash(id)}" data-nav="${id}" class="${state.tab === id ? "active" : ""}" ${state.tab === id ? 'aria-current="page"' : ""}>${icon(symbol)}<span>${label}</span></a>`,
 						)
 						.join("")}
 				</nav>
 				<div class="top-actions">
+					<button type="button" class="secondary demo-button" data-open-demo>${icon("play")} Demo</button>
 					${
 						authenticated
-							? `<span class="top-email">${escapeHtml(user.email)}</span><button id="logout" class="sign-out-button" aria-label="Sign out">${icon("logout")}<span>Sign out</span></button>`
+							? `<details class="account-menu"><summary aria-label="Account and setup">${icon("settings")}<span>Your setup</span></summary><div class="account-menu-panel"><p>${escapeHtml(user.name || "Your account")}<small>${escapeHtml(user.email)}</small></p><button data-nav="settings">Setup & profile</button><button data-open-guide>Setup guide</button><button data-nav="analytics">Analytics</button><button data-nav="home">Home</button><button id="logout">${icon("logout")} Sign out</button></div></details>`
 							: '<a class="button sign-in-button" href="/auth/google/login">Sign in</a>'
 					}
 				</div>
@@ -203,7 +211,8 @@ function render() {
 		</div>`;
 	document.getElementById("logout")?.addEventListener("click", logout);
 	document.querySelectorAll("[data-nav]").forEach((button) =>
-		button.addEventListener("click", () => {
+		button.addEventListener("click", (event) => {
+			event.preventDefault();
 			navigate(button.dataset.nav);
 		}),
 	);
@@ -217,9 +226,7 @@ function render() {
 		setMobileNavOpen(false),
 	);
 	wireTab();
-	if (authenticated && state.tab === "home") {
-		mountJourneyScene(state.renderToken);
-	}
+	window.JobFirstUI.wire({ navigate, session: state.session });
 	onboarding?.sync();
 }
 
@@ -259,7 +266,7 @@ function handleNavigationKeydown(event) {
 	}
 	if (event.key !== "Tab") return;
 	const navigation = document.getElementById("primary-navigation");
-	const buttons = Array.from(navigation?.querySelectorAll("button:not([disabled])") || []);
+	const buttons = Array.from(navigation?.querySelectorAll("button:not([disabled]), a[href]") || []);
 	const first = buttons[0];
 	const last = buttons[buttons.length - 1];
 	if (event.shiftKey && document.activeElement === first) {
@@ -278,15 +285,16 @@ function renderBetaLanding() {
 	app.innerHTML = `
 		<section class="beta-landing">
 			<div class="beta-landing-brand">
-				<span class="brand-mark" aria-hidden="true">CC</span>
+				<span class="brand-mark" aria-hidden="true">${icon("cup")}</span>
 				<strong>Internship & Coffee Chat</strong>
 				<span>Private Toronto beta</span>
+				<button type="button" class="secondary demo-button" data-open-demo>${icon("play")} Demo</button>
 			</div>
 			<div class="beta-landing-grid">
 				<div class="beta-landing-copy">
 					<p class="eyebrow">Opportunities create momentum</p>
-					<h1>Build a career you’re proud of.</h1>
-					<p>Search Toronto internships, track every application, and build thoughtful professional relationships in one approval-first workspace.</p>
+					<h1>A little closer to<br />what's next.</h1>
+					<p>Find a role worth saving. Keep your next step in sight. Meet the people behind the opportunity.</p>
 				${
 					requested
 						? '<p class="notice">Thanks. If this Google account can be considered for the beta, the request has been recorded. This confirmation is intentionally the same for every account.</p>'
@@ -298,10 +306,11 @@ function renderBetaLanding() {
 					</div>
 					<p class="beta-privacy">Request access verifies your Google email and records only the minimum information needed to review the request. It does not create a normal app account or session unless approved.</p>
 				</div>
-				<div class="beta-landing-art" aria-hidden="true"></div>
+				<div class="beta-landing-scene">${window.JobFirstUI.scene()}</div>
 			</div>
 			${legalLinks()}
 		</section>`;
+	window.JobFirstUI.wire({ navigate, session: state.session });
 }
 
 function renderStats() {
@@ -332,30 +341,7 @@ function renderTab() {
 }
 
 function renderRailPage(content, activeView) {
-	const note =
-		activeView === "analytics"
-			? "Track today. A brighter tomorrow."
-			: "Small steps. Big opportunities.";
-	return `<div class="rail-page">
-		<aside class="dark-side-rail" aria-label="${activeView === "analytics" ? "Analytics" : "Settings"} section navigation">
-			<nav>
-				${[
-					["home", "Home", "home"],
-					["jobs", "Jobs", "search"],
-					["applications", "Applications", "document"],
-					["networking", "Networking", "people"],
-					["analytics", "Analytics", "chart"],
-					["settings", "Settings", "settings"],
-				]
-					.map(
-						([id, label, iconName]) => `<button data-nav="${id}" class="${activeView === id ? "active" : ""}" ${activeView === id ? 'aria-current="page"' : ""}>${icon(iconName)}<span>${label}</span></button>`,
-					)
-					.join("")}
-			</nav>
-			<p>${escapeHtml(note)}<span aria-hidden="true"></span></p>
-		</aside>
-		<div class="rail-page-content">${content}</div>
-	</div>`;
+	return `<div class="account-page"><button class="text-button" data-nav="jobs">← Back to Find jobs</button>${content}</div>`;
 }
 
 function renderHome() {
@@ -363,19 +349,19 @@ function renderHome() {
 	const detail = window.CareerJourney.detailFor(state.journeyFocus, metrics);
 	const recentJobs = state.jobs.jobs.slice(0, 2);
 	return `
-		<section class="home-reference-hero">
+		<section class="home-reference-hero job-first-home">
 			<div class="home-reference-copy">
-				<p class="eyebrow">Coffee chats. Career growth. <span>Real opportunities.</span></p>
-				<h1>Find your next<br /><span>opportunity.</span></h1>
-				<p>Discover internships, track your applications, and connect with the people behind them.</p>
+				<p class="eyebrow">Small steps. Real possibilities.</p>
+				<h1>A little closer to<br />what's next.</h1>
+				<p>Find a role worth saving, keep your next step in sight, and meet the people behind the opportunity.</p>
 				<div class="home-reference-actions">
-					<button class="primary" data-nav="jobs">${icon("search")} Browse Jobs</button>
-					<button class="secondary" data-nav="applications">My Applications</button>
+					<button class="primary" data-nav="jobs">${icon("search")} Find jobs</button>
+					<button class="secondary" data-nav="applications">My jobs</button>
 				</div>
-				<p class="home-handwritten">Coffee today.<br />Opportunities tomorrow.<span aria-hidden="true"></span></p>
 			</div>
-			${renderStats()}
+			${window.JobFirstUI.scene()}
 		</section>
+		${renderStats()}
 		<section class="home-search-row">
 			<form id="home-job-search-form" class="home-search-panel">
 				<div class="home-search-heading">${icon("search")}<div><h2>Find your next opportunity</h2><p>Search internships, track applications, and connect with the people behind them.</p></div></div>
@@ -388,10 +374,6 @@ function renderHome() {
 					<button class="primary">Search jobs</button>
 				</div>
 			</form>
-			<aside class="home-coffee-card" aria-label="Networking prompt">
-				<div class="home-coffee-art" aria-hidden="true"></div>
-				<p>Good<br />People<br />Great<br />Opportunities<span aria-hidden="true"></span></p>
-			</aside>
 		</section>
 		<section class="home-reference-lower">
 			<article class="home-recent-panel">
@@ -400,10 +382,6 @@ function renderHome() {
 			</article>
 			<article class="home-journey-panel" data-tour="home-journey">
 				<header><div>${icon("chart")}<h2>Your journey</h2></div><div><button id="journey-reset" class="text-button">${icon("reset")} Reset</button><button class="text-button" data-nav="analytics">View analytics ${icon("chevron-right")}</button></div></header>
-				<div id="journey-canvas" class="journey-canvas" aria-busy="true">
-					${renderJourneyFallback(metrics)}
-					<button data-journey-target="journey" class="journey-overview-button ${state.journeyFocus === "journey" ? "active" : ""}">${icon("path")}<span>Journey overview</span></button>
-				</div>
 				<div class="home-journey-milestones" aria-label="Career Journey controls">
 					${homeJourneyControl("saved", "Explore", "Find roles", "bookmark")}
 					${homeJourneyControl("networking", "Connect", "Have coffee chats", "cup")}
@@ -540,8 +518,8 @@ function renderJobs() {
 		<section class="reference-hero jobs-reference-hero">
 			<div class="reference-hero-copy">
 				<p class="eyebrow">Opportunities ahead</p>
-				<h1>Browse <span>internships</span></h1>
-				<p>Discover roles, save your favourites, and track your progress — all in one place.${linkingEnabled ? " Job-linked networking is available for signed-in users." : ""}</p>
+				<h1>Find your next <span>opportunity.</span></h1>
+				<p>A thoughtful shortlist starts here. Find a role, save it, then explore the people behind it.${linkingEnabled ? " Job-linked networking is available." : ""}</p>
 				${state.session?.authenticated ? "" : '<a class="button primary" href="/auth/google/login">Sign in to track progress</a>'}
 			</div>
 		</section>
@@ -589,7 +567,7 @@ function renderJobs() {
 						<button data-job-layout="list" class="${state.jobLayout === "list" ? "active" : ""}" aria-label="List view">${icon("list")}<span>List</span></button>
 					</div>
 				</div>
-				${jobs.length ? `<div class="job-cards ${state.jobLayout === "list" ? "list-view" : "grid-view"}">${jobs.map(jobCard).join("")}</div>` : empty(state.jobMode === "saved" ? "Save a role from the live catalog to build your shortlist." : "No active jobs match these filters.")}
+				${jobs.length ? `<div class="job-first-workspace ${state.selectedJob ? "detail-open" : ""}"><div class="job-cards ${state.jobLayout === "list" ? "list-view" : "grid-view"}">${jobs.map(jobCard).join("")}</div>${renderJobDetail(state.selectedJob || jobs[0])}</div>` : empty(state.jobMode === "saved" ? "Save a role from the live catalog to build your shortlist." : "No active jobs match these filters.")}
 				${state.jobMode === "all" ? renderPagination(pagination) : ""}
 			</section>
 			<aside class="jobs-activity-rail" aria-label="Your job activity">
@@ -612,7 +590,7 @@ function renderJobs() {
 
 function renderApplications() {
 	const allJobs = state.trackedJobs.jobs.filter((job) =>
-		[...APPLICATION_STATUSES, "ARCHIVED"].includes(job.userState?.status),
+		["SAVED", ...APPLICATION_STATUSES, "ARCHIVED"].includes(job.userState?.status),
 	);
 	const search = state.applicationSearch.toLowerCase();
 	const companySearch = state.applicationCompanySearch.toLowerCase();
@@ -651,7 +629,7 @@ function renderApplications() {
 		);
 	});
 	const applications = state.analytics?.applications || {
-		total: allJobs.length,
+		total: allJobs.filter((job) => APPLICATION_STATUSES.includes(job.userState?.status)).length,
 		inProgress: allJobs.filter((job) =>
 			["APPLIED", "INTERVIEWING"].includes(job.userState?.status),
 		).length,
@@ -671,8 +649,8 @@ function renderApplications() {
 	return `
 		<section class="reference-hero applications-reference-hero">
 			<div class="reference-hero-copy">
-				<p class="eyebrow">Your application tracker</p>
-				<h1>Turn applications<br />into <span>opportunities.</span></h1>
+				<p class="eyebrow">Your private shortlist & tracker</p>
+				<h1>Keep your next<br /><span>step in sight.</span></h1>
 				<p>Stay organized, track your progress, and keep every private next step in one place.</p>
 				<div class="reference-hero-actions">
 					<button class="primary" data-nav="jobs">${icon("plus")} Browse jobs</button>
@@ -692,6 +670,7 @@ function renderApplications() {
 				<fieldset>
 					<legend>Application status</legend>
 					${applicationFilterButton("ALL", "All", allJobs.length)}
+					${applicationFilterButton("SAVED", "Saved")}
 					${applicationFilterButton("APPLIED", "Applied")}
 					${applicationFilterButton("INTERVIEWING", "Interview")}
 					${applicationFilterButton("OFFER", "Offer")}
@@ -704,7 +683,7 @@ function renderApplications() {
 			</aside>
 			<section class="tracker-table-panel" data-tour="applications">
 				<div class="table-panel-heading">
-					<div><h2>Your applications</h2><p>Track and manage every real application in one place.</p></div>
+					<div><h2>My jobs</h2><p>Saved roles, application stages and private next steps.</p></div>
 					<form id="application-search-form" class="table-tools">
 						<label class="inline-search"><span class="sr-only">Search applications</span>${icon("search")}<input id="application-search" value="${escapeAttr(state.applicationSearch)}" placeholder="Search applications…" /></label>
 						<label>Sort by<select id="application-sort">
@@ -721,7 +700,7 @@ function renderApplications() {
 								<thead><tr><th scope="col">Company</th><th scope="col">Role</th><th scope="col">Location</th><th scope="col">Status</th><th scope="col">Updated</th><th scope="col">Next step</th><th scope="col"><span class="sr-only">Actions</span></th></tr></thead>
 								<tbody>${jobs.map(applicationTableRow).join("")}</tbody>
 							</table></div>`
-						: empty(allJobs.length ? "No applications match this stage and search." : "Mark a job as Applied to start your application pipeline.")
+						: empty(allJobs.length ? "No tracked jobs match this stage and search." : "Save a role in Find jobs to start your shortlist, then mark it Applied when you have actually applied.")
 				}
 			</section>
 			<aside class="tracker-right-rail" aria-label="Application progress">
@@ -846,7 +825,7 @@ function renderNetworking() {
 		<section class="reference-hero networking-reference-hero">
 			<div class="reference-hero-copy">
 				<p class="eyebrow">People create opportunities</p>
-				<h1>Build meaningful<br /><span>connections.</span></h1>
+				<h1>People behind<br /><span>the opportunity.</span></h1>
 				<p>Find relevant public profiles, approve each person, review every exact draft, and send only when you are ready.</p>
 				<div class="reference-hero-actions">
 					<button id="open-discovery-dialog" data-tour="networking-find" class="primary">${icon("plus")} Find people</button>
@@ -1177,7 +1156,7 @@ function renderSettings() {
 		<section class="reference-hero settings-reference-hero">
 			<div class="reference-hero-copy">
 				<p class="eyebrow">Personalize your experience</p>
-				<h1>Settings</h1>
+				<h1>Setup &amp; profile</h1>
 				<p>Manage the account, drafting preferences, private data, and real integrations that power Internship & Coffee Chat.</p>
 			</div>
 		</section>
@@ -1236,8 +1215,8 @@ function renderSettings() {
 				</details>
 			</section>
 			<section class="settings-reference-card appearance-card">
-				<div class="settings-card-heading"><span>${icon("palette")}</span><div><h2>Appearance</h2><p>The warm Toronto workspace theme is fixed for this beta.</p></div></div>
-				<dl class="appearance-summary"><div><dt>Theme</dt><dd>Warm workspace</dd></div><div><dt>Motion</dt><dd>Follows your system reduced-motion preference</dd></div></dl>
+				<div class="settings-card-heading"><span>${icon("palette")}</span><div><h2>Appearance</h2><p>The warm job-first workspace follows your device's light or dark preference.</p></div></div>
+				<dl class="appearance-summary"><div><dt>Theme</dt><dd>Warm job-first · ${document.documentElement.dataset.theme === "dark" ? "Dark" : "Light"}</dd></div><div><dt>Motion</dt><dd>Follows your system reduced-motion preference</dd></div></dl>
 				<div class="appearance-swatches" role="img" aria-label="Warm workspace theme palette"><span></span><span></span><span></span><span></span><span></span></div>
 			</section>
 			<section class="settings-reference-card about-card">
@@ -1273,6 +1252,24 @@ function renderSettings() {
 }
 
 function wireTab() {
+	document.querySelectorAll("#application-dialog-notes, #application-dialog-stage").forEach((input) =>
+		input.addEventListener("input", captureJobEdits));
+	document.querySelectorAll("[data-job-detail]").forEach((button) =>
+		button.addEventListener("click", () => openJobDetail(button.dataset.jobDetail)));
+	document.getElementById("back-to-job-results")?.addEventListener("click", () => {
+		state.selectedJob = null;
+		syncViewToUrl(true);
+		render();
+	});
+	document.querySelectorAll("[data-save-job-notes]").forEach((button) =>
+		button.addEventListener("click", () => saveJobNotes(button.dataset.saveJobNotes)));
+	document.querySelectorAll("[data-job-note]").forEach((input) =>
+		input.addEventListener("input", () => {
+			if (input.dataset.noteOwner !== state.session?.user?.id) return;
+			state.jobNoteDrafts[input.dataset.jobNote] = input.value;
+			const status = document.getElementById("job-detail-notes-state");
+			if (status) status.textContent = "Unsaved notes. Choose Save notes; they are retained while you navigate this account.";
+		}));
 	document
 		.getElementById("home-job-search-form")
 		?.addEventListener("submit", searchHomeJobs);
@@ -1424,7 +1421,7 @@ function wireTab() {
 		button.addEventListener("click", () => toggleSaved(button.dataset.jobSave)),
 	);
 	document.querySelectorAll("[data-job-apply]").forEach((button) =>
-		button.addEventListener("click", () => setJobStatus(button.dataset.jobApply, "APPLIED")),
+		button.addEventListener("click", () => markJobApplied(button.dataset.jobApply)),
 	);
 	document.querySelectorAll("[data-job-network]").forEach((button) =>
 		button.addEventListener("click", () => beginJobNetworking(button.dataset.jobNetwork)),
@@ -1610,7 +1607,14 @@ async function toggleSaved(id) {
 	if (job?.userState?.status === "SAVED") {
 		return removeJobStatus(id);
 	}
+	if (job?.userState?.status) return showToast("This role is already tracked. Change its stage explicitly in My jobs.");
 	return setJobStatus(id, "SAVED");
+}
+
+async function markJobApplied(id) {
+	const status = findJob(id)?.userState?.status;
+	if (status && status !== "SAVED") return showToast("This role already has an application stage. Use its stage selector to change it.");
+	return setJobStatus(id, "APPLIED");
 }
 
 async function updateJobStatusFromSelect(id, status) {
@@ -1641,13 +1645,15 @@ async function saveJobNotes(id) {
 	const job = findJob(id);
 	const status = job?.userState?.status;
 	if (!job || !status) return;
-	const notes = document.getElementById(`job-notes-${id}`)?.value?.trim() || "";
+	const notes = state.jobNoteDrafts[id] ?? document.getElementById(`job-notes-${id}`)?.value ?? "";
 	await run("Saving application notes…", async () => {
 		await api(`/api/jobs/${id}/state`, {
 			method: "PUT",
 			body: { status, notes },
 		});
+		delete state.jobNoteDrafts[id];
 		await Promise.all([loadJobData(), loadAnalyticsData()]);
+		if (state.selectedJob?.id === id) state.selectedJob = findJob(id);
 		render();
 	});
 }
@@ -1660,9 +1666,9 @@ function openApplicationEditor(id) {
 	document.getElementById("application-dialog-company").textContent =
 		`${job.company} · ${[job.location, job.region].filter(Boolean).join(" · ") || "Location not listed"}`;
 	document.getElementById("application-dialog-stage").value =
-		job.userState.status;
+		state.applicationEditDrafts[id]?.status || job.userState.status;
 	document.getElementById("application-dialog-notes").value =
-		job.userState.notes || "";
+		state.applicationEditDrafts[id]?.notes ?? job.userState.notes ?? "";
 	const link = document.getElementById("application-dialog-job-link");
 	link.href = job.url;
 	const networkingButton = document.getElementById(
@@ -1673,6 +1679,7 @@ function openApplicationEditor(id) {
 		state.networkingSearch.status === "running";
 	networkingButton.hidden = !jobOutreachLinkingEnabled();
 	document.getElementById("application-dialog")?.showModal();
+	document.getElementById("application-dialog").dataset.owner = state.session.user.id;
 }
 
 async function saveApplicationEditor() {
@@ -1690,6 +1697,7 @@ async function saveApplicationEditor() {
 			method: "PUT",
 			body: { status, notes },
 		});
+		delete state.applicationEditDrafts[id];
 		document.getElementById("application-dialog")?.close();
 		await Promise.all([loadJobData(), loadAnalyticsData()]);
 		render();
@@ -1753,7 +1761,7 @@ async function beginJobNetworking(id) {
 	state.networkingCompanySearch = "";
 	state.networkingLocationSearch = "";
 	state.tab = "networking";
-	syncViewToUrl();
+	syncViewToUrl(true);
 	render();
 	await loadNetworkingContacts();
 	render();
@@ -2594,7 +2602,19 @@ async function logout() {
 	});
 }
 
-function clearPrivateDialogs() {
+function clearPrivateDialogs(clearJobEdits = true) {
+	if (clearJobEdits) {
+		state.jobNoteDrafts = {};
+		state.applicationEditDrafts = {};
+		state.selectedJob = null;
+		app.querySelectorAll("[data-job-note], #application-dialog-notes").forEach((input) => {
+			input.value = "";
+			input.dataset.noteOwner = "";
+		});
+	}
+	document.getElementById("application-dialog")?.close();
+	document.getElementById("job-first-guide")?.close();
+	document.getElementById("job-first-demo")?.close();
 	cancelPreparation();
 	state.draftReview = null;
 	ownerAdmin.closeDialog();
@@ -2647,6 +2667,10 @@ async function loadJobData() {
 		jobs: [],
 		pagination: { page: 1, pageSize: 100, total: 0, totalPages: 0 },
 	};
+	if (state.selectedJob) {
+		state.selectedJob = state.jobs.jobs.find((job) => job.id === state.selectedJob.id) ||
+			state.trackedJobs.jobs.find((job) => job.id === state.selectedJob.id) || state.selectedJob;
+	}
 	if (!jobOutreachLinkingEnabled()) {
 		if (state.networkingJob) clearNetworkingContext();
 	}
@@ -2748,23 +2772,14 @@ function betaLandingRequired() {
 }
 
 function initialView() {
-	const requested = location.hash.replace(/^#/, "");
+	const requested = window.JobFirstUI.routeView(location.hash.replace(/^#/, ""));
 	if (PRIMARY_VIEWS.includes(requested)) return requested;
-	const hasJobQuery = [
-		"q",
-		"company",
-		"location",
-		"region",
-		"category",
-		"industry",
-		"length",
-		"term",
-		"page",
-	].some((key) => new URLSearchParams(location.search).has(key));
-	return hasJobQuery ? "jobs" : "home";
+	return "jobs";
 }
 
 function navigate(view, options = {}) {
+	if (!options.history) navigationRestore += 1;
+	view = window.JobFirstUI.routeView(view);
 	const allowed =
 		state.session?.authenticated && PRIMARY_VIEWS.includes(view)
 			? view
@@ -2781,9 +2796,10 @@ function navigate(view, options = {}) {
 			message: "Stopped waiting after navigation. Started provider work may still be billed. Reload saved contacts before searching again.",
 		};
 	}
+	const changed = state.tab !== allowed;
 	state.tab = allowed;
 	state.mobileNavOpen = false;
-	syncViewToUrl();
+	if (!options.history) syncViewToUrl(changed);
 	render();
 	requestAnimationFrame(() => {
 		if (options.tutorial) return;
@@ -2792,14 +2808,92 @@ function navigate(view, options = {}) {
 	});
 }
 
-function syncViewToUrl() {
+function syncViewToUrl(push = false) {
 	const url = new URL(location.href);
 	if (state.session?.authenticated && state.networkingJob) url.searchParams.set("contactJob", state.networkingJob.id);
 	else url.searchParams.delete("contactJob");
-	url.hash = state.tab === "home" ? "" : state.tab;
-	history.replaceState(null, "", url);
+	if (state.selectedJob && state.tab === "jobs") url.searchParams.set("selectedJob", state.selectedJob.id);
+	else url.searchParams.delete("selectedJob");
+	url.hash = window.JobFirstUI.routeHash(state.tab);
+	if (push) history.pushState(null, "", url);
+	else history.replaceState(null, "", url);
 }
 
+let navigationRestore = 0;
+async function restoreNavigation() {
+	if (!state.session || betaLandingRequired()) return;
+	const request = ++navigationRestore;
+	const identity = state.session.user?.id;
+	const previousQuery = JSON.stringify(state.jobQuery);
+	const selectedId = new URLSearchParams(location.search).get("selectedJob");
+	const contactId = new URLSearchParams(location.search).get("contactJob");
+	loadJobQueryFromUrl();
+	state.selectedJob = null;
+	navigate(initialView(), { history: true });
+	try {
+		if (JSON.stringify(state.jobQuery) !== previousQuery) {
+			const result = await fetchJobs();
+			if (request !== navigationRestore || state.session.user?.id !== identity) return;
+			state.jobs = result;
+		}
+		if (/^[a-f0-9]{64}$/.test(selectedId || "")) {
+			const job = findJob(selectedId) || (await api(`/api/jobs/${selectedId}`)).job;
+			if (request !== navigationRestore || state.session.user?.id !== identity) return;
+			state.selectedJob = job;
+		}
+		if (state.tab === "networking" && /^[a-f0-9]{64}$/.test(contactId || "") && state.networkingJob?.id !== contactId) {
+			clearNetworkingContext();
+			state.networkingJob = findJob(contactId) || { id: contactId, title: "Loading job...", company: "" };
+			await loadNetworkingContacts();
+			if (request !== navigationRestore || state.session.user?.id !== identity) return;
+		} else if (state.tab === "networking" && !contactId && state.networkingJob) clearNetworkingContext();
+		render();
+	} catch (error) {
+		if (request === navigationRestore) showToast(`Navigation could not reload: ${error.message}`, true);
+	}
+}
+
+function captureJobEdits() {
+	app.querySelectorAll("[data-job-note]").forEach((input) => {
+		if (input.dataset.noteOwner === state.session?.user?.id &&
+			input.value !== findJob(input.dataset.jobNote)?.userState?.notes) state.jobNoteDrafts[input.dataset.jobNote] = input.value;
+	});
+	const editor = document.getElementById("application-dialog");
+	if (editor?.open && editor.dataset.owner === state.session?.user?.id) {
+		const id = value("application-dialog-id");
+		if (id) state.applicationEditDrafts[id] = {
+			status: value("application-dialog-stage"),
+			notes: document.getElementById("application-dialog-notes")?.value || "",
+		};
+	}
+}
+
+async function openJobDetail(id) {
+	const identity = state.session?.user?.id;
+	await run("Opening job details…", async () => {
+		const job = findJob(id) || (await api(`/api/jobs/${id}`)).job;
+		if (state.session?.user?.id !== identity || state.tab !== "jobs") return;
+		state.selectedJob = job;
+		syncViewToUrl(true);
+		render();
+		document.getElementById("job-detail-title")?.focus({ preventScroll: false });
+	});
+}
+
+function renderJobDetail(job) {
+	if (!job) return "";
+	const status = job.userState?.status;
+	const notes = state.jobNoteDrafts[job.id] ?? job.userState?.notes ?? "";
+	return `<article class="job-detail-card" aria-labelledby="job-detail-title">
+		<button id="back-to-job-results" class="secondary mobile-detail-back">← Back to results</button>
+		<p class="job-detail-company">${escapeHtml(job.company)} · ${escapeHtml(job.location || job.region || "Location not listed")}</p>
+		<h2 id="job-detail-title" tabindex="-1">${escapeHtml(job.title)}</h2>
+		<div class="chips">${status ? `<span class="status status-${status.toLowerCase()}">${formatStatus(status)}</span>` : ""}<span class="chip">${escapeHtml(JobSourceUi.sourceLabel(job.source))}</span>${job.lengthLabel ? `<span class="chip">${escapeHtml(job.lengthLabel)}</span>` : ""}${job.term?.label ? `<span class="chip">${escapeHtml(job.term.label)}</span>` : ""}</div>
+		<div class="actions"><a class="button primary" href="${escapeAttr(job.url)}" target="_blank" rel="noopener">Open original posting</a>${!status || status === "SAVED" ? `<button data-job-save="${job.id}">${status ? "Unsave" : "Save role"}</button>` : ""}<button data-job-apply="${job.id}" ${status && status !== "SAVED" ? "disabled" : ""}>Mark applied</button>${jobContactAction(job)}</div>
+		<h3>About this role</h3><p class="detail-description">${escapeHtml(job.description || "No description was supplied. Review the original posting for requirements and availability.")}</p>${JobSourceUi.attributionHtml(job.source)}
+		${status ? `<label>Tracking stage<select data-job-status="${job.id}">${jobStatusOptions(status)}</select></label><label for="job-notes-${job.id}">Private notes & next step</label><textarea id="job-notes-${job.id}" data-job-note="${job.id}" data-note-owner="${escapeAttr(state.session.user.id)}" rows="5" maxlength="4000">${escapeHtml(notes)}</textarea><p id="job-detail-notes-state" class="notes-state">${Object.hasOwn(state.jobNoteDrafts, job.id) ? "Unsaved notes. Choose Save notes." : "Saved notes stay private to your account."}</p><button data-save-job-notes="${job.id}" class="secondary">Save notes</button>` : '<p class="notice">Save this role to keep private notes and track your next step.</p>'}
+	</article>`;
+}
 function journeyMetrics() {
 	return window.CareerJourney.deriveJourneyMetrics({
 		trackedJobs: state.trackedJobs.jobs,
@@ -2990,7 +3084,7 @@ function jobCard(job) {
 		? `Posted ${formatDateOnly(job.postedAt)}`
 		: job.postedText || "Posting date unavailable";
 	const outreach = job.outreachSummary;
-	return `<article class="job-card ${job.active ? "" : "inactive-job"}">
+	return `<article class="job-card ${state.selectedJob?.id === job.id ? "selected" : ""} ${job.active ? "" : "inactive-job"}">
 		<header class="job-card-heading">
 			<div class="company-tile company-tone-${companyTone(job.company)}" aria-hidden="true">${escapeHtml(companyInitials(job.company))}</div>
 			<div class="job-card-title">
@@ -3035,7 +3129,7 @@ function jobCard(job) {
 						? ""
 						: '<a class="button" href="/auth/google/login">Sign in to save</a>'
 			}
-			<a class="button primary" href="${escapeAttr(job.url)}" target="_blank" rel="noopener">View details</a>
+			<button class="primary" data-job-detail="${job.id}">View details</button>
 			${jobContactAction(job)}
 		</div>
 	</article>`;
@@ -3278,6 +3372,7 @@ function findJob(id) {
 	return (
 		state.jobs.jobs.find((job) => job.id === id) ||
 		state.trackedJobs.jobs.find((job) => job.id === id) ||
+		(state.selectedJob?.id === id ? state.selectedJob : null) ||
 		null
 	);
 }
@@ -3475,6 +3570,7 @@ function activityIcon(action) {
 
 function icon(name) {
 	const paths = {
+		play: '<path d="m7 4 9 6-9 6V4Z"/>',
 		home: '<path d="M3 10.5 10 4l7 6.5v6.2a1.3 1.3 0 0 1-1.3 1.3H4.3A1.3 1.3 0 0 1 3 16.7Z"/><path d="M7.5 18v-5h5v5"/>',
 		briefcase: '<rect x="2.5" y="6" width="15" height="10.5" rx="2"/><path d="M7 6V4.5h6V6M2.5 10.5h15M8 10.5v2h4v-2"/>',
 		layers: '<path d="m10 3 7 4-7 4-7-4 7-4Z"/><path d="m3 11 7 4 7-4M3 15l7 4 7-4"/>',

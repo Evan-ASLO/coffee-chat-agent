@@ -71,8 +71,10 @@ try {
 			screenshots.push(file);
 		}
 		async function navigate(view) {
-			if (viewport.width < 500) await page.locator("#mobile-nav-toggle").click();
-			await page.locator(`#primary-navigation [data-nav="${view}"]`).click();
+			if (["settings", "analytics", "home"].includes(view)) {
+				await page.locator(".account-menu > summary").click();
+				await page.locator(`.account-menu [data-nav="${view}"]`).click();
+			} else await page.locator(`#primary-navigation [data-nav="${view}"]`).click();
 			await page.locator(`.view-${view}`).waitFor();
 		}
 		async function session() {
