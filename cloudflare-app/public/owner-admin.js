@@ -12,6 +12,7 @@
 			events: null, eventsStatus: "idle", eventsError: "", eventCursors: [null],
 			userFilter: null, action: "ALL",
 			roster: null, rosterStatus: "idle", rosterError: "", rosterCursors: [null],
+			reports: null, reportsStatus: "idle", reportsError: "", reportCursors: [null], reportFilter: "OPEN", reportsMutating: false,
 			access: null, accessStatus: "idle", accessError: "",
 			mutating: false, mutationError: "", result: null, bulk: null,
 		};
@@ -80,6 +81,7 @@
 					<nav class="owner-tabs" aria-label="Owner tools">
 						<button id="owner-activity-tab" class="secondary" data-owner-section="activity" aria-pressed="${state.section === "activity"}">Activity</button>
 						<button id="owner-beta-tab" class="secondary" data-owner-section="beta" aria-pressed="${state.section === "beta"}">Beta access</button>
+						<button id="owner-reports-tab" class="secondary" data-owner-section="reports" aria-pressed="${state.section === "reports"}">Bug reports</button>
 					</nav>
 					<div id="owner-panel">${panelHtml()}</div>
 				</div>
@@ -110,6 +112,7 @@
 			if (state.section === "activity" && state.activityStatus === "idle") void loadActivity();
 			if (state.section === "activity" && state.rosterStatus === "idle") void loadRoster();
 			if (state.section === "beta" && state.accessStatus === "idle") void loadAccess();
+			if (state.section === "reports" && state.reportsStatus === "idle") void loadReports();
 		}
 
 		function paint() {
@@ -123,7 +126,7 @@
 		}
 
 		function panelHtml() {
-			return state.section === "beta" ? betaHtml() : activityHtml();
+			return state.section === "reports" ? reportsHtml() : state.section === "beta" ? betaHtml() : activityHtml();
 		}
 
 		function notice(message, error = false) {
@@ -228,6 +231,69 @@
 
 		function metric(label, value, hint) {
 			return `<div class="owner-metric"><span>${esc(label)}</span><strong>${number(value)}</strong><small>${esc(hint)}</small></div>`;
+		}
+
+		function reportsHtml() {
+			const data = state.reports;
+			return `<section class="panel" aria-labelledby="owner-reports-title">
+				<div class="panel-head"><div><h2 id="owner-reports-title">Bug reports inbox</h2><p>Reports shared by signed-in members. No email is sent.</p></div><button id="owner-reports-refresh" class="secondary">Refresh reports</button></div>
+				<label>Status<select id="owner-report-status">${["OPEN", "RESOLVED", "ALL"].map((status) => `<option value="${status}" ${state.reportFilter === status ? "selected" : ""}>${status === "ALL" ? "All reports" : status === "OPEN" ? "Open" : "Resolved"}</option>`).join("")}</select></label>
+				${state.reportsStatus === "loading" ? notice("Loading bug reports...") : ""}
+				${state.reportsError ? notice(state.reportsError, true) : ""}
+				${data && state.reportsStatus === "ready" ? `
+					<p>${number(data.counts.open)} open; ${number(data.counts.resolved)} resolved.</p>
+					${data.reports.length ? data.reports.map((report) => `<article class="card">
+						<h3>${esc(report.summary)}</h3><p>${esc(report.reporter.name)} · ${esc(report.reporter.email)} · ${esc(date(report.createdAt))}</p>
+						<p>Page: ${esc(report.page)} · ${esc(report.status.toLowerCase())}</p>
+						<p class="bug-report-copy">${esc(report.description)}</p>
+						<button class="secondary" data-report-status="${report.status === "OPEN" ? "RESOLVED" : "OPEN"}" data-report-id="${esc(report.id)}" ${state.reportsMutating ? "disabled" : ""}>${report.status === "OPEN" ? "Mark resolved" : "Reopen"}</button>
+					</article>`).join("") : notice("No reports match this status.")}
+					${pager("reports", state.reportCursors.length, data.nextCursor, data.pageSize)}
+				` : ""}
+			</section>`;
+		}
+
+		async function loadReports(reset = false) {
+			if (!syncSession()) return;
+			const turn = generation;
+			if (reset) state.reportCursors = [null];
+			state.reports = null;
+			state.reportsStatus = "loading";
+			state.reportsError = "";
+			paint();
+			const query = new URLSearchParams({ status: state.reportFilter });
+			if (state.reportCursors.at(-1)) query.set("cursor", state.reportCursors.at(-1));
+			try {
+				const result = await call("reports", `/api/beta/admin/bug-reports?${query}`);
+				if (!result || turn !== generation || ownerKey() !== identity) return;
+				if (!Array.isArray(result.reports) || !Number.isInteger(result.counts?.open) || !Number.isInteger(result.counts?.resolved)) {
+					throw new Error("Bug report inbox could not be read. Refresh reports.");
+				}
+				state.reports = result;
+				state.reportsStatus = "ready";
+			} catch (error) {
+				state.reportsStatus = "error";
+				state.reportsError = `Could not load reports: ${error.message}`;
+			}
+			paint();
+		}
+
+		async function setReportStatus(id, status) {
+			if (!syncSession() || state.reportsMutating) return;
+			const turn = generation;
+			state.reportsMutating = true;
+			state.reportsError = "";
+			paint();
+			try {
+				const result = await call("report-update", `/api/beta/admin/bug-reports/${id}`, { method: "PATCH", body: { status } });
+				if (!result || turn !== generation || ownerKey() !== identity) return;
+				if (result.id !== id || result.status !== status) throw new Error("Report status was not confirmed. Refresh reports.");
+				await loadReports(true);
+			} catch (error) {
+				state.reportsError = `Report status could not be saved: ${error.message}`;
+			} finally {
+				if (turn === generation) { state.reportsMutating = false; paint(); }
+			}
 		}
 
 		function eventsHtml() {
@@ -556,6 +622,11 @@
 			on("owner-roster-refresh", "click", () => void loadRoster(true));
 			on("owner-roster-previous", "click", () => { if (state.rosterCursors.length > 1) state.rosterCursors.pop(); void loadRoster(); });
 			on("owner-roster-next", "click", () => { if (state.roster?.nextCursor) { state.rosterCursors.push(state.roster.nextCursor); void loadRoster(); } });
+			on("owner-reports-refresh", "click", () => void loadReports(true));
+			on("owner-report-status", "change", (event) => { state.reportFilter = event.target.value; void loadReports(true); });
+			on("owner-reports-previous", "click", () => { if (state.reportCursors.length > 1) state.reportCursors.pop(); void loadReports(); });
+			on("owner-reports-next", "click", () => { if (state.reports?.nextCursor) { state.reportCursors.push(state.reports.nextCursor); void loadReports(); } });
+			doc?.querySelectorAll("[data-report-id]").forEach((button) => button.addEventListener("click", () => void setReportStatus(button.dataset.reportId, button.dataset.reportStatus)));
 			on("owner-access-refresh", "click", () => void loadAccess());
 			on("owner-events-retry", "click", () => void loadEvents());
 			for (const kind of ["accounts", "events"]) {
@@ -612,7 +683,7 @@
 			}
 		}
 
-		return { render, wire, syncSession, clear, closeDialog, loadAccess, loadActivity, loadRoster };
+		return { render, wire, syncSession, clear, closeDialog, loadAccess, loadActivity, loadRoster, loadReports, setReportStatus };
 	}
 
 	return { create };

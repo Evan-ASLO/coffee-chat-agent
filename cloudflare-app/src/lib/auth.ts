@@ -1,6 +1,7 @@
 import { createRemoteJWKSet, jwtVerify } from "jose";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { createMiddleware } from "hono/factory";
+import { ClientInputError } from "./errors";
 import type {
 	AppEnvironment,
 	AuthenticatedUser,
@@ -50,6 +51,26 @@ interface OAuthState {
 	mode: OAuthMode;
 	userId?: string;
 	createdAt: number;
+	returnTo?: string;
+}
+
+export function safeAppReturnPath(origin: string, input?: string): string {
+	if (!input) return "/";
+	if (input.length > 3000 || !input.startsWith("/") || input.startsWith("//") || /[\u0000-\u001f\u007f]/.test(input)) throw new ClientInputError("Invalid app return destination.");
+	const url = new URL(input, origin);
+	if (url.origin !== new URL(origin).origin || url.pathname !== "/" || url.username || url.password) throw new ClientInputError("Invalid app return destination.");
+	const result = new URL("/", origin);
+	for (const key of ["q", "company", "location", "region", "category", "industry", "length", "term", "page", "pageSize", "selectedJob", "contactJob"]) {
+		const value = url.searchParams.get(key);
+		if (value !== null) {
+			if (value.length > 240) throw new ClientInputError("Invalid app return destination.");
+			result.searchParams.set(key, value);
+		}
+	}
+	const hash = url.hash.slice(1);
+	if (hash && !["home", "jobs", "find-jobs", "applications", "my-jobs", "networking", "people", "settings", "analytics"].includes(hash)) throw new ClientInputError("Invalid app return destination.");
+	result.hash = hash;
+	return `${result.pathname}${result.search}${result.hash}`;
 }
 
 function secureCookie(c: Parameters<typeof setCookie>[0]): boolean {
@@ -81,6 +102,7 @@ export async function beginGoogleOAuth(
 		mode,
 		userId,
 		createdAt: Date.now(),
+		...(mode === "login" ? { returnTo: safeAppReturnPath(c.env.APP_ORIGIN, c.req.query("returnTo")) } : {}),
 	};
 	setCookie(
 		c,
@@ -228,7 +250,7 @@ export async function handleGoogleCallback(
 	const user = await acceptVerifiedGoogleLogin(c.env, profile);
 	if (!user) return c.redirect("/?access=requested", 302);
 	await issueSession(c, user);
-	return c.redirect("/", 302);
+	return c.redirect(safeAppReturnPath(c.env.APP_ORIGIN, oauth.returnTo), 302);
 }
 
 export async function acceptVerifiedGoogleLogin(

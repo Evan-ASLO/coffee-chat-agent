@@ -55,6 +55,22 @@ test("aliases retain legacy routes and default to Find jobs without API calls", 
 	}
 	assert.equal(c.calls.length, 0);
 });
+test("Home is the no-route default while explicit job and People links retain their destination", () => {
+	const c = client();
+	c.location.hash = "";
+	c.location.search = "";
+	assert.equal(c.initialView(), "home");
+	c.location.search = "?contactJob=legacy:internship-123_a.v1";
+	assert.equal(c.initialView(), "networking");
+	c.location.search = "?selectedJob=legacy:internship-123_a.v1";
+	assert.equal(c.initialView(), "jobs");
+	c.location.hash = "#home";
+	assert.equal(c.initialView(), "home");
+	c.location.hash = "#people";
+	assert.equal(c.initialView(), "networking");
+	for (const id of ["a".repeat(64), "legacy:internship-123_a.v1", "12345"]) assert.equal(c.JobFirstUI.isJobId(id), true);
+	for (const id of ["", "..", "a/b", "job?token=secret", "<script>", "a".repeat(241)]) assert.equal(c.JobFirstUI.isJobId(id), false);
+});
 test("route/selected-role history preserves filters and uses push for deliberate navigation", () => {
 	const c = client();
 	c.state.selectedJob = { id: "b".repeat(64) };

@@ -102,6 +102,7 @@ const ownerAdmin = window.OwnerAdmin.create({
 	icon,
 	notify: showToast,
 });
+const bugReports = window.BugReports.create({ getSession: () => state.session, getView: () => state.tab, api, notify: showToast });
 const onboarding = window.WorkspaceOnboarding?.create({
 	getSession: () => state.session,
 	getView: () => state.tab,
@@ -136,19 +137,19 @@ async function load() {
 		loadJobQueryFromUrl();
 		state.session = await api("/api/session", { initialSession: true });
 		ownerAdmin.syncSession();
-		state.tab = state.session?.authenticated ? initialView() : "jobs";
+		state.tab = initialView();
 		if (!betaLandingRequired()) {
 			await Promise.all([
 				loadJobData(),
 				loadAnalyticsData(),
 			]);
 			const selectedId = new URLSearchParams(location.search).get("selectedJob");
-			if (/^[a-f0-9]{64}$/.test(selectedId || "")) {
-				state.selectedJob = findJob(selectedId) || (await api(`/api/jobs/${selectedId}`)).job;
+			if (window.JobFirstUI.isJobId(selectedId)) {
+				state.selectedJob = findJob(selectedId) || (await api(`/api/jobs/${encodeURIComponent(selectedId)}`)).job;
 			}
 			const jobId = new URLSearchParams(location.search).get("contactJob");
-			if (state.session.authenticated && jobOutreachLinkingEnabled() && /^[a-f0-9]{64}$/.test(jobId || "")) {
-				state.networkingJob = findJob(jobId) || { id: jobId, title: "Loading job...", company: "" };
+			if (state.session.authenticated && window.JobFirstUI.isJobId(jobId)) {
+				state.networkingJob = findJob(jobId) || { id: jobId, title: "Selected role", company: "" };
 				await loadNetworkingContacts();
 			}
 		}
@@ -161,12 +162,13 @@ async function load() {
 function render() {
 	captureJobEdits();
 	ownerAdmin.syncSession();
+	bugReports.syncSession();
 	setMobileNavOpen(false, false);
 	onboarding?.beforeRender();
 	destroyJourneyScene();
 	state.renderToken += 1;
 	const authenticated = Boolean(state.session?.authenticated);
-	if (betaLandingRequired()) {
+	if (betaLandingRequired() || (!authenticated && state.tab === "home")) {
 		renderBetaLanding();
 		onboarding?.sync();
 		return;
@@ -174,11 +176,12 @@ function render() {
 	const user = state.session?.user;
 	const navItems = authenticated
 		? [
+				["home", "Home", "home"],
 				["jobs", "Find jobs", "search"],
 				["applications", "My jobs", "briefcase"],
 				["networking", "People", "people"],
 			]
-		: [["jobs", "Find jobs", "search"]];
+		: [["home", "Home", "home"], ["jobs", "Find jobs", "search"]];
 	app.innerHTML = `
 		<a class="skip-link" href="#main-content">Skip to main content</a>
 		<div class="app-frame view-${state.tab} ${state.tab === "jobs" && state.selectedJob ? "job-detail-open" : ""} ${state.mobileNavOpen ? "nav-open" : ""}">
@@ -203,7 +206,7 @@ function render() {
 					${
 						authenticated
 							? `<details class="account-menu"><summary aria-label="Account and setup"><b class="account-initials" aria-hidden="true">${escapeHtml(companyInitials(user.name || "Your account"))}</b><span>Your setup</span></summary><div class="account-menu-panel"><p>${escapeHtml(user.name || "Your account")}<small>${escapeHtml(user.email)}</small></p><button data-nav="settings">Setup & profile</button><button data-open-guide>Setup guide</button><button data-nav="analytics">Analytics</button><button data-nav="home">Home</button>${themeChoices()}<button id="logout">${icon("logout")} Sign out</button></div></details>`
-							: '<a class="button sign-in-button" href="/auth/google/login">Sign in</a>'
+							: `<a class="button sign-in-button" href="${escapeAttr(signInHref())}">Sign in</a>`
 					}
 				</div>
 			</header>
@@ -229,6 +232,7 @@ function render() {
 	);
 	wireTab();
 	window.JobFirstUI.wire({ navigate, session: state.session });
+	bugReports.wire();
 	onboarding?.sync();
 }
 
@@ -288,7 +292,9 @@ function renderBetaLanding() {
 		<section class="beta-landing">
 			<div class="beta-landing-brand">
 				<div class="brand"><span class="brand-mark" aria-hidden="true">${icon("cup")}</span><strong>Internship & Coffee Chat</strong></div>
-				<span>Private Toronto beta</span>
+				<span>${state.session?.betaAccessMode === "ALLOWLIST" ? "Private Toronto beta" : "Toronto career workspace"}</span>
+				<a href="#home" data-nav="home" aria-current="page">Home</a>
+				${state.session?.betaAccessMode === "ALLOWLIST" ? "" : '<a href="#find-jobs" data-nav="jobs">Find jobs</a>'}
 				<button type="button" class="secondary demo-button" data-open-demo>${icon("play")} Demo</button>
 				${themeChoices()}
 			</div>
@@ -303,8 +309,8 @@ function renderBetaLanding() {
 						: ""
 				}
 					<div class="actions beta-actions">
-						<a class="button primary" href="/auth/google/login">Sign in with Google</a>
-						<a class="button secondary" href="/auth/google/request">Request access</a>
+						<a class="button primary" href="${escapeAttr(signInHref())}">Sign in with Google</a>
+						${state.session?.betaAccessMode === "ALLOWLIST" ? '<a class="button secondary" href="/auth/google/request">Request access</a>' : '<a class="button secondary" href="#find-jobs" data-nav="jobs">Find jobs</a>'}
 					</div>
 					<p class="beta-privacy">Request access verifies your Google email and records only the minimum information needed to review the request. It does not create a normal app account or session unless approved.</p>
 				</div>
@@ -313,12 +319,17 @@ function renderBetaLanding() {
 			${legalLinks()}
 		</section>`;
 	window.JobFirstUI.wire({ navigate, session: state.session });
+	app.querySelectorAll("[data-nav]").forEach((link) => link.addEventListener("click", (event) => {
+		event.preventDefault();
+		navigate(link.dataset.nav);
+	}));
+	bugReports.wire();
 }
 
 function renderStats() {
 	const metrics = journeyMetrics();
 	return `<section class="home-reference-stats" data-tour="home-summary" aria-label="Career workspace summary">
-		${referenceMetric(state.jobs.pagination.total, "Open internships", "briefcase")}
+		${referenceMetric(state.jobs.pagination.total, "Early-career roles", "briefcase")}
 		${referenceMetric(metrics.saved, "Saved roles", "bookmark")}
 		${referenceMetric(metrics.activeApplications, "Active applications", "document")}
 		${referenceMetric(metrics.peopleTracked, "People tracked", "people")}
@@ -562,7 +573,7 @@ function renderJobs() {
 							<button data-job-mode="all" class="${state.jobMode === "all" ? "active" : ""}">All jobs</button>
 							${state.session?.authenticated ? `<button data-job-mode="saved" class="${state.jobMode === "saved" ? "active" : ""}">Saved <span>${savedJobs.length}</span></button>` : ""}
 						</div>
-						<h2>${pagination.total} ${state.jobMode === "saved" ? "saved" : "open"} ${pagination.total === 1 ? "internship" : "internships"}</h2>
+						<h2>${pagination.total} ${state.jobMode === "saved" ? "saved" : "open"} early-career ${pagination.total === 1 ? "role" : "roles"}</h2>
 					</div>
 					<div class="layout-toggle" role="group" aria-label="Job result layout">
 						<button data-job-layout="grid" class="${state.jobLayout === "grid" ? "active" : ""}" aria-label="Grid view">${icon("grid")}<span>Grid</span></button>
@@ -577,7 +588,7 @@ function renderJobs() {
 				<div class="rail-callout"><strong>Track. Apply.<br />Build your future.</strong></div>
 				<div class="rail-activity-card">
 					<h2>Your activity</h2>
-					${miniMetric(state.jobs.pagination.total, "Open internships", "briefcase")}
+					${miniMetric(state.jobs.pagination.total, "Early-career roles", "briefcase")}
 					${miniMetric(savedJobs.length, "Saved roles", "bookmark")}
 					${miniMetric((state.analytics?.applications?.total || 0), "Applications", "document")}
 					${miniMetric((state.analytics?.networking?.tracked || state.session?.prospects?.length || 0), "People tracked", "people")}
@@ -733,7 +744,7 @@ function renderApplications() {
 function renderNetworking() {
 	const linkingEnabled = jobOutreachLinkingEnabled();
 	const searching = state.networkingSearch.status === "running";
-	const context = linkingEnabled && state.networkingJob
+	const context = state.networkingJob
 		? `<section class="notice networking-context">
 				<div>
 					<strong>People to contact for ${escapeHtml(state.networkingJob.title)}</strong>
@@ -873,7 +884,8 @@ function renderNetworking() {
 				${
 					prospects.length
 						? `<div class="people-cards networking-table" aria-label="People and approval-first outreach">${prospects.map((person, index) => `${state.networkingJob && !jobContactFor(person)?.tier && (index === 0 || jobContactFor(prospects[index - 1])?.tier) ? '<p class="unconfirmed-contacts">Unconfirmed fits - not part of the three ranked priorities. Review the public evidence before approaching.</p>' : ""}${networkingTableRow(person, profileReady)}`).join("")}</div>`
-						: empty(people.length ? "No people match these filters." : state.networkingJob ? "No saved contacts for this job yet. Choose Find people, review the costs, then explicitly search. Results are not guaranteed." : "Use Find people to search public professional profiles.")
+						: state.networkingJob && ["loading", "error"].includes(state.networkingContacts.status) ? ""
+							: empty(people.length ? "No people match these filters." : state.networkingJob ? "No saved contacts for this job yet. Choose Find people, review the costs, then explicitly search. Results are not guaranteed." : "Use Find people to search public professional profiles.")
 				}
 			</section>
 			<details class="workspace-insights"><summary>Summary, approval workflow & activity</summary>
@@ -1100,7 +1112,7 @@ function renderAnalytics() {
 			</div>
 		</section>
 		<section class="reference-metrics analytics-stats" aria-label="Analytics summary">
-			${referenceMetric(state.jobs.pagination.total, "Open internships", "briefcase")}
+			${referenceMetric(state.jobs.pagination.total, "Early-career roles", "briefcase")}
 			${referenceMetric(applications.saved, "Saved roles", "bookmark")}
 			${referenceMetric(applications.inProgress + applications.offers, "Active applications", "document")}
 			${referenceMetric(networking.tracked, "People tracked", "people")}
@@ -1790,9 +1802,9 @@ async function beginJobNetworking(id) {
 		);
 	}
 	if (state.networkingSearch.status === "running") return;
-	if (!/^[a-f0-9]{64}$/.test(id)) return showToast("This job could not be opened.", true);
+	if (!window.JobFirstUI.isJobId(id)) return showToast("This job reference could not be opened.", true);
 	if (state.networkingJob?.id !== id) clearNetworkingContext();
-	const job = findJob(id) || { id, title: "Loading job...", company: "" };
+	const job = findJob(id) || { id, title: "Selected role", company: "" };
 	state.networkingJob = job;
 	state.networkingCriteria = job.discoveryCriteria ? structuredClone(job.discoveryCriteria) : null;
 	state.networkingFilter = "ALL";
@@ -1810,6 +1822,7 @@ async function beginJobNetworking(id) {
 function clearNetworkingContext() {
 	cancelDiscovery();
 	cancelPreparation();
+	state.networkingContacts.controller?.abort();
 	state.networkingJob = null;
 	state.networkingCriteria = null;
 	state.networkingContacts = { status: "idle", prospects: [], message: "", request: state.networkingContacts.request + 1 };
@@ -1846,7 +1859,21 @@ function mergeDiscoveryProspects(existing, incoming, identity) {
 async function loadNetworkingContacts(merge = false) {
 	const jobId = state.networkingJob?.id;
 	const identity = state.session?.user?.id;
-	if (!jobId || !identity || !jobOutreachLinkingEnabled()) return;
+	if (!jobId) return;
+	if (!identity || !jobOutreachLinkingEnabled() || !window.JobFirstUI.isJobId(jobId)) {
+		state.networkingContacts = { ...state.networkingContacts, status: "error",
+			message: !identity ? "Sign in to load this role's saved contacts." : !jobOutreachLinkingEnabled()
+				? "Job-linked People is not available while the catalog readiness gate is off."
+				: "This catalog job reference could not be read." };
+		return;
+	}
+	state.networkingContacts.controller?.abort();
+	const controller = new AbortController();
+	let timedOut = false;
+	let timeout;
+	const deadline = new Promise((_, reject) => {
+		timeout = setTimeout(() => { timedOut = true; controller.abort(); reject(new Error("Saved contact loading timed out.")); }, 15000);
+	});
 	const request = state.networkingContacts.request + 1;
 	const current = () => state.networkingContacts.request === request &&
 		state.networkingJob?.id === jobId && state.session?.user?.id === identity;
@@ -1854,14 +1881,17 @@ async function loadNetworkingContacts(merge = false) {
 		status: "loading",
 		prospects: state.networkingContacts.prospects.filter((person) =>
 			person.userId === identity && person.linkedJobs?.some((job) => job.id === jobId)),
-		message: "", request,
+		message: "", request, controller,
 	};
 	if (state.tab === "networking") render();
 	try {
-		const result = await api(`/api/jobs/${jobId}/prospects`);
+		const result = await Promise.race([api(`/api/jobs/${encodeURIComponent(jobId)}/prospects`, { signal: controller.signal }), deadline]);
 		if (!current()) return;
 		if (result.userId !== identity) throw new Error("The signed-in account changed. Reload the workspace to view its contacts.");
 		if (result.job?.id !== jobId) throw new Error("The job context changed. Reload its saved contacts.");
+		if (!Array.isArray(result.prospects) || result.prospects.some((person) => person.userId !== identity)) {
+			throw new Error("Saved contacts did not match this account. Reload the workspace.");
+		}
 		state.networkingJob = result.job;
 		state.networkingCriteria ||= structuredClone(result.job.discoveryCriteria);
 		const prospects = merge
@@ -1872,8 +1902,11 @@ async function loadNetworkingContacts(merge = false) {
 		if (!current()) return;
 		state.networkingContacts = {
 			...state.networkingContacts, status: "error",
-			message: error instanceof Error ? error.message : "Saved contacts could not be loaded. Reload contacts to retry without a paid search.",
+			message: timedOut ? "Saved contacts took too long to load. Reload saved contacts to retry without a provider search."
+				: error instanceof Error ? error.message : "Saved contacts could not be loaded. Reload contacts to retry without a paid search.",
 		};
+	} finally {
+		clearTimeout(timeout);
 	}
 }
 
@@ -2677,6 +2710,7 @@ async function logout() {
 }
 
 function clearPrivateDialogs(clearJobEdits = true) {
+	bugReports.clear();
 	if (clearJobEdits) {
 		state.jobNoteDrafts = {};
 		state.applicationEditDrafts = {};
@@ -2848,9 +2882,16 @@ function betaLandingRequired() {
 }
 
 function initialView() {
-	const requested = window.JobFirstUI.routeView(location.hash.replace(/^#/, ""));
-	if (PRIMARY_VIEWS.includes(requested)) return requested;
-	return "jobs";
+	const hash = location.hash.replace(/^#/, "");
+	const requested = window.JobFirstUI.routeView(hash);
+	if (hash && PRIMARY_VIEWS.includes(requested)) {
+		return state.session?.authenticated || ["home", "jobs"].includes(requested) ? requested : "home";
+	}
+	const params = new URLSearchParams(location.search);
+	if (!hash && state.session?.authenticated && window.JobFirstUI.isJobId(params.get("contactJob"))) return "networking";
+	if (!hash && (window.JobFirstUI.isJobId(params.get("selectedJob")) ||
+		["q", "company", "location", "region", "category", "industry", "length", "term"].some((key) => params.has(key)))) return "jobs";
+	return "home";
 }
 
 function navigate(view, options = {}) {
@@ -2859,7 +2900,7 @@ function navigate(view, options = {}) {
 	const allowed =
 		state.session?.authenticated && PRIMARY_VIEWS.includes(view)
 			? view
-			: "jobs";
+			: ["home", "jobs"].includes(view) ? view : "home";
 	resetAiConsent();
 	if (allowed !== state.tab) {
 		cancelPreparation();
@@ -2912,14 +2953,14 @@ async function restoreNavigation() {
 			if (request !== navigationRestore || state.session.user?.id !== identity) return;
 			state.jobs = result;
 		}
-		if (/^[a-f0-9]{64}$/.test(selectedId || "")) {
-			const job = findJob(selectedId) || (await api(`/api/jobs/${selectedId}`)).job;
+		if (window.JobFirstUI.isJobId(selectedId)) {
+			const job = findJob(selectedId) || (await api(`/api/jobs/${encodeURIComponent(selectedId)}`)).job;
 			if (request !== navigationRestore || state.session.user?.id !== identity) return;
 			state.selectedJob = job;
 		}
-		if (state.tab === "networking" && /^[a-f0-9]{64}$/.test(contactId || "") && state.networkingJob?.id !== contactId) {
+		if (state.tab === "networking" && window.JobFirstUI.isJobId(contactId) && state.networkingJob?.id !== contactId) {
 			clearNetworkingContext();
-			state.networkingJob = findJob(contactId) || { id: contactId, title: "Loading job...", company: "" };
+			state.networkingJob = findJob(contactId) || { id: contactId, title: "Selected role", company: "" };
 			await loadNetworkingContacts();
 			if (request !== navigationRestore || state.session.user?.id !== identity) return;
 		} else if (state.tab === "networking" && !contactId && state.networkingJob) clearNetworkingContext();
@@ -3479,6 +3520,16 @@ function contextValue(category) {
 	);
 }
 
+function signInHref() {
+	const current = new URL(location.href);
+	const target = new URL("/", current.origin);
+	for (const key of ["q", "company", "location", "region", "category", "industry", "length", "term", "page", "pageSize", "selectedJob", "contactJob"]) {
+		if (current.searchParams.has(key)) target.searchParams.set(key, current.searchParams.get(key));
+	}
+	if (["home", "jobs", "find-jobs", "applications", "my-jobs", "networking", "people", "settings", "analytics"].includes(current.hash.slice(1))) target.hash = current.hash;
+	return `/auth/google/login?returnTo=${encodeURIComponent(`${target.pathname}${target.search}${target.hash}`)}`;
+}
+
 function legalLinks() {
 	return `<footer class="site-footer">
 		<a href="/privacy.html">Privacy Policy</a>
@@ -3486,6 +3537,8 @@ function legalLinks() {
 		<a href="/terms.html">Terms of Service</a>
 		<span aria-hidden="true">·</span>
 		<a href="mailto:evanastonlowe@gmail.com">Contact</a>
+		<span aria-hidden="true">·</span>
+		${state.session?.authenticated ? '<button type="button" class="text-button" data-report-bug>Report a bug</button>' : `<a href="${escapeAttr(signInHref())}">Sign in to report a bug</a>`}
 	</footer>`;
 }
 

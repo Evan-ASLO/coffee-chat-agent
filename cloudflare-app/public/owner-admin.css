@@ -23,6 +23,11 @@
 	margin-block: 16px;
 }
 
+.bug-report-copy {
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
 .owner-filters label {
 	flex: 1 1 220px;
 	max-width: 420px;

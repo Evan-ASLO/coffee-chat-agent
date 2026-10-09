@@ -85,6 +85,7 @@ import {
 	revokeBetaEmail,
 } from "./lib/beta";
 import { getUserAnalytics } from "./lib/analytics";
+import { bugReportInput, bugReportQuery, bugReportStatusInput, submitBugReport, listBugReports, updateBugReportStatus } from "./lib/bug-reports";
 import {
 	getOwnerActivity,
 	getOwnerAccessRoster,
@@ -263,6 +264,21 @@ app.get("/api/beta/admin/activity", requireUser, async (c) => {
 app.get("/api/beta/admin/activity/access", requireUser, async (c) => {
 	requireBetaAdmin(c.env, c.get("user")!);
 	return c.json(await getOwnerAccessRoster(c.env, ownerAccessRosterQuerySchema.parse(c.req.query())));
+});
+
+app.post("/api/bug-reports", requireUser, async (c) => {
+	await protectMutation(c);
+	return c.json({ receipt: await submitBugReport(c.env, c.get("user")!.id, bugReportInput.parse(await readJson(c))) });
+});
+app.get("/api/beta/admin/bug-reports", requireUser, async (c) => {
+	requireBetaAdmin(c.env, c.get("user")!);
+	return c.json(await listBugReports(c.env, bugReportQuery.parse(c.req.query())));
+});
+app.patch("/api/beta/admin/bug-reports/:id", requireUser, async (c) => {
+	requireBetaAdmin(c.env, c.get("user")!);
+	await protectMutation(c);
+	const input = bugReportStatusInput.parse(await readJson(c));
+	return c.json(await updateBugReportStatus(c.env, uuid.parse(c.req.param("id")), input.status));
 });
 
 app.get("/api/beta/admin/activity/events", requireUser, async (c) => {
@@ -698,7 +714,8 @@ async function protectMutation(
 }
 
 const uuid = z.string().uuid();
-const jobId = z.string().regex(/^[a-f0-9]{64}$/);
+const jobId = z.string().min(1).max(240).regex(/^[A-Za-z0-9._:-]+$/)
+	.refine((value) => value !== "." && value !== "..", "Use a valid catalog job reference.");
 const jobState = z.enum(JOB_STATES);
 const betaEmailSchema = z
 	.object({

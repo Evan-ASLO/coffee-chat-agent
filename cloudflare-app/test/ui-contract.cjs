@@ -245,8 +245,12 @@ function discoveryClient(summary) {
 		PRIMARY_VIEWS: ["home", "jobs", "applications", "networking", "analytics", "settings"],
 		navigationRestore: 0,
 		requestAnimationFrame: (callback) => callback(),
-		window: { scrollTo: () => {}, JobFirstUI: { routeView: (view) => view } },
+		window: { scrollTo: () => {}, JobFirstUI: {
+			routeView: (view) => view,
+			isJobId: (value) => typeof value === "string" && value.length > 0 && value.length <= 240 && /^[A-Za-z0-9._:-]+$/.test(value) && ![".", ".."].includes(value),
+		} },
 		AbortController,
+		setTimeout, clearTimeout,
 		structuredClone,
 		showToast: (message) => client.toasts.push(message),
 		escapeHtml: (value) => String(value).replace(/&/g, "&amp;").replace(/</g, "&lt;"),
@@ -397,6 +401,44 @@ test("job opening and missing keys perform only an owned saved-contact read", as
 	await client.executeDiscovery({ count: 3, anthropicSearchMaxUses: 3 });
 	assert.equal(calls.length, 1);
 	assert.match(client.toasts.at(-1), /Add your Tavily key/);
+});
+
+test("legacy catalog references open saved linked contacts without provider searches", async () => {
+	const client = discoveryClient({});
+	const job = { id: "legacy:internship-123_a.v1", title: "Software Engineering Intern", company: "Example Firm",
+		discoveryCriteria: { roles: ["Junior Software Engineer"], count: 3 } };
+	client.findJob = () => job;
+	client.jobOutreachLinkingEnabled = () => true;
+	const calls = [];
+	client.api = async (path) => { calls.push(path); return { job, userId: "fake-user", prospects: [] }; };
+	await client.beginJobNetworking(job.id);
+	assert.equal(client.state.networkingContacts.status, "ready");
+	assert.equal(client.state.networkingJob.id, job.id);
+	assert.deepEqual(calls, [`/api/jobs/${encodeURIComponent(job.id)}/prospects`]);
+});
+
+test("hung, disabled and malformed saved-contact reads finish with actionable errors, not empty success", async () => {
+	const client = discoveryClient({});
+	client.state.networkingJob = { id: "legacy:role-1" };
+	client.jobOutreachLinkingEnabled = () => true;
+	let deadline;
+	client.setTimeout = (callback) => { deadline = callback; return 1; };
+	client.clearTimeout = () => {};
+	client.api = async () => new Promise(() => {});
+	const pending = client.loadNetworkingContacts();
+	assert.equal(client.state.networkingContacts.status, "loading");
+	deadline();
+	await pending;
+	assert.equal(client.state.networkingContacts.status, "error");
+	assert.match(client.state.networkingContacts.message, /took too long.*Reload saved contacts/);
+	client.jobOutreachLinkingEnabled = () => false;
+	await client.loadNetworkingContacts();
+	assert.match(client.state.networkingContacts.message, /readiness gate is off/);
+	client.jobOutreachLinkingEnabled = () => true;
+	client.api = async () => ({ job: client.state.networkingJob, userId: "fake-user", prospects: [{ userId: "other-user" }] });
+	await client.loadNetworkingContacts();
+	assert.equal(client.state.networkingContacts.status, "error");
+	assert.match(client.state.networkingContacts.message, /did not match this account/);
 });
 
 test("both discovery modes suppress duplicate clicks and discard stale job/account/criteria/logout/navigation responses", async () => {

@@ -94,5 +94,11 @@
 			button.textContent = paused ? "Play animation" : "Pause animation";
 		}));
 	}
-	root.JobFirstUI = { routeView: (hash) => aliases[hash] || hash, routeHash: (view) => hashes[view] || view, scene, wire, openGuide, takeInitialSession };
+	root.JobFirstUI = {
+		routeView: (hash) => aliases[hash] || hash || "home",
+		routeHash: (view) => hashes[view] || view,
+		isJobId: (value) => typeof value === "string" && value.length > 0 && value.length <= 240 &&
+			/^[A-Za-z0-9._:-]+$/.test(value) && value !== "." && value !== "..",
+		scene, wire, openGuide, takeInitialSession,
+	};
 })(window);

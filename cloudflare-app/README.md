@@ -149,6 +149,16 @@ Focused checks: `npm test -- test\preparation.spec.ts`, `npm run typecheck`,
 
 `GET /api/analytics` is authenticated and ownership-scoped. It uses bounded queries over existing job state, prospect, job, and audit tables to return current application/networking counts, top companies, a 28-day recorded-activity series, and recent activity. It requires no migration and does not fabricate growth, conversion, coffee-chat, reminder, or future-event data.
 
+## Home entry, catalog-linked People and bug reporting
+
+Home is a first-class desktop/mobile tab and the default without an explicit route. Explicit role/People links and job-filter URLs retain their destination; normal login returns to Home, while a sealed, same-app return path preserves recognised deep-link context without OAuth tokens. Signed-out users retain the public landing and beta gates rather than a fictional authenticated workspace.
+
+Catalog-reference routes accept bounded URL-safe legacy references as well as canonical SHA IDs; new signed catalog ingestion still requires its original SHA-256 contract. Job-linked People reads only this user's saved contacts until an explicit search. Loads are cancellable/context-bound and time out after 15 seconds with a reload action instead of remaining indefinitely in loading or displaying a false empty success. Invalid, missing, disabled and unauthorised responses do not run a provider search.
+
+Signed-in beta members can choose **Report a bug** in the footer. Reports are stored in the **Owner tools > Bug reports** inbox, not sent by email. Only explicitly written summary/description, a safe view label and server-derived reporter identity are stored; no private outreach, raw errors, complete criteria or URL tokens are auto-attached. Inputs are bounded, origin/CSRF/auth protected, limited to five new reports per hour and idempotent on retry. Owners can read paginated reports and mark open/resolved; ordinary users cannot list/manage reports.
+
+Additive migration **0010_bug_reports.sql** creates only the report table/indexes and account-deletion cleanup trigger. It does not alter existing users, credentials, jobs or report-independent data. Keep the table on code/UI rollback; do not reverse the migration or delete reports for rollback. Account deletion still clears that account's reports through cascade/soft-deletion cleanup, including when older code is temporarily restored.
+
 ## Removing unsent people after preparation failures
 
 **Remove** remains available for `DISCOVERED`, `ERROR` and `DRAFT_READY` people, including previously approved contacts whose draft failed, without writing-profile readiness or provider credentials. It uses the existing rejection route, not permanent deletion. Confirmation names the person and explains that their record/history is kept while they leave active approval/outreach queues. General and job-linked active lists/counts exclude `REJECTED`; records, job links, cached preparation and historical drafts remain stored. In-flight `PREPARING`/`SENDING` and completed `SENT`/`REPLIED` states are not removable. State-guarded preparation, edits and send claims cannot revive or send a rejected person. A confirmed removal invalidates client draft review even when a later refresh is stale or fails.
