@@ -3,6 +3,14 @@
 	const param = new URLSearchParams(root.location.search).get("scoutTheme");
 	root.document.documentElement.setAttribute("data-theme",
 		param === "light" || param === "dark" ? param : root.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+	let initialSession = root.fetch("/api/session", {
+		headers: { Accept: "application/json" }, credentials: "same-origin",
+	}).then((response) => ({ response }), (error) => ({ error }));
+	function takeInitialSession() {
+		const pending = initialSession;
+		initialSession = null;
+		return pending;
+	}
 	const aliases = { "find-jobs": "jobs", "my-jobs": "applications", people: "networking" };
 	const hashes = { jobs: "find-jobs", applications: "my-jobs", networking: "people" };
 	const providers = {
@@ -89,5 +97,5 @@
 			button.textContent = paused ? "Play animation" : "Pause animation";
 		}));
 	}
-	root.JobFirstUI = { routeView: (hash) => aliases[hash] || hash, routeHash: (view) => hashes[view] || view, scene, wire, openGuide };
+	root.JobFirstUI = { routeView: (hash) => aliases[hash] || hash, routeHash: (view) => hashes[view] || view, scene, wire, openGuide, takeInitialSession };
 })(window);

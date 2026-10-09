@@ -132,7 +132,7 @@ dialog.addEventListener("close", () => { state.draftReview = null; });
 async function load() {
 	try {
 		loadJobQueryFromUrl();
-		state.session = await api("/api/session");
+		state.session = await api("/api/session", { initialSession: true });
 		ownerAdmin.syncSession();
 		state.tab = state.session?.authenticated ? initialView() : "jobs";
 		if (!betaLandingRequired()) {
@@ -3011,7 +3011,10 @@ async function api(path, options = {}) {
 	if (options.body !== undefined && !isFormData) {
 		headers["Content-Type"] = "application/json";
 	}
-	const response = await fetch(path, {
+	const initial = options.initialSession && path === "/api/session" && method === "GET"
+		? await window.JobFirstUI.takeInitialSession() : null;
+	if (initial?.error) throw initial.error;
+	const response = initial?.response || await fetch(path, {
 		method,
 		headers,
 		body:

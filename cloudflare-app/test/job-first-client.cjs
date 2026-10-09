@@ -24,6 +24,7 @@ function client() {
 		location: { href: "http://127.0.0.1:8807/?q=finance&term=summer#find-jobs", hash: "#find-jobs", search: "?q=finance&term=summer" },
 		document: { documentElement: { setAttribute() {} }, getElementById: () => null },
 		matchMedia: () => ({ matches: false }), URL, URLSearchParams,
+		FormData,
 		app: { querySelectorAll: () => c.inputs },
 		betaLandingRequired: () => false,
 		value: () => "",
@@ -32,13 +33,18 @@ function client() {
 			replaceState: (_a, _b, url) => c.historyCalls.push(["replace", url.href]),
 		},
 		setJobStatus: async (...args) => c.calls.push(args),
+		fetch: async (url, options) => {
+			c.requests.push({ url, options });
+			return { ok: true, json: async () => ({ authenticated: false }) };
+		},
+		requests: [],
 		removeJobStatus: async (...args) => c.calls.push(["remove", ...args]),
 		showToast: (...args) => c.calls.push(["toast", ...args]),
 	};
 	c.window = c;
 	vm.createContext(c);
 	vm.runInContext(helper, c);
-	vm.runInContext(["findJob", "captureJobEdits", "toggleSaved", "markJobApplied", "initialView", "syncViewToUrl"].map(definition).join("\n"), c);
+	vm.runInContext(["findJob", "captureJobEdits", "toggleSaved", "markJobApplied", "initialView", "syncViewToUrl", "api"].map(definition).join("\n"), c);
 	return c;
 }
 test("aliases retain legacy routes and default to Find jobs without API calls", () => {
@@ -105,9 +111,54 @@ test("guide and self-hosted Demo do not search, collect Apollo keys, autoplay or
 	assert.match(helper, /<video controls playsinline preload="none"/);
 	assert.match(helper, /Apollo is OFF/);
 	assert.match(helper, /Partner OAuth may be required/);
-	assert.doesNotMatch(helper, /\bfetch\(|localStorage|autoplay|\/api\/credentials/);
+	assert.doesNotMatch(helper, /localStorage|autoplay|\/api\/credentials|\/api\/discovery/);
+	const c = client();
+	assert.deepEqual(c.requests.map(({ url }) => url), ["/api/session"]);
 	for (const file of ["internship-coffee-chat-launch-dynamic.mp4", "poster.jpg", "captions.vtt"]) {
 		assert.ok(fs.statSync(path.join(root, "public", "launch", file)).size > 0);
+	}
+});
+test("early session read is single-use, same-origin and never caches later account reads", async () => {
+	const c = client();
+	const pending = c.JobFirstUI.takeInitialSession();
+	assert.equal(c.JobFirstUI.takeInitialSession(), null);
+	assert.equal((await pending).response.ok, true);
+	assert.equal(c.requests.length, 1);
+	assert.equal(c.requests[0].options.credentials, "same-origin");
+	assert.equal(c.requests[0].options.headers.Accept, "application/json");
+	assert.match(source, /api\("\/api\/session", \{ initialSession: true \}\)/);
+	assert.match(source, /if \(initial\?\.error\) throw initial\.error/);
+});
+test("early session network failure remains an explicit load failure without an automatic retry", async () => {
+	const c = client();
+	const failure = new Error("Network unavailable");
+	c.fetch = () => Promise.reject(failure);
+	vm.runInContext(helper, c);
+	const pending = c.JobFirstUI.takeInitialSession();
+	assert.equal((await pending).error, failure);
+	assert.equal(c.JobFirstUI.takeInitialSession(), null);
+});
+test("real API consumes startup once and makes fresh later session reads", async () => {
+	const c = client();
+	assert.equal((await c.api("/api/session", { initialSession: true })).authenticated, false);
+	assert.equal(c.requests.length, 1);
+	await c.api("/api/session");
+	assert.equal(c.requests.length, 2);
+});
+test("early HTTP and malformed responses retain normal explicit API errors", async () => {
+	for (const malformed of [false, true]) {
+		const c = client();
+		c.state.session = { authenticated: false };
+		c.fetch = async () => ({
+			ok: false, status: 503, json: async () => {
+				if (malformed) throw new SyntaxError("Not JSON");
+				return { error: "UNAVAILABLE", message: "Session temporarily unavailable." };
+			},
+		});
+		vm.runInContext(helper, c);
+		await assert.rejects(c.api("/api/session", { initialSession: true }),
+			malformed ? /server response could not be read/ : /Session temporarily unavailable/);
+		assert.equal(c.JobFirstUI.takeInitialSession(), null);
 	}
 });
 test("phone navigation, theme-first loading and reduced motion remain explicit", () => {

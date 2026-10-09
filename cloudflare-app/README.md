@@ -6,6 +6,8 @@ This directory is the deployed Cloudflare Worker, D1 schema, queue consumer, tes
 
 `public/job-first.js` supplies navigation aliases, a pauseable lightweight illustration, the honest setup guide and the existing fictional-concept Demo. `public/job-first.css` supplies the warm light/dark theme. The role panel exposes the original source, private notes and explicit stage changes. Save notes to persist them; unsaved notes remain only in account-bound memory until reload/logout. Quick Mark applied/bookmark actions never regress an existing application stage. Browser Back restores routes, role selection and filters. Legacy hashes remain accepted; stable tutorial IDs are unchanged.
 
+Startup begins the single same-origin session read while the remaining scripts load. The first load consumes it once through the normal API error handling; later session reads always go to the server. No session response is persisted or reused across account changes, and no provider or private activity query is added.
+
 The former live networking design is preserved in the annotated source tag **`archive-live-networking-20261008`** at `4403c5f77d81d7206048550a2d875c86c1c2dab3`. Its Worker version is `f1939c6e-968f-434b-8396-54377c5be54f`. An operator can restore that UI with `wrangler rollback <version> --config wrangler.jsonc --message "Restore archived networking design; preserve database and gates"`, or redeploy the tag from a separate checkout with `--keep-vars --no-autoconfig`. **Do not restore D1, delete records or reverse migration 0009 for a design rollback.** The source archive and release receipt are retained outside the repository; they contain no credentials. Apollo remains OFF.
 
 ## Local development
