@@ -283,6 +283,18 @@ test("distinguishes the latest search from previously saved people", async () =>
 	assert.equal(client.renderSearchProvenance([{ id: "saved-prior-search" }]), "");
 });
 
+test("an empty broad-web search identifies its two Tavily phases honestly", () => {
+	const client = discoveryClient({});
+	const text = client.discoveryEmptyMessage({
+		mode: "TAVILY", providerReturned: 7, primaryProviderReturned: 3,
+		professionalBioProviderReturned: 4, accepted: 0, rejected: 7, duplicates: 0,
+		rejectionCounts: { unsafeOrNonProfile: 7 },
+	});
+	assert.match(text, /3 first-pass web candidates and 4 public-bio candidates/);
+	assert.match(text, /7 unsafe or non-person pages/);
+	assert.doesNotMatch(text, /LinkedIn-focused/);
+});
+
 test("save acknowledgements are earned only after the operation completes", async () => {
 	const source = read("public/app.js");
 	const toast = { textContent: "" };

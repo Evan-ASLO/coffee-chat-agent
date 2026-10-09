@@ -2099,8 +2099,8 @@ describe.sequential("internship jobs platform", () => {
 		const primaryQuery = JSON.parse(
 			String((fetchSpy.mock.calls[0]?.[1] as RequestInit)?.body),
 		);
-		expect(primaryQuery.include_domains).toEqual(["linkedin.com"]);
-		expect(primaryQuery.include_domains_mode).toBe("restrict");
+		expect(primaryQuery.include_domains).toBeUndefined();
+		expect(primaryQuery.include_domains_mode).toBeUndefined();
 		expect(primaryQuery.query).not.toContain("site:");
 		expect(primaryQuery.query).not.toContain(
 			"Banking & Financial Services",
@@ -2617,10 +2617,12 @@ describe("bounded ranked job contacts", () => {
 						: outcome === "unconfirmed" ? [asTavily(profiles[4]!)]
 							: outcome === "duplicates" ? Array(5).fill(asTavily(candidate))
 								: [asTavily(candidate)];
+					let tavilyPass = 0;
 					const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async (url, init) => {
 						expect(url).toBe("https://api.tavily.com/search");
 						const body = JSON.parse(String(init?.body));
-						const primary = body.include_domains?.length === 1 && body.include_domains[0] === "linkedin.com";
+						expect(body.include_domains).toBeUndefined();
+						const primary = tavilyPass++ === 0;
 						if (outcome === "error" || (outcome === "bio-error" && !primary)) {
 							return Response.json({ error: "PRIVATE QUERY SECRET-DO-NOT-STORE" }, { status: 401 });
 						}

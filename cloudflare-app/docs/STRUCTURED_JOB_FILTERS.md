@@ -80,20 +80,20 @@ Do not treat the migration alone as a backfill.
 
 **People to contact** opens saved, user-owned job contacts without paid provider activity. The separate cost-disclosed search form uses server-derived job criteria: employer aliases (for example `bmo` → `BMO Financial Group`), junior role peers, campus/university/early-career recruiters, and other junior employees. It does not target hiring managers or senior staff. The server ignores submitted employer/role overrides for a linked search. General Networking without `jobId` retains its independent criteria.
 
-LinkedIn remains primary. The Tavily request uses native `include_domains: ["linkedin.com"]` in `restrict` mode; query text contains no `site:` operator. A job-linked query ANDs company aliases with one OR group covering all priorities; recruiters need not be junior, and location is not a hard gate. Bio search adds team/bio/profile, not leadership terms. Tiers do not multiply provider invocations.
+The first Tavily pass searches the broader public web, including LinkedIn and individual professional biographies; it does not set `include_domains` or use a `site:` query operator. If fewer than the requested number of reviewable candidates are found, the second Tavily pass uses a distinct, person-focused public-bio query. A job-linked query ANDs company aliases with one OR group covering all priorities; recruiters need not be junior, and location is not a hard gate. Bio search adds team/bio/profile, not leadership terms. Tiers do not multiply provider invocations.
 
-Job-linked acceptance requires a supported public person-specific source and current-employer evidence (an employment statement or intact indexed headline). Former/aspirational/wrong-employer results are rejected. Rank order is strict: (1) same-function employee with explicit junior evidence, (2) internship/new-grad recruiter with explicit remit, (3) other same-firm junior employee. A lower-tier score cannot outrank a higher tier. Senior/lead/director/VP titles cannot become junior from an analyst/associate keyword. Ambiguous seniority/function stays unconfirmed, apart from the three confident tiers. Ranking uses no age, photos or invented years and makes no claim of vacancy ownership.
+Job-linked candidates need an identifiable individual and safe public professional source. Confirmed tiers require evidence of current employment (an employment statement or intact indexed headline); former/aspirational/wrong-employer results can remain visible for review but never fill a confirmed tier. Rank order is strict: (1) same-function employee with explicit junior evidence, (2) internship/new-grad recruiter with explicit remit, (3) other same-firm junior employee. A lower-tier score cannot outrank a higher tier. Senior/lead/director/VP titles cannot become junior from an analyst/associate keyword. Ambiguous seniority/function stays unconfirmed. Ranking uses no age, photos or invented years and makes no claim of vacancy ownership.
 
-In independent Networking, when a company is requested, the existing match-quality rules remain:
+In independent Networking, a requested company influences evidence-based ranking, not whether a plausible public professional can be shown:
 
-- **STRONG:** requested company plus an exact requested professional role/topic, relevance at least 55.
-- **BROADER_COMPANY:** requested company plus a real professional title and either requested location evidence or hiring/talent/recruiting evidence, relevance at least 35.
+- **STRONG:** evidenced requested employer and role with a sufficient relevance score; public bios additionally require an official employer or The Org source.
+- **BROADER_COMPANY:** the stored name for possible/uncertain people, even if employer or role is unconfirmed or different; the name is not proof they work at that company.
 
-Company-only profiles without role, location, or hiring relevance remain rejected, as do role-only results such as an academic machine-learning profile returned for a Lyft role. Independent searches without a company retain a lower but explicit evidence floor.
+Unsafe or non-person pages and results without an identifiable person or professional evidence remain rejected. Missing employer, title and location are never invented.
 
-Match quality remains stored on the prospect. Job-link priorities/reasons/evidence are recomputed per job from saved source fields, not written as a global prospect rank; no new migration is needed. Existing links lacking current-role evidence remain unconfirmed. Broader company matches display **Broader company match — review role relevance**; no enrichment or drafting occurs until the user explicitly approves that person. Summaries also report qualified and unconfirmed job counts.
+Match quality remains stored on the prospect. Job-link priorities/reasons/evidence are recomputed per job from saved source fields, not written as a global prospect rank; no new migration is needed. Existing links lacking current-role evidence remain unconfirmed. Possible matches require identity, employer and role review; no enrichment or drafting occurs until the user explicitly approves that person. Summaries also report qualified and unconfirmed job counts.
 
-If LinkedIn produces too few accepted profiles, a second public-bio search accepts only person-specific pages on reviewed official company domains or `theorg.com`, with company/role/location evidence. Job, search, news, social-feed, and common data-broker pages are rejected.
+The optional second public-bio pass is not restricted to official employer domains or `theorg.com`. Both passes apply the same safe URL normalization and person-specific validation to non-LinkedIn results. Job, search, news, social-feed and common data-broker pages are rejected.
 
 Prospects deduplicate by LinkedIn URL when present and otherwise by canonical source URL. The UI identifies those links as **LinkedIn profile** or **Public profile**.
 
@@ -105,11 +105,11 @@ API/audit summaries retain the existing `DISCOVERY_COMPLETED` event, aggregate c
 
 Every returned object must use a direct provider citation that exactly matches its canonical source URL and pass the same provenance and match-quality functions. Output without direct public citations—including Google redirect URLs—is rejected. Summary/audit fields include only selected provider, attempted/status/model, and returned/accepted counts.
 
-Known employers may have a narrow discovery-hint record containing canonical search aliases, approved people/bio domains, and broad professional topics. For BMO, the Tavily fallback sends this native `include_domains` allowlist in `restrict` mode:
+Known employers may have discovery hints containing canonical search aliases, official people/bio domains and broad professional topics. BMO's known profile domains include:
 
 - `privatewealth.bmo.com`
 - `privatewealth-insights.bmo.com`
 - `bmo.com`
 - vetted `theorg.com`
 
-Exact subdomains remain explicit. Although a root allowlist entry may let the provider return subdomains, post-response validation accepts only reviewed hosts (plus `www.` for a reviewed root), so unreviewed sibling subdomains remain rejected. Discovery summaries expose aggregate counts and bounded diagnostics, never provider queries, URLs, credentials, or raw provider responses. Contact rows retain their validated public source and supporting evidence.
+These domains can strengthen a match; they do not restrict Tavily's search or constitute an acceptance allowlist. Discovery summaries expose aggregate counts and bounded diagnostics, never provider queries, URLs, credentials, or raw provider responses. Contact rows retain their validated public source and supporting evidence.

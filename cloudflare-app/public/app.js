@@ -2100,7 +2100,7 @@ function discoveryEmptyMessage(summary) {
 		const stages = [];
 		if (summary.primaryProviderReturned) {
 			stages.push(
-				`${summary.primaryProviderReturned} LinkedIn-focused ${summary.primaryProviderReturned === 1 ? "candidate" : "candidates"}`,
+				`${summary.primaryProviderReturned} first-pass web ${summary.primaryProviderReturned === 1 ? "candidate" : "candidates"}`,
 			);
 		}
 		if (summary.professionalBioProviderReturned) {

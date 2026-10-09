@@ -90,8 +90,6 @@ export async function discoverWithTavily(
 		headers: { Authorization: `Bearer ${apiKey}` },
 		body: {
 			query: buildDiscoveryQuery(criteria),
-			include_domains: ["linkedin.com"],
-			include_domains_mode: "restrict",
 			search_depth: "basic",
 			max_results: Math.min(criteria.count * 3, 20),
 			topic: "general",
@@ -114,9 +112,9 @@ export async function discoverWithTavily(
 	};
 	const primaryResults = primary.results ?? [];
 	for (const result of primaryResults) {
-		const candidate = linkedInPerson(result, criteria);
-		if (candidate.insufficientMatch) insufficientMatchRejected += 1;
-		const person = candidate.person;
+		const linkedIn = linkedInPerson(result, criteria);
+		if (linkedIn.insufficientMatch) insufficientMatchRejected += 1;
+		const person = linkedIn.person || professionalBioPerson(result, criteria);
 		if (!person) { rejected(result); continue; }
 		const key = discoveryPersonKey(person, criteria);
 		if (seen.has(key)) { rejectionCounts.duplicate += 1; continue; }

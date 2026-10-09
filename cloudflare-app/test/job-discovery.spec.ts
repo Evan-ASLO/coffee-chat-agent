@@ -247,6 +247,29 @@ describe("job-specific contact priorities", () => {
 		expect(query).not.toMatch(/manager|leadership/i);
 		expect(buildProfessionalBioQuery(criteria)).not.toMatch(/manager|leadership/i);
 	});
+
+	it("ranks public employer bios and LinkedIn people from one job-linked web pass", async () => {
+		const criteria = deriveJobDiscoveryCriteria({
+			...job, location: "Toronto", region: "Canada", industry: null,
+		});
+		const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ results: [
+			{ title: "Casey Example - Senior Campus Recruiter - BMO Financial Group | LinkedIn",
+				url: "https://www.linkedin.com/in/casey-example",
+				content: "Casey Example is a Senior Campus Recruiter at BMO Financial Group focused on new-graduate hiring." },
+			{ title: "Ava Example - Junior Investment Analyst at BMO Financial Group",
+				url: "https://www.bmo.com/en/people/ava-example",
+				content: "Ava Example is a Junior Investment Analyst at BMO Financial Group in Toronto." },
+			{ title: "BMO investment jobs", url: "https://www.bmo.com/careers/jobs/investment",
+				content: "Search investment jobs at BMO Financial Group." },
+		] }));
+		const result = await discoverWithTavily("fake-key", { ...criteria, count: 2 });
+		expect(spy).toHaveBeenCalledTimes(1);
+		const body = JSON.parse(String((spy.mock.calls[0]?.[1] as RequestInit)?.body));
+		expect(body.include_domains).toBeUndefined();
+		expect(result.people.map((candidate) => [candidate.fullName, candidate.jobContact?.tier]))
+			.toEqual([["Ava Example", 1], ["Casey Example", 2]]);
+		expect(result.rejectionCounts?.unsafeOrNonProfile).toBe(1);
+	});
 });
 
 describe("discovery query semantics", () => {
@@ -320,6 +343,9 @@ describe("discovery query semantics", () => {
 			Response.json(responses.shift()));
 		const found = await discoverWithTavily("fake", banking);
 		expect(spy).toHaveBeenCalledTimes(2);
+		const firstBody = JSON.parse(String((spy.mock.calls[0]?.[1] as RequestInit)?.body));
+		expect(firstBody.include_domains).toBeUndefined();
+		expect(firstBody.include_domains_mode).toBeUndefined();
 		expect(JSON.parse(String((spy.mock.calls[1]?.[1] as RequestInit)?.body)).query).toBe(query);
 		expect(found.people).toHaveLength(1);
 		expect(found.people[0]).toMatchObject({
@@ -327,6 +353,37 @@ describe("discovery query semantics", () => {
 			sourceUrl: "https://www.rbc.com/people/morgan-example",
 		});
 		expect(found.rejectionCounts?.unsafeOrNonProfile).toBe(2);
+	});
+
+	it("retains LinkedIn and public professional bios in the first broad-web pass without adding a search", async () => {
+		const banking: DiscoveryCriteria = {
+			roles: ["Investment Banking"], companies: ["RBC"], industries: [], locations: ["Toronto"],
+			keywords: [], seniority: [], objective: "", count: 2,
+		};
+		const spy = vi.spyOn(globalThis, "fetch").mockResolvedValue(Response.json({ results: [
+			{ title: "Morgan Example - Investment Banking Analyst - RBC Capital Markets | LinkedIn",
+				url: "https://www.linkedin.com/in/morgan-example",
+				content: "Morgan Example is an Investment Banking Analyst at RBC Capital Markets in Toronto." },
+			{ title: "Alex Example | Investment Banking Associate at RBC Capital Markets",
+				url: "https://www.rbc.com/people/alex-example",
+				content: "Alex Example is an Investment Banking Associate at RBC Capital Markets in Toronto." },
+			{ title: "RBC Investment Banking jobs",
+				url: "https://www.rbc.com/careers/jobs/investment-banking",
+				content: "Find jobs with RBC Capital Markets." },
+		] }));
+		const found = await discoverWithTavily("fake", banking);
+		expect(spy).toHaveBeenCalledTimes(1);
+		expect(spy.mock.calls[0]?.[0]).toBe("https://api.tavily.com/search");
+		const firstBody = JSON.parse(String((spy.mock.calls[0]?.[1] as RequestInit)?.body));
+		expect(firstBody.include_domains).toBeUndefined();
+		expect(firstBody.include_domains_mode).toBeUndefined();
+		expect(firstBody.query).toContain('"Investment Banking"');
+		expect(found).toMatchObject({
+			primaryProviderReturned: 3, primaryAccepted: 2, fallbackProviderReturned: 0,
+			fallbackAccepted: 0, rejectionCounts: { unsafeOrNonProfile: 1 },
+		});
+		expect(found.people.map((person) => person.fullName)).toEqual(["Alex Example", "Morgan Example"]);
+		expect(found.people.every((person) => person.matchQuality === "STRONG")).toBe(true);
 	});
 
 	it("keeps VC/VC analyst intent in the second Tavily pass without targeting generic team directories", async () => {
@@ -516,8 +573,8 @@ describe("professional bio fallback", () => {
 			String((fetchSpy.mock.calls[1]?.[1] as RequestInit)?.body),
 		);
 		expect(primaryBody.query).not.toContain("site:");
-		expect(primaryBody.include_domains).toEqual(["linkedin.com"]);
-		expect(primaryBody.include_domains_mode).toBe("restrict");
+		expect(primaryBody.include_domains).toBeUndefined();
+		expect(primaryBody.include_domains_mode).toBeUndefined();
 		expect(primaryBody.query).toContain(
 			'("Investment Team" OR "Investment Analyst" OR "Portfolio Manager"',
 		);
