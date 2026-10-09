@@ -638,20 +638,19 @@ export function buildProfessionalBioQuery(
 			queryGroup(["team", "bio", "profile"], 3),
 		]);
 	}
-	const roleTopics = Array.from(
-		new Set([
-			...criteria.keywords,
-			...employerProfessionalTopics(criteria.companies),
-			...professionalRoleTopics(criteria.roles),
-		]),
-	);
+	const requestedTopics = [...criteria.roles, ...criteria.keywords];
+	const roleTopics = Array.from(new Set([
+		...requestedTopics,
+		...professionalRoleTopics(criteria.roles),
+		...(requestedTopics.length ? [] : employerProfessionalTopics(criteria.companies)),
+	]));
 	return buildBoundedQuery("", [
 		queryGroup(roleTopics, 10),
 		queryGroup(employerSearchAliases(criteria.companies), 8),
 		queryGroup(criteria.locations, 6),
 		queryGroup(criteria.companies.length
-			? ["team", "bio", "profile", "leadership"]
-			: ["analyst", "investor", "biography", "profile"], 4),
+			? ["analyst", "associate", "recruiter", "biography", "profile"]
+			: ["analyst", "investor", "biography", "profile"], 5),
 	]);
 }
 

@@ -254,7 +254,8 @@ function discoveryClient(summary) {
 	vm.runInNewContext(
 		source.slice(source.indexOf("async function executeDiscovery("), source.indexOf("\nfunction readDiscoveryCriteria(")) +
 		source.slice(source.indexOf("function discoverySearchStatus("), source.indexOf("\nasync function prepare(")) +
-		source.slice(source.indexOf("function renderNetworkingSearchState("), source.indexOf("\nfunction renderApprove(")),
+		source.slice(source.indexOf("function renderNetworkingSearchState("), source.indexOf("\nfunction renderApprove(")) +
+		source.slice(source.indexOf("function renderSearchProvenance("), source.indexOf("\nfunction renderAiDiscovery(")),
 		client,
 	);
 	vm.runInNewContext(
@@ -269,6 +270,37 @@ function discoveryClient(summary) {
 	);
 	return client;
 }
+
+test("distinguishes the latest search from previously saved people", async () => {
+	const client = discoveryClient({ inserted: 0, accepted: 0, providerReturned: 7 });
+	await client.executeDiscovery({ roles: ["Investment Banking"], companies: ["RBC"], count: 3 }, "TAVILY");
+	const html = client.renderSearchProvenance([{ id: "saved-prior-search" }]);
+	assert.match(html, /0 new people from the latest search; 1 saved person in this account/);
+	assert.match(html, /a saved card appearing again does not mean this search returned it/);
+	client.state.networkingJob = { id: "a".repeat(64) };
+	assert.match(client.renderSearchProvenance([{ id: "saved-prior-search" }]), /1 saved person in this job/);
+	client.state.networkingSearch.summary = null;
+	assert.equal(client.renderSearchProvenance([{ id: "saved-prior-search" }]), "");
+});
+
+test("save acknowledgements are earned only after the operation completes", async () => {
+	const source = read("public/app.js");
+	const toast = { textContent: "" };
+	const messages = [];
+	const client = { toast, showToast: (message) => { toast.textContent = message; messages.push(message); } };
+	vm.runInNewContext(source.slice(source.indexOf("async function run("), source.indexOf("\nasync function api(")), client);
+	let finish;
+	const pending = new Promise((resolve) => { finish = resolve; });
+	const save = client.run("Saving role…", () => pending, "Role saved to My jobs.");
+	assert.deepEqual(messages, ["Saving role…"]);
+	finish();
+	await save;
+	assert.deepEqual(messages, ["Saving role…", "Role saved to My jobs."]);
+	await client.run("Saving note…", async () => { throw new Error("Note not saved"); }, "Note saved.");
+	assert.deepEqual(messages.slice(-2), ["Saving note…", "Note not saved"]);
+	assert.match(source, /status === "SAVED" \? "Role saved to My jobs\. Add a private next step when you're ready\."/);
+	assert.match(source, /\}, "Note saved privately for this role\."\);/);
+});
 
 test("discovery renders failed, partial, duplicate, and completed outcomes honestly", async () => {
 	for (const fixture of [

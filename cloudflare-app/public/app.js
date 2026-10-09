@@ -836,6 +836,7 @@ function renderNetworking() {
 			</div>
 		</section>
 		${previewNotice}${context}${state.networkingJob ? renderDiscoverySetup() : ""}${renderNetworkingSearchState()}${renderAiDiscovery()}
+		${renderSearchProvenance(people)}
 		${state.networkingJob && state.networkingContacts.status === "loading" ? '<p class="notice" role="status">Loading saved contacts only. No provider search is running.</p>' : ""}
 		${state.networkingJob && state.networkingContacts.status === "error" ? `<p class="notice warning" role="alert">${escapeHtml(state.networkingContacts.message)} Use Reload saved contacts to retry without a provider search.</p>` : ""}
 		<div class="tracker-layout networking-layout">
@@ -961,6 +962,13 @@ function renderDiscoverySetup() {
 
 function renderSearchCosts() {
 	return `<p class="notice search-cost-notice"><strong>Search and Retry use Tavily only.</strong> Usage follows <a href="https://docs.tavily.com/documentation/api-credits" target="_blank" rel="noopener">your Tavily API plan</a>. No Gemini, OpenAI or Anthropic search runs, even with few or no results. Review the results first; the separate <strong>Find more with AI</strong> action is optional. Searching never approves, enriches, drafts or sends outreach.</p>`;
+}
+
+function renderSearchProvenance(people) {
+	const summary = state.networkingSearch.summary;
+	if (!summary) return "";
+	const added = Number(summary.inserted || 0);
+	return `<p class="notice search-provenance">${added} new ${added === 1 ? "person" : "people"} from the latest search; ${people.length} saved ${people.length === 1 ? "person" : "people"} in this ${state.networkingJob ? "job" : "account"}. The cards below also include earlier searches; a saved card appearing again does not mean this search returned it.</p>`;
 }
 
 function renderAiDiscovery() {
@@ -1658,7 +1666,7 @@ async function setJobStatus(id, status) {
 		});
 		await Promise.all([loadJobData(), loadAnalyticsData()]);
 		render();
-	});
+	}, status === "SAVED" ? "Role saved to My jobs. Add a private next step when you're ready." : undefined);
 }
 
 async function removeJobStatus(id) {
@@ -1683,7 +1691,7 @@ async function saveJobNotes(id) {
 		await Promise.all([loadJobData(), loadAnalyticsData()]);
 		if (state.selectedJob?.id === id) state.selectedJob = findJob(id);
 		render();
-	});
+	}, "Note saved privately for this role.");
 }
 
 function openApplicationEditor(id) {
@@ -3047,11 +3055,11 @@ function highlightJourneyControl(area) {
 	});
 }
 
-async function run(message, callback) {
+async function run(message, callback, successMessage = "Done.") {
 	showToast(message);
 	try {
 		await callback();
-		if (toast.textContent === message) showToast("Done.");
+		if (toast.textContent === message) showToast(successMessage);
 	} catch (error) {
 		showToast(error.message, true);
 	}

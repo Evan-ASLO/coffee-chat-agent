@@ -39,6 +39,8 @@ Discovery is recall-first, not identity verification. Identifiable individuals o
 
 For general searches without an employer, short `VC` and `VC analyst` role terms expand to their venture-capital equivalents in the two existing Tavily queries; the bio query favors person-specific analyst/investor/profile results rather than generic team or leadership directories. This does not increase provider calls, change job-linked priority queries, relax URL safety or guarantee a candidate. Returned-result counts and aggregate rejected-link counts describe the links Tavily supplied, not a judgment that the requested role was too narrow.
 
+General employer-linked bio searches keep the full requested role phrase (for example, RBC + Investment Banking) ahead of fallback employer topics, use RBC Capital Markets as an RBC alias, and prefer individual analyst/associate/recruiter/profile pages to generic firm directories. Job-linked priority and its separate query structure remain unchanged; the RBC alias also applies there. People shows the saved account or job list, not only the latest Tavily results; after a search it labels the number newly added alongside the saved count so a prior contact is not mistaken for a repeat provider result. Successful role and note saves acknowledge only persisted changes. No search guarantees an identifiable person.
+
 - Hunter remains the existing default; saving an Apollo key does not change the
   enrichment preference. There is no automatic Hunter/Apollo fallback.
 - **Apollo is NOT enabled for live use.** `ENABLE_APOLLO_ENRICHMENT` must equal
@@ -441,7 +443,7 @@ Opening/rendering/navigating/paging/tutorial steps never search, enrich, draft o
 
 ### Optional, explicitly requested AI discovery
 
-Each user retains the disabled-by-default `peopleSearchFallbackProvider` setting (`NONE`, `GEMINI`, `OPENAI`, or `ANTHROPIC`), now labelled **Optional AI discovery provider**. Existing preferences are preserved. **Search public profiles** uses Tavily's bounded LinkedIn pass and, if needed, approved-domain public-bio pass. After reviewing results, **Find more with AI** is a separate, cost-disclosed action. It preserves saved/Tavily contacts and merges new validated contacts with their existing job links and ranking. It may return only duplicates or no new contacts.
+Each user retains the disabled-by-default `peopleSearchFallbackProvider` setting (`NONE`, `GEMINI`, `OPENAI`, or `ANTHROPIC`), now labelled **Optional AI discovery provider**. Existing preferences are preserved. **Search public profiles** uses Tavily's bounded LinkedIn pass and, if needed, public professional-bio pass with individual-profile validation rather than a fixed domain allowlist. After reviewing results, **Find more with AI** is a separate, cost-disclosed action. It preserves saved/Tavily contacts and merges new validated contacts with their existing job links and ranking. It may return only duplicates or no new contacts.
 
 `POST /api/discovery` accepts `mode: "TAVILY" | "AI_SUPPLEMENT"`; omitted mode (including legacy clients) safely defaults to **TAVILY**, and invalid modes return `INVALID_REQUEST` before provider calls. `AI_SUPPLEMENT` never calls Tavily or reads its credential. It reads only the selected AI provider's encrypted user key and saved model and makes one bounded request (at most 10 candidate profiles, still capped by the discovery count):
 

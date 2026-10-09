@@ -95,7 +95,7 @@ const EMPLOYER_DISCOVERY_HINTS = new Map<
 	[
 		"rbc",
 		{
-			aliases: ["RBC", "Royal Bank of Canada"],
+			aliases: ["RBC", "Royal Bank of Canada", "RBC Capital Markets"],
 			domains: ["rbc.com"],
 			topics: ["investment", "wealth", "capital markets", "talent"],
 		},

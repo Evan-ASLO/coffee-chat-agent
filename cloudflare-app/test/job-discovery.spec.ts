@@ -278,12 +278,12 @@ describe("discovery query semantics", () => {
 		const query = buildProfessionalBioQuery(criteria);
 		expect(query).not.toContain("site:linkedin.com/in");
 		expect(query).not.toContain("site:");
-		expect(query).toContain('"investment" OR "portfolio" OR "wealth"');
+		expect(query).toContain('"Recruiter" OR "Hiring Manager" OR "investment" OR "portfolio"');
 		expect(query).toContain(
 			'("BMO" OR "BMO Financial Group" OR "Bank of Montreal")',
 		);
 		expect(query).toContain(
-			'("team" OR "bio" OR "profile" OR "leadership")',
+			'("analyst" OR "associate" OR "recruiter" OR "biography" OR "profile")',
 		);
 		expect(query.length).toBeLessThanOrEqual(1800);
 		expect(professionalBioDomains(criteria)).toEqual([
@@ -292,6 +292,41 @@ describe("discovery query semantics", () => {
 			"bmo.com",
 			"theorg.com",
 		]);
+	});
+
+	it("keeps a specific RBC investment-banking search person-focused on both Tavily passes", async () => {
+		const banking: DiscoveryCriteria = {
+			roles: ["Investment Banking"], companies: ["RBC"], industries: [], locations: ["Toronto"],
+			keywords: [], seniority: [], objective: "", count: 3,
+		};
+		const query = buildProfessionalBioQuery(banking);
+		expect(buildDiscoveryQuery(banking)).toContain('"Investment Banking"');
+		expect(query).toContain('"Investment Banking"');
+		expect(query).toContain('"RBC Capital Markets"');
+		expect(query).not.toContain('"leadership"');
+		expect(query).not.toContain('"team"');
+		expect(query).not.toContain('"wealth"');
+		const responses = [
+			{ results: [{ title: "RBC jobs", url: "https://www.linkedin.com/jobs/view/role",
+				content: "Investment Banking in Toronto" }] },
+			{ results: [
+				{ title: "Investment Banking Team", url: "https://www.rbc.com/team",
+					content: "Investment banking leadership at RBC." },
+				{ title: "Morgan Example | Investment Banking Analyst", url: "https://www.rbc.com/people/morgan-example",
+					content: "Morgan Example is an Investment Banking Analyst at RBC Capital Markets in Toronto." },
+			] },
+		];
+		const spy = vi.spyOn(globalThis, "fetch").mockImplementation(async () =>
+			Response.json(responses.shift()));
+		const found = await discoverWithTavily("fake", banking);
+		expect(spy).toHaveBeenCalledTimes(2);
+		expect(JSON.parse(String((spy.mock.calls[1]?.[1] as RequestInit)?.body)).query).toBe(query);
+		expect(found.people).toHaveLength(1);
+		expect(found.people[0]).toMatchObject({
+			fullName: "Morgan Example", matchQuality: "STRONG",
+			sourceUrl: "https://www.rbc.com/people/morgan-example",
+		});
+		expect(found.rejectionCounts?.unsafeOrNonProfile).toBe(2);
 	});
 
 	it("keeps VC/VC analyst intent in the second Tavily pass without targeting generic team directories", async () => {
