@@ -56,6 +56,9 @@ async function connect(value = owner, token = "fictional-owner-refresh") {
 	await saveCredential(bindings, { userId: value.id, provider: "GOOGLE", kind: "OAUTH_REFRESH_TOKEN", value: token });
 }
 async function call(path: string, value: Auth | null, body?: unknown, method = "POST", csrf = true) {
+	if (body && typeof body === "object" && "notifyEmail" in body && body.notifyEmail === true && !("expectedSenderId" in body)) {
+		body = { ...body, expectedSenderId: value?.id };
+	}
 	const ctx = createExecutionContext();
 	const response = await worker.fetch(new Request(`http://example.com${path}`, {
 		method, headers: { Origin: bindings.APP_ORIGIN, ...(body === undefined ? {} : { "Content-Type": "application/json" }),
@@ -245,5 +248,12 @@ describe("explicit future-only transactional acceptance notices", () => {
 		expect((await status(second.id)).status).toBe("FAILED");
 		expect(messages).toHaveLength(1);
 		expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM beta_access WHERE status='APPROVED'").first<{ n: number }>())?.n).toBe(2);
+	});
+	it("rejects stale approving-owner email consent before granting or sending from another account", async () => {
+		await connect();
+		expect((await call("/api/beta/admin/access/approve", owner,
+			{ email: "stale@example.test", notifyEmail: true, expectedSenderId: other.id })).status).toBe(409);
+		expect((await env.DB.prepare("SELECT COUNT(*) AS n FROM beta_access WHERE email='stale@example.test'").first<{ n: number }>())?.n).toBe(0);
+		expect(messages).toEqual([]);
 	});
 });

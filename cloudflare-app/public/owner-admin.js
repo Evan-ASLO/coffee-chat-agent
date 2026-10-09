@@ -512,7 +512,7 @@
 
 		async function openBulk() {
 			if (!syncSession() || state.bulk || state.mutating) return;
-			state.bulk = { status: "loading", review: null, error: "", notifyEmail: notifyByEmail() };
+			state.bulk = { status: "loading", review: null, error: "", notifyEmail: notifyByEmail(), expectedSenderId: options.getSession().user.id };
 			modal = doc.createElement("dialog");
 			modal.id = "owner-bulk-dialog";
 			modal.className = "owner-bulk-dialog";
@@ -593,7 +593,7 @@
 			try {
 				const result = await call("mutation", "/api/beta/admin/requests/approve-pending", {
 					method: "POST",
-					body: { snapshot: bulk.review.snapshot, requestIds: bulk.review.requests.map((entry) => entry.id), notifyEmail: bulk.notifyEmail },
+					body: { snapshot: bulk.review.snapshot, requestIds: bulk.review.requests.map((entry) => entry.id), notifyEmail: bulk.notifyEmail, expectedSenderId: bulk.expectedSenderId },
 				});
 				if (!result || state.bulk !== bulk) return;
 				const emails = new Map(bulk.review.requests.map((entry) => [entry.id, entry.email]));
@@ -694,10 +694,12 @@
 			on("beta-approve-all", "click", openBulk);
 			on("beta-approve-email-form", "submit", (event) => {
 				event.preventDefault();
+				if (!syncSession() || state.accessStatus !== "ready") return;
 				const email = doc.getElementById("beta-approve-email").value.trim();
 				const notifyEmail = notifyByEmail();
+				const expectedSenderId = options.getSession().user.id;
 				if (confirm(`Grant or restore private-beta access for ${email}? This overrides any earlier denial or revocation. ${notifyEmail ? "A new grant also queues the previewed acceptance email from your Gmail; already-approved entries are not emailed." : "No acceptance email will be sent."}`)) {
-					void mutate("/api/beta/admin/access/approve", { email, notifyEmail }, "Beta access approved. Check the separate acceptance email status below.");
+					void mutate("/api/beta/admin/access/approve", { email, notifyEmail, expectedSenderId }, "Beta access approved. Check the separate acceptance email status below.");
 				}
 			});
 			for (const [attribute, action] of [
@@ -705,9 +707,11 @@
 				["beta-approve-email", "approve"], ["beta-revoke-email", "revoke"],
 			]) {
 				doc?.querySelectorAll(`[data-${attribute}]`).forEach((button) => button.addEventListener("click", () => {
+					if (!syncSession() || state.accessStatus !== "ready") return;
 					const value = button.getAttribute(`data-${attribute}`);
 					const byEmail = attribute.endsWith("email");
 					const notifyEmail = action === "approve" && notifyByEmail();
+					const expectedSenderId = options.getSession().user.id;
 					{
 						const email = byEmail ? value : state.access?.requests.find((entry) => entry.id === value)?.email;
 						const message = action === "revoke"
@@ -717,7 +721,7 @@
 						if (!confirm(message)) return;
 					}
 					void mutate(byEmail ? `/api/beta/admin/access/${action}` : `/api/beta/admin/requests/${value}/${action}`,
-						byEmail ? { email: value, ...(action === "approve" ? { notifyEmail } : {}) } : action === "approve" ? { notifyEmail } : undefined, "Beta access decision saved. Email status is separate.");
+						byEmail ? { email: value, ...(action === "approve" ? { notifyEmail, expectedSenderId } : {}) } : action === "approve" ? { notifyEmail, expectedSenderId } : undefined, "Beta access decision saved. Email status is separate.");
 				}));
 			}
 		}

@@ -26,6 +26,7 @@ export const bulkBetaApprovalSchema = z.object({
 	requestIds: z.array(z.string().uuid()).max(BETA_APPROVAL_BATCH_LIMIT)
 		.refine((ids) => new Set(ids).size === ids.length, "Duplicate request IDs are not allowed."),
 	notifyEmail: z.boolean().default(false),
+	expectedSenderId: z.string().uuid().optional(),
 }).strict();
 
 export type BetaAccessMode = "OPEN" | "ALLOWLIST";

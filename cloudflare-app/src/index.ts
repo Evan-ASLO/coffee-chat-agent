@@ -86,7 +86,7 @@ import {
 } from "./lib/beta";
 import { getUserAnalytics } from "./lib/analytics";
 import { bugReportInput, bugReportQuery, bugReportStatusInput, submitBugReport, listBugReports, updateBugReportStatus } from "./lib/bug-reports";
-import { betaNotificationInput, acceptanceTemplate, dispatchAcceptanceNotifications, retryAcceptanceNotification } from "./lib/beta-notifications";
+import { betaNotificationInput, assertNotificationSender, acceptanceTemplate, dispatchAcceptanceNotifications, retryAcceptanceNotification } from "./lib/beta-notifications";
 import {
 	getOwnerActivity,
 	getOwnerAccessRoster,
@@ -299,6 +299,7 @@ app.post("/api/beta/admin/requests/approve-pending", requireUser, async (c) => {
 	const admin = c.get("user")!;
 	requireBetaAdmin(c.env, admin);
 	const input = bulkBetaApprovalSchema.parse(await readJson(c, 64 * 1024));
+	assertNotificationSender(input, admin.id);
 	const result = await approveBetaSnapshot(c.env, input, admin.id, c.get("requestId"));
 	if (input.notifyEmail) c.executionCtx.waitUntil(dispatchAcceptanceNotifications(c.env, admin.id));
 	return c.json(result);
@@ -313,6 +314,7 @@ app.post(
 		requireBetaAdmin(c.env, admin);
 		const requestId = uuid.parse(c.req.param("id"));
 		const input = betaNotificationInput.parse(c.req.raw.body ? await readJson(c, 8 * 1024) : {});
+		assertNotificationSender(input, admin.id);
 		await approveBetaRequest(c.env, requestId, admin.id, c.get("requestId"), input.notifyEmail);
 		if (input.notifyEmail) c.executionCtx.waitUntil(dispatchAcceptanceNotifications(c.env, admin.id));
 		return c.json({ ok: true });
@@ -344,7 +346,8 @@ app.post("/api/beta/admin/access/approve", requireUser, async (c) => {
 	await protectMutation(c);
 	const admin = c.get("user")!;
 	requireBetaAdmin(c.env, admin);
-	const input = betaEmailSchema.extend({ notifyEmail: z.boolean().default(false) }).parse(await readJson(c, 8 * 1024));
+	const input = betaEmailSchema.extend(betaNotificationInput.shape).parse(await readJson(c, 8 * 1024));
+	assertNotificationSender(input, admin.id);
 	const email = await approveBetaEmail(c.env, input.email, admin.id, input.notifyEmail);
 	if (input.notifyEmail) c.executionCtx.waitUntil(dispatchAcceptanceNotifications(c.env, admin.id));
 	await audit(c.env, {

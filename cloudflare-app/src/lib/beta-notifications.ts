@@ -6,7 +6,14 @@ import { ProviderHttpError, fetchJson } from "./fetch";
 import { googleAccessToken, encodeMimeMessage } from "./google";
 import { enforceRateLimit } from "./store";
 
-export const betaNotificationInput = z.object({ notifyEmail: z.boolean().default(false) }).strict();
+export const betaNotificationInput = z.object({
+	notifyEmail: z.boolean().default(false), expectedSenderId: z.string().uuid().optional(),
+}).strict();
+export function assertNotificationSender(input: z.infer<typeof betaNotificationInput>, senderId: string): void {
+	if (input.notifyEmail && input.expectedSenderId !== senderId) {
+		throw new ConflictError("This email consent belongs to a different owner. Refresh Owner tools and confirm again.");
+	}
+}
 export function acceptanceTemplate() {
 	return {
 		subject: "You're approved for Internship & Coffee Chat",
@@ -35,7 +42,7 @@ interface NotificationRow {
 	status: AcceptanceNotificationStatus;
 	sender_email: string;
 	sender_deleted: string | null;
-	current_grant: number;
+	current_grant: number | null;
 	gmail_ready: number;
 }
 const notificationSelection = `SELECT n.id,n.email,n.sender_user_id,n.status,u.email AS sender_email,u.deleted_at AS sender_deleted,

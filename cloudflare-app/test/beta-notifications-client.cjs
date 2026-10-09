@@ -62,6 +62,7 @@ test("approval confirmation explains queued email and cancel sends no request; o
 		await new Promise(setImmediate);
 		const approval = f.calls.find((call) => call.options.method === "POST");
 		assert.equal(approval.options.body.notifyEmail, false);
+		assert.equal(approval.options.body.expectedSenderId, f.session.user.id);
 		assert.match(message, /No acceptance email will be sent/);
 	} finally { globalThis.confirm = original; }
 });
@@ -85,4 +86,12 @@ test("bulk confirmation captures consent; retry is restricted to failed owner-bo
 	assert.match(source, /n\.status === "FAILED" && n\.senderIsYou/);
 	assert.match(source, /Retry the confirmed unsent acceptance email/);
 	assert.doesNotMatch(source, /sendGmail|\/api\/discovery|\/api\/prospects/);
+});
+test("a stale approval control cannot act or carry email consent into a different owner account", async () => {
+	const f = fixture();
+	await f.beta();
+	const stale = f.nodes.get("beta-approve-email-form").handlers.submit;
+	f.session = { authenticated: true, isBetaAdmin: true, user: { id: "owner-b", email: "owner-b@example.test" } };
+	stale({ preventDefault() {} });
+	assert.equal(f.calls.filter((call) => call.options.method === "POST").length, 0);
 });
