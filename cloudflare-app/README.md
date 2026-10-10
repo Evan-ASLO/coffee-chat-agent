@@ -32,6 +32,8 @@ Additive migration **0011_beta_acceptance_notifications.sql** adds the approval 
 
 ## Local development
 
+Find jobs uses independently scrollable desktop results and selected-role panes. Heights are measured against the actual header/workspace viewport and resize with controls; pagination and the page footer stay outside the panes. Opening another detail changes only the right pane's position and focuses its heading without a document jump. Query- and account-bound in-memory positions survive incidental rerenders and browser Back; they are bounded to ten browsing contexts and are never persisted. Phone layouts retain one-pane detail/Back navigation and restore the results' document position. New queries/pages use their own positions; normal navigation outside Jobs keeps existing scroll behavior.
+
 ```powershell
 Copy-Item .dev.vars.example .dev.vars
 npm install
