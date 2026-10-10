@@ -135,6 +135,12 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 .jobs-activity-rail { display: none; }
 .job-first-workspace { display: grid; grid-template-columns: minmax(290px, .85fr) minmax(0, 1.35fr); align-items: start; gap: 20px; }
 .job-first-workspace .job-cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
+@media (min-width: 761px) {
+	.job-first-workspace { align-items: stretch; }
+	.job-first-workspace > .job-cards, .job-first-workspace > .job-detail-card { height: var(--job-pane-height, 70dvh); overflow-y: auto; min-height: 0; scrollbar-gutter: stable; }
+	.job-first-workspace > .job-cards { align-content: start; padding: 2px 8px 2px 2px; }
+}
+.job-first-workspace > [tabindex="0"]:focus-visible { outline: 2px solid var(--cp-clay-strong); outline-offset: 2px; }
 .job-card { padding: 20px; background: var(--cp-surface); border: 1px solid var(--cp-border); border-radius: 14px; box-shadow: none; }
 .job-card.selected { border-color: var(--cp-clay-strong); box-shadow: inset 3px 0 var(--cp-clay-strong); }
 .job-card h3 { font-size: 17px; }

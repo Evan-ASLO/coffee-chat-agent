@@ -105,6 +105,7 @@ const ownerAdmin = window.OwnerAdmin.create({
 	repaint: render,
 });
 const bugReports = window.BugReports.create({ getSession: () => state.session, getView: () => state.tab, api, notify: showToast });
+const jobBrowsing = window.JobBrowsing.create({ getOwner: () => state.session?.user?.id });
 const onboarding = window.WorkspaceOnboarding?.create({
 	getSession: () => state.session,
 	getView: () => state.tab,
@@ -163,6 +164,7 @@ async function load() {
 }
 
 function render() {
+	jobBrowsing.beforeRender();
 	window.JobFirstUI.beforeRender?.();
 	captureJobEdits();
 	ownerAdmin.syncSession();
@@ -175,6 +177,7 @@ function render() {
 	if (betaLandingRequired() || (!authenticated && state.tab === "home")) {
 		renderBetaLanding();
 		onboarding?.sync();
+		jobBrowsing.mount();
 		return;
 	}
 	const user = state.session?.user;
@@ -248,6 +251,7 @@ function render() {
 	window.JobFirstUI.wire({ navigate, session: state.session });
 	bugReports.wire();
 	onboarding?.sync();
+	jobBrowsing.mount();
 }
 
 function updateAccountMenuBounds() {
@@ -604,7 +608,7 @@ function renderJobs() {
 						<button data-job-layout="list" class="${state.jobLayout === "list" ? "active" : ""}" aria-label="List view">${icon("list")}<span>List</span></button>
 					</div>
 				</div>
-				${jobs.length ? `<div class="job-first-workspace ${state.selectedJob ? "detail-open" : ""}"><div class="job-cards ${state.jobLayout === "list" ? "list-view" : "grid-view"}">${jobs.map(jobCard).join("")}</div>${renderJobDetail(state.selectedJob || jobs[0])}</div>` : empty(state.jobMode === "saved" ? "Save a role from the live catalog to build your shortlist." : "No active jobs match these filters.")}
+				${jobs.length ? `<div class="job-first-workspace ${state.selectedJob ? "detail-open" : ""}" data-browse-owner="${escapeAttr(state.session?.user?.id || "")}" data-browse-query="${escapeAttr(JSON.stringify([state.jobMode, state.jobQuery]))}"><div class="job-cards ${state.jobLayout === "list" ? "list-view" : "grid-view"}" role="region" aria-label="Job results" tabindex="0">${jobs.map(jobCard).join("")}</div>${renderJobDetail(state.selectedJob || jobs[0])}</div>` : empty(state.jobMode === "saved" ? "Save a role from the live catalog to build your shortlist." : "No active jobs match these filters.")}
 				${state.jobMode === "all" ? renderPagination(pagination) : ""}
 			</section>
 			<aside class="jobs-activity-rail" aria-label="Your job activity">
@@ -2737,6 +2741,7 @@ async function initWorkspace() {
 async function logout() {
 	onboarding?.dispose();
 	ownerAdmin.clear();
+	jobBrowsing.clear();
 	clearNetworkingContext();
 	clearPrivateDialogs();
 	await run("Signing out…", async () => {
@@ -2971,7 +2976,7 @@ function navigate(view, options = {}) {
 	requestAnimationFrame(() => {
 		if (options.tutorial) return;
 		document.getElementById("main-content")?.focus({ preventScroll: true });
-		window.scrollTo({ top: 0, behavior: "auto" });
+		if (allowed !== "jobs") window.scrollTo({ top: 0, behavior: "auto" });
 	});
 }
 
@@ -3042,12 +3047,13 @@ async function openJobDetail(id) {
 	await run("Opening job details…", async () => {
 		const job = findJob(id) || (await api(`/api/jobs/${id}`)).job;
 		if (state.session?.user?.id !== identity || state.tab !== "jobs") return;
+		jobBrowsing.capture();
 		state.selectedJob = job;
 		state.jobDetailTab = "role";
 		syncViewToUrl(true);
 		render();
 		window.JobFirstUI.feedback?.(document.getElementById("job-detail-title"), "detail");
-		document.getElementById("job-detail-title")?.focus({ preventScroll: false });
+		document.getElementById("job-detail-title")?.focus({ preventScroll: true });
 	});
 }
 
@@ -3056,7 +3062,7 @@ function renderJobDetail(job) {
 	const status = job.userState?.status;
 	const notes = state.jobNoteDrafts[job.id] ?? job.userState?.notes ?? "";
 	const linked = (state.session?.prospects || []).filter((person) => person.linkedJobs?.some((entry) => entry.id === job.id));
-	return `<article class="job-detail-card" aria-labelledby="job-detail-title">
+	return `<article class="job-detail-card" data-job-id="${escapeAttr(job.id)}" aria-labelledby="job-detail-title" tabindex="0">
 		<button id="back-to-job-results" class="secondary mobile-detail-back">← Back to results</button>
 		<p class="job-detail-company">${escapeHtml(job.company)} · ${escapeHtml(job.location || job.region || "Location not listed")}</p>
 		<h2 id="job-detail-title" tabindex="-1">${escapeHtml(job.title)}</h2>
