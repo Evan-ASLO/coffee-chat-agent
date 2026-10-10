@@ -2360,20 +2360,17 @@ button:disabled {
 	margin: 0;
 }
 
-.compact-definition-grid div,
-.appearance-summary div {
+.compact-definition-grid div {
 	display: grid;
 	gap: 4px;
 }
 
-.compact-definition-grid dt,
-.appearance-summary dt {
+.compact-definition-grid dt {
 	color: var(--muted);
 	font-size: 0.62rem;
 }
 
-.compact-definition-grid dd,
-.appearance-summary dd {
+.compact-definition-grid dd {
 	min-height: 36px;
 	padding: 8px 9px;
 	margin: 0;
@@ -2540,48 +2537,6 @@ button:disabled {
 
 .secret-row .actions {
 	margin-top: 0;
-}
-
-.appearance-summary {
-	display: grid;
-	gap: 5px;
-	margin: 0;
-}
-
-.appearance-summary dd {
-	min-height: 30px;
-	padding: 6px 8px;
-}
-
-.appearance-swatches {
-	display: flex;
-	gap: 10px;
-	margin-top: 10px;
-}
-
-.appearance-swatches span {
-	width: 22px;
-	height: 22px;
-	background: var(--forest-700);
-	border: 2px solid white;
-	border-radius: 50%;
-	box-shadow: 0 0 0 1px var(--line-strong);
-}
-
-.appearance-swatches span:nth-child(2) {
-	background: var(--orange-500);
-}
-
-.appearance-swatches span:nth-child(3) {
-	background: var(--cream-300);
-}
-
-.appearance-swatches span:nth-child(4) {
-	background: var(--sage-400);
-}
-
-.appearance-swatches span:nth-child(5) {
-	background: #8092aa;
 }
 
 .about-product {

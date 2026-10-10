@@ -120,6 +120,7 @@ document.addEventListener("DOMContentLoaded", load);
 window.addEventListener("popstate", restoreNavigation);
 window.addEventListener("hashchange", restoreNavigation);
 document.addEventListener("keydown", handleNavigationKeydown);
+window.addEventListener("resize", updateAccountMenuBounds);
 compactNavigation.addEventListener("change", () => {
 	if (!compactNavigation.matches && state.mobileNavOpen) {
 		setMobileNavOpen(false);
@@ -216,6 +217,16 @@ function render() {
 			${legalLinks()}
 		</div>`;
 	document.getElementById("logout")?.addEventListener("click", logout);
+	const accountMenu = app.querySelector(".account-menu");
+	accountMenu?.addEventListener("toggle", updateAccountMenuBounds);
+	accountMenu?.addEventListener("keydown", (event) => {
+		if (event.key === "Escape" && accountMenu.open) {
+			event.preventDefault();
+			accountMenu.open = false;
+			accountMenu.querySelector("summary")?.focus({ preventScroll: true });
+		}
+	});
+	accountMenu?.querySelector("[data-open-guide]")?.addEventListener("click", () => { accountMenu.open = false; });
 	document.querySelectorAll("[data-nav]").forEach((button) =>
 		button.addEventListener("click", (event) => {
 			event.preventDefault();
@@ -235,6 +246,13 @@ function render() {
 	window.JobFirstUI.wire({ navigate, session: state.session });
 	bugReports.wire();
 	onboarding?.sync();
+}
+
+function updateAccountMenuBounds() {
+	const menu = app.querySelector(".account-menu[open]");
+	const summary = menu?.querySelector("summary");
+	const panel = menu?.querySelector(".account-menu-panel");
+	if (summary && panel) panel.style.setProperty("--account-menu-top", `${Math.max(0, summary.getBoundingClientRect().bottom + 8)}px`);
 }
 
 function setMobileNavOpen(open, restoreFocus = true) {
@@ -1239,10 +1257,8 @@ function renderSettings() {
 				</details>
 			</section>
 			<section class="settings-reference-card appearance-card">
-				<div class="settings-card-heading"><span>${icon("palette")}</span><div><h2>Appearance</h2><p>The warm job-first workspace follows your device's light or dark preference.</p></div></div>
-				<dl class="appearance-summary"><div><dt>Theme</dt><dd>Warm job-first · ${document.documentElement.dataset.theme === "dark" ? "Dark" : "Light"}</dd></div><div><dt>Motion</dt><dd>Follows your system reduced-motion preference</dd></div></dl>
-				${themeChoices()}<p>Light is the default. Your explicit choice stays in this browser, including on Privacy and Terms; no profile or provider data is stored with it.</p>
-				<div class="appearance-swatches" role="img" aria-label="Warm workspace theme palette"><span></span><span></span><span></span><span></span><span></span></div>
+				<h2>Appearance</h2>
+				${themeChoices()}
 			</section>
 			<section class="settings-reference-card about-card">
 				<div class="settings-card-heading"><span>${icon("info")}</span><div><h2>About</h2><p>Version and support information.</p></div></div>
