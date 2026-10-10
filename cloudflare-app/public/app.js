@@ -102,6 +102,7 @@ const ownerAdmin = window.OwnerAdmin.create({
 	formatDate,
 	icon,
 	notify: showToast,
+	repaint: render,
 });
 const bugReports = window.BugReports.create({ getSession: () => state.session, getView: () => state.tab, api, notify: showToast });
 const onboarding = window.WorkspaceOnboarding?.create({
@@ -162,6 +163,7 @@ async function load() {
 }
 
 function render() {
+	window.JobFirstUI.beforeRender?.();
 	captureJobEdits();
 	ownerAdmin.syncSession();
 	bugReports.syncSession();
@@ -553,7 +555,7 @@ function renderJobs() {
 				<p>A thoughtful shortlist starts here. Find a role, save it, then explore the people behind it.${linkingEnabled ? " Job-linked networking is available." : ""}</p>
 				${state.session?.authenticated ? "" : '<a class="button primary" href="/auth/google/login">Sign in to track progress</a>'}
 			</div>
-			${window.JobFirstUI.scene()}
+			${window.JobFirstUI.scene("jobs")}
 		</section>
 		${renderCatalogWarning()}
 		<div class="jobs-reference-layout ${state.jobMode === "saved" ? "saved-mode" : ""}">
@@ -568,12 +570,14 @@ function renderJobs() {
 					state.jobMode === "all"
 						? `<details id="more-job-filters" class="filter-disclosure" ${state.jobFiltersOpen ? "open" : ""}><summary>More filters <span>${["company", "region", "category", "industry", "length", "term", "posted"].filter((key) => state.jobQuery[key]).length} active</span></summary><div class="filter-panel" aria-label="Job filters">
 								<label>Industry<select id="job-industry">${facetOptions(state.jobs.facets?.industries, state.jobQuery.industry, "All industries")}</select></label>
-								<label>Career track<input id="job-category" value="${escapeAttr(state.jobQuery.category)}" placeholder="Any role" /></label>
+								<label>Career track<input id="job-category" list="job-career-tracks" value="${escapeAttr(state.jobQuery.category)}" placeholder="Any role" /></label>
+								<datalist id="job-career-tracks"><option value="Software Engineering"></option></datalist>
 								<label>Term<select id="job-term">${facetOptions(state.jobs.facets?.terms, state.jobQuery.term, "Any term")}</select></label>
 								<label>Company<input id="job-company" value="${escapeAttr(state.jobQuery.company)}" placeholder="Search companies…" /></label>
 								<label>Region<input id="job-region" value="${escapeAttr(state.jobQuery.region)}" placeholder="Canada, Ontario…" /></label>
 								<label>Length<select id="job-length">${facetOptions(state.jobs.facets?.lengths, state.jobQuery.length, "Any length")}</select></label>
-								<label><span id="job-posted-label">Date posted</span><select id="job-posted" aria-labelledby="job-posted-label" aria-describedby="job-posted-help">${[["", "Any time"], ["24h", "Past 24 hours"], ["7d", "Past 7 days"], ["30d", "Past 30 days"], ["UNAVAILABLE", "Date unavailable"]].map(([entry, label]) => `<option value="${entry}" ${state.jobQuery.posted === entry ? "selected" : ""}>${label}</option>`).join("")}</select><small id="job-posted-help">Source posting dates only. Missing or unreliable dates are unavailable.</small></label>
+								<label><span id="job-posted-label">Date posted</span><select id="job-posted" aria-labelledby="job-posted-label" aria-describedby="job-posted-help">${[["", "Any time"], ["24h", "Past 24 hours"], ["7d", "Past 7 days"], ["30d", "Past 30 days"], ["UNAVAILABLE", "Date unavailable"]].map(([entry, label]) => `<option value="${entry}" ${state.jobQuery.posted === entry ? "selected" : ""}>${label}</option>`).join("")}</select></label>
+								<p id="job-posted-help" class="job-filter-help">Source posting dates only. Missing or unreliable dates are unavailable.</p>
 								${jobQuickFilters("Location", "location", locationOptions.map((value) => ({ value, label: value })), state.jobQuery.location)}
 								${jobQuickFilters("Industry", "industry", state.jobs.facets?.industries || [], state.jobQuery.industry, 3)}
 								${jobQuickFilters("Term", "term", state.jobs.facets?.terms || [], state.jobQuery.term, 2)}
@@ -581,7 +585,7 @@ function renderJobs() {
 									<span>${state.jobs.facets?.industries?.length || 0} industries</span>
 									<span>${state.jobs.facets?.terms?.length || 0} terms</span>
 								</div>
-								<button class="secondary full-width">Apply filters</button>
+								<div class="job-filter-actions"><button class="secondary">Apply filters</button></div>
 							</div></details>`
 						: `<aside class="filter-panel saved-filter" aria-label="Saved jobs"><strong>Your shortlist</strong><p>Saved roles stay private to your account.</p></aside>`
 				}
@@ -1674,7 +1678,9 @@ async function loadFilteredJobs(message, scroll = false) {
 		if (request !== jobResultsRequest || identity !== state.session?.user?.id ||
 			query !== JSON.stringify(state.jobQuery) || navigation !== navigationRestore) return;
 		state.jobs = result;
+		applyJobQueryNormalization(result);
 		render();
+		window.JobFirstUI.feedback?.(app.querySelector(".jobs-results-panel"), "filter");
 		if (focusId) document.getElementById(focusId)?.focus({ preventScroll: true });
 		if (scroll) window.scrollTo({ top: 0, behavior: preferredScrollBehavior() });
 	});
@@ -1701,6 +1707,7 @@ async function updateJobStatusFromSelect(id, status) {
 }
 
 async function setJobStatus(id, status) {
+	const identity = state.session?.user?.id;
 	await run(`Saving ${formatStatus(status).toLowerCase()} status…`, async () => {
 		await api(`/api/jobs/${id}/state`, {
 			method: "PUT",
@@ -1708,6 +1715,9 @@ async function setJobStatus(id, status) {
 		});
 		await Promise.all([loadJobData(), loadAnalyticsData()]);
 		render();
+		if (status === "SAVED" && state.tab === "jobs" && state.session?.user?.id === identity) {
+			window.JobFirstUI.feedback?.(app.querySelector(`[data-job-save="${id}"]`), "save");
+		}
 	}, status === "SAVED" ? "Role saved to My jobs. Add a private next step when you're ready." : undefined);
 }
 
@@ -2795,10 +2805,14 @@ async function refresh(tab = state.tab) {
 }
 
 async function loadJobData() {
+	const identity = state.session?.user?.id;
+	const query = JSON.stringify(state.jobQuery);
 	const requests = [fetchJobs()];
 	if (state.session?.authenticated) requests.push(fetchTrackedJobs());
 	const [jobs, trackedJobs] = await Promise.all(requests);
+	if (identity !== state.session?.user?.id || query !== JSON.stringify(state.jobQuery)) return;
 	state.jobs = jobs;
+	applyJobQueryNormalization(jobs);
 	state.trackedJobs = trackedJobs || {
 		jobs: [],
 		pagination: { page: 1, pageSize: 100, total: 0, totalPages: 0 },
@@ -2822,6 +2836,13 @@ async function fetchJobs() {
 		if (entry !== "") query.set(key, String(entry));
 	}
 	return api(`/api/jobs?${query}`);
+}
+
+function applyJobQueryNormalization(result) {
+	if (typeof result.filters?.category === "string" && result.filters.category !== state.jobQuery.category) {
+		state.jobQuery.category = result.filters.category;
+		syncJobQueryToUrl();
+	}
 }
 
 async function fetchTrackedJobs() {
@@ -2981,6 +3002,7 @@ async function restoreNavigation() {
 			const result = await fetchJobs();
 			if (request !== navigationRestore || state.session.user?.id !== identity) return;
 			state.jobs = result;
+			applyJobQueryNormalization(result);
 		}
 		if (window.JobFirstUI.isJobId(selectedId)) {
 			const job = findJob(selectedId) || (await api(`/api/jobs/${encodeURIComponent(selectedId)}`)).job;
@@ -3024,6 +3046,7 @@ async function openJobDetail(id) {
 		state.jobDetailTab = "role";
 		syncViewToUrl(true);
 		render();
+		window.JobFirstUI.feedback?.(document.getElementById("job-detail-title"), "detail");
 		document.getElementById("job-detail-title")?.focus({ preventScroll: false });
 	});
 }

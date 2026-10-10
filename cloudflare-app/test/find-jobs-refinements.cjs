@@ -1,0 +1,48 @@
+const test = require("node:test"), assert = require("node:assert/strict"), fs = require("node:fs"), path = require("node:path"), vm = require("node:vm");
+const root = path.join(__dirname, "..", "public");
+const source = fs.readFileSync(path.join(root, "app.js"), "utf8"), helper = fs.readFileSync(path.join(root, "job-first.js"), "utf8"), css = fs.readFileSync(path.join(root, "job-first.css"), "utf8");
+test("seven filters use responsive aligned grid, stable help row and compact desktop action; category stays a career track", () => {
+	for (const id of ["industry", "category", "term", "company", "region", "length", "posted"]) assert.ok(source.includes(`id="job-${id}"`));
+	assert.match(css, /\.jobs-filter-form \.filter-disclosure \.filter-panel \{ display: grid/);
+	assert.match(css, /minmax\(min\(100%, 200px\), 1fr\)/);
+	assert.match(source, /<\/select><\/label>\s*<p id="job-posted-help"/);
+	assert.match(source, /class="job-filter-actions"><button class="secondary">Apply filters/);
+	assert.match(source, /option value="Software Engineering"/);
+	assert.match(source, /applyJobQueryNormalization\(result\)/);
+});
+test("Find jobs has one explicitly fictional save-to-shortlist sequence; Home retains its incumbent flow", () => {
+	assert.match(source, /JobFirstUI\.scene\("jobs"\)/);
+	assert.match(helper, /Fictional example: save a role to your shortlist/);
+	assert.match(helper, /Fictional illustration\. No job is being saved/);
+	assert.match(css, /@keyframes job-to-shortlist/);
+	assert.match(helper, /IntersectionObserver\(syncScene\)/);
+	assert.match(helper, /visibilitychange/);
+	assert.match(helper, /querySelector\("dialog\[open\]"\)/);
+	assert.match(helper, /observer\?\.disconnect\(\)/);
+	assert.match(helper, /style\.setProperty\("--scene-elapsed"/);
+	assert.ok(!helper.includes("getAnimations"));
+	assert.match(helper, /prefers-reduced-motion: reduce/);
+	assert.match(source, /JobFirstUI\.beforeRender\?\.\(\)/);
+});
+test("owner code loads only on owner disclosure, and loader failure/reset/account change stay explicit", async () => {
+	let session = { authenticated: true, isBetaAdmin: true, user: { id: "a", email: "a@example.test" } };
+	const handlers = {}, scripts = [], paints = [];
+	const disclosure = { open: true, addEventListener: (name, fn) => { handlers[name] = fn; } };
+	const c = { window: null, setTimeout: () => 1, clearTimeout() {}, document: { createElement: () => ({ remove() {} }), head: { append: (s) => scripts.push(s) }, getElementById: () => disclosure } };
+	c.window = c; vm.createContext(c); vm.runInContext(fs.readFileSync(path.join(root, "owner-loader.js"), "utf8"), c);
+	const facade = c.OwnerAdmin.create({ getSession: () => session, icon: () => "", escapeHtml: String, repaint: () => paints.push(1) });
+	facade.render(); facade.wire();
+	assert.equal(scripts.length, 0);
+	handlers.toggle({ currentTarget: disclosure });
+	assert.equal(scripts.length, 1);
+	scripts[0].onerror(); await new Promise(setImmediate);
+	assert.match(facade.render(), /Retry Owner tools/);
+	facade.wire(); handlers.click(); assert.equal(scripts.length, 2);
+	session = { authenticated: false }; facade.syncSession();
+	c.OwnerAdmin = { create: () => assert.fail("Stale owner load must not initialize private controller") };
+	scripts[1].onload(); await new Promise(setImmediate);
+	assert.equal(facade.render(), "");
+	const index = fs.readFileSync(path.join(root, "index.html"), "utf8");
+	assert.ok(index.includes('src="/owner-loader.js'));
+	assert.ok(!index.includes('src="/owner-admin.js'));
+});

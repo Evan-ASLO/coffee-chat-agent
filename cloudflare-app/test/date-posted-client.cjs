@@ -29,7 +29,7 @@ function client(search = "?posted=7d&company=Example&page=3#find-jobs") {
 	Object.defineProperty(c, "location", { get: () => ({ href: url.href, search: url.search, hash: url.hash }) });
 	c.window = c;
 	vm.createContext(c);
-	vm.runInContext(["fetchJobs", "loadJobQueryFromUrl", "syncJobQueryToUrl", "filterJobs", "clearJobFilters", "loadFilteredJobs", "syncViewToUrl", "initialView"].map(definition).join("\n"), c);
+	vm.runInContext(["fetchJobs", "applyJobQueryNormalization", "loadJobQueryFromUrl", "syncJobQueryToUrl", "filterJobs", "clearJobFilters", "loadFilteredJobs", "syncViewToUrl", "initialView"].map(definition).join("\n"), c);
 	return c;
 }
 test("a persistent labelled native select exposes all five choices and applies on keyboard/touch change", () => {

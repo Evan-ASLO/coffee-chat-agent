@@ -225,7 +225,8 @@ test("app wires owner cleanup on session refresh, logout, 401 and 403 without tr
 	assert.match(source, /async function refresh\([\s\S]*?ownerAdmin\.syncSession\(\)/);
 	assert.match(source, /response\.status === 401[\s\S]*?ownerAdmin\.clear\(\)/);
 	assert.match(source, /response\.status === 403 && path\.startsWith\("\/api\/beta\/admin\/"\)[\s\S]*?ownerAdmin\.clear\(\)/);
-	assert.ok(index.indexOf('src="/owner-admin.js') < index.indexOf('src="/app.js'));
+	assert.ok(index.indexOf('src="/owner-loader.js') >= 0 && index.indexOf('src="/owner-loader.js') < index.indexOf('src="/app.js'));
+	assert.ok(!index.includes('src="/owner-admin.js'));
 	assert.doesNotMatch(ui, /localStorage|sessionStorage|setInterval|metadata_json|sendBeacon/);
 	assert.match(ui, /snapshot: bulk\.review\.snapshot, requestIds: bulk\.review\.requests/);
 	assert.match(ui, /Review pending batch/);

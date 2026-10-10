@@ -141,7 +141,7 @@ export const jobListQuerySchema = z
 		company: z.string().trim().max(200).default(""),
 		location: z.string().trim().max(240).default(""),
 		region: z.string().trim().max(120).default(""),
-		category: z.string().trim().max(80).default(""),
+		category: z.string().trim().max(80).transform(canonicalCareerTrack).default(""),
 		industry: z.union([z.literal(""), z.enum(JOB_INDUSTRIES)]).default(""),
 		length: z
 			.union([
@@ -695,6 +695,7 @@ export async function listJobs(
 	pagination: { page: number; pageSize: number; total: number; totalPages: number };
 	catalog: JobCatalogFreshness;
 	facets: JobFacets;
+	filters: { category: string };
 }> {
 	const now = Date.now();
 	const filter = buildJobFilter(query, now);
@@ -733,6 +734,7 @@ export async function listJobs(
 		},
 		catalog,
 		facets,
+		filters: { category: query.category },
 	};
 }
 
@@ -1688,24 +1690,23 @@ function buildJobFilter(
 	const where = ["j.is_active = 1"];
 	const bindings: unknown[] = [];
 	if (query.q) {
-		const value = containsPattern(query.q);
+		const terms = /^(swe|sde)$/i.test(query.q) ? [query.q, "software engineer", "software developer"] : [query.q];
+		const comparisons = terms.map(() => `(
+			j.title LIKE ? ESCAPE '\\' COLLATE NOCASE OR j.company LIKE ? ESCAPE '\\' COLLATE NOCASE OR
+			j.location LIKE ? ESCAPE '\\' COLLATE NOCASE OR j.region LIKE ? ESCAPE '\\' COLLATE NOCASE OR
+			COALESCE(j.description, '') LIKE ? ESCAPE '\\' COLLATE NOCASE
+		)`);
 		where.push(
-			`(
-			  j.title LIKE ? ESCAPE '\\' COLLATE NOCASE OR
-			  j.company LIKE ? ESCAPE '\\' COLLATE NOCASE OR
-			  j.location LIKE ? ESCAPE '\\' COLLATE NOCASE OR
-			  j.region LIKE ? ESCAPE '\\' COLLATE NOCASE OR
-			  COALESCE(j.description, '') LIKE ? ESCAPE '\\' COLLATE NOCASE
-			)`,
+			`(${comparisons.join(" OR ")})`,
 		);
-		bindings.push(value, value, value, value, value);
+		for (const term of terms) { const value = containsPattern(term); bindings.push(value, value, value, value, value); }
 	}
 	addExactFilter(where, bindings, "j.company", query.company);
 	addExactFilter(where, bindings, "j.location", query.location);
 	addExactFilter(where, bindings, "j.region", query.region);
 	if (query.category) {
 		where.push("j.categories_json LIKE ? ESCAPE '\\' COLLATE NOCASE");
-		bindings.push(`%\"${escapeLike(query.category)}\"%`);
+		bindings.push(`%\"${escapeLike(canonicalCareerTrack(query.category))}\"%`);
 	}
 	if (omit !== "industry" && query.industry) {
 		where.push("j.industry = ?");
@@ -1757,6 +1758,15 @@ function buildJobFilter(
 		}
 	}
 	return { clause: where.join(" AND "), bindings };
+}
+
+export function canonicalCareerTrack(value: string): string {
+	const key = value.trim().toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
+	const software = new Set(["software engineering", "software engineer", "software developer", "software development", "developer", "swe", "sde",
+		"backend", "back-end", "frontend", "front-end", "full stack", "full-stack", "fullstack", "mobile", "ios", "android", "web developer",
+		"application developer", "embedded developer", "systems development engineer", "developpeur logiciel", "developpeur logiciels",
+		"developpeuse logiciel", "developpeuse logiciels", "developpement de logiciels"]);
+	return software.has(key) ? "Software Engineering" : value;
 }
 
 function addExactFilter(
