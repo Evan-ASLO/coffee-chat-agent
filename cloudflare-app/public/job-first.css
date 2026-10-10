@@ -108,7 +108,7 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 .account-menu > summary { list-style: none; display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 12px; border: 1px solid var(--cp-border); border-radius: 10px; cursor: pointer; font-size: 13px; }
 .account-menu > summary::-webkit-details-marker { display: none; }
 .account-menu-panel { position: absolute; z-index: 35; top: calc(100% + 8px); right: 0; width: min(280px, calc(100vw - 32px)); max-height: max(44px, calc(100dvh - var(--account-menu-top, 100px) - 16px)); overflow-y: auto; overscroll-behavior: contain; padding: 8px; border: 1px solid var(--cp-border); background: var(--cp-surface); border-radius: 12px; box-shadow: var(--cp-shadow); font-family: "Segoe UI", sans-serif; }
-.account-menu-panel p { margin: 0 0 4px; padding: 8px 12px 12px; border-bottom: 1px solid var(--cp-border); font-size: 14px; font-weight: 600; line-height: 1.5; overflow-wrap: anywhere; }
+.account-menu-panel p { margin: 0 0 4px; padding: 8px 12px 12px; border-bottom: 1px solid var(--cp-border); font-size: 14px; font-weight: 600; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; }
 .account-menu-panel small { display: block; color: var(--cp-text-soft); font-size: 13px; font-weight: 400; }
 .account-menu-panel button { display: flex; align-items: center; justify-content: flex-start; gap: 8px; min-height: 44px; width: 100%; text-align: left; border: 0; padding: 8px 12px; background: var(--cp-surface); font-family: inherit; font-size: 14px; font-weight: 400; }
 .account-menu-panel button:hover { background: var(--cp-bg-elevated); }
@@ -274,7 +274,9 @@ dialog::backdrop { background: var(--cp-overlay); }
 }
 .theme-choices { display: flex; gap: 8px; align-items: center; }
 .theme-choices button { min-height: 44px; justify-content: center; font-family: "Segoe UI", sans-serif; font-weight: 600; }
+.theme-choices button:hover, .theme-choices button:focus-visible { color: var(--cp-text); background: var(--cp-bg-elevated); border-color: var(--cp-border-strong); }
 .theme-choices [aria-pressed="true"] { color: var(--cp-clay-strong); border-color: var(--cp-clay-strong); background: var(--cp-clay-soft); }
+.theme-choices [aria-pressed="true"]:hover, .theme-choices [aria-pressed="true"]:focus-visible { color: var(--cp-clay-strong); background: var(--cp-clay-soft); border-color: var(--cp-clay-strong); }
 .account-menu .account-initials { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--cp-clay-soft); color: var(--cp-clay-strong); font-size: 13px; flex-shrink: 0; }
 .account-menu-panel .theme-choices { border-block: 1px solid var(--cp-border); margin-top: 4px; padding-block: 8px; }
 .account-menu-panel .theme-choices button { flex: 1; width: auto; justify-content: center; border: 1px solid var(--cp-border); font-weight: 600; }
