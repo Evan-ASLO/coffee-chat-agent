@@ -338,6 +338,7 @@ function renderBetaLanding() {
 						${state.session?.betaAccessMode === "ALLOWLIST" ? '<a class="button secondary" href="/auth/google/request">Request access</a>' : '<a class="button secondary" href="#find-jobs" data-nav="jobs">Find jobs</a>'}
 					</div>
 					<p class="beta-privacy">Request access verifies your Google email and records only the minimum information needed to review the request. It does not create a normal app account or session unless approved.</p>
+					<p class="beta-privacy">Configured owners can view limited account-linked activity to understand feature use and administer the beta. <a href="/privacy#usage-analytics">Usage analytics and privacy</a>.</p>
 				</div>
 				<div class="beta-landing-scene">${window.JobFirstUI.scene()}</div>
 			</div>
