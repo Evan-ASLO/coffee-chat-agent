@@ -3881,17 +3881,21 @@ function preferredScrollBehavior() {
 		: "smooth";
 }
 
+const dateFormatters = { dateTime: null, dateOnly: null };
+
 function formatDate(entry) {
-	return new Intl.DateTimeFormat(undefined, {
+	dateFormatters.dateTime ||= new Intl.DateTimeFormat(undefined, {
 		dateStyle: "medium",
 		timeStyle: "short",
-	}).format(new Date(entry));
+	});
+	return dateFormatters.dateTime.format(new Date(entry));
 }
 
 function formatDateOnly(entry) {
-	return new Intl.DateTimeFormat(undefined, {
+	dateFormatters.dateOnly ||= new Intl.DateTimeFormat(undefined, {
 		dateStyle: "medium",
-	}).format(new Date(entry));
+	});
+	return dateFormatters.dateOnly.format(new Date(entry));
 }
 
 function formatFileSize(entry) {
