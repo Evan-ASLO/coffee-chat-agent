@@ -27,8 +27,8 @@ const tracks: TechnicalTrack[] = [
 		pattern: /\b(?:mining|geological|minerals?|geoscience|mine engineer(?:ing)?)\b/i, role: "Mining Engineer", keyword: "mining engineering" },
 	{ label: "Civil & Structural Engineering", aliases: ["civil", "structural", "construction engineering", "transportation", "tunnelling", "municipal", "rail", "geotechnical"],
 		pattern: /\b(?:civil|structural|construction engineer(?:ing)?|transportation|tunnell?ing|municipal|rail|geotechnical)\b/i, role: "Civil Engineer", keyword: "civil engineering" },
-	{ label: "Environmental Engineering", aliases: ["environmental engineering", "environmental compliance", "environmental support", "environmental reporting", "sustainability engineering", "forestry operations", "waste management"],
-		pattern: /\b(?:environmental (?:engineer(?:ing)?|compliance|support|reporting)|sustainability engineer(?:ing)?|forestry operations|waste management)\b/i, role: "Environmental Engineer", keyword: "environmental engineering" },
+	{ label: "Environmental Engineering", aliases: ["environmental engineering", "environmental compliance", "environmental support", "environmental reporting", "sustainability engineering", "forestry operations", "waste management", "environment, health & safety", "ehs"],
+		pattern: /\b(?:environmental (?:engineer(?:ing)?|compliance|support|reporting)|sustainability engineer(?:ing)?|forestry operations|waste management|ehs)\b|\benvironment\s*,?\s*health\s*(?:&|and)\s*safety\b/i, role: "Environmental Engineer", keyword: "environmental engineering" },
 	{ label: "Chemical, Process & Materials Engineering", aliases: ["chemical engineering", "chemical", "process engineering", "process engineer", "chemistry", "materials science", "materials innovation", "metallurgy", "battery", "polymer"],
 		pattern: /\b(?:chemical|process engineer(?:ing)?|chemistry|materials (?:science|innovation|engineer(?:ing)?)|metallurgy|battery|polymer)\b/i, role: "Process Engineer", keyword: "process engineering" },
 	{ label: "Industrial & Manufacturing Engineering", aliases: ["industrial", "industrial engineering", "manufacturing", "production engineering", "factory automation", "continuous improvement", "operations engineering"],
@@ -37,8 +37,8 @@ const tracks: TechnicalTrack[] = [
 		pattern: /\b(?:mechanical|mechatronic(?:s)?|robotic(?:s)?|electromechanical|thermal|fluids|hvac)\b/i, role: "Mechanical Engineer", keyword: "mechanical engineering" },
 	{ label: "Electrical & Electronics Engineering", aliases: ["electrical", "electronics", "power systems", "grid", "transmission", "distribution", "control systems", "instrumentation"],
 		pattern: /\b(?:electrical|electronics|power systems|control systems|instrumentation)\b/i, role: "Electrical Engineer", keyword: "electrical engineering" },
-	{ label: "General Engineering", aliases: ["engineer", "engineering", "technologist", "project engineering", "field engineering", "systems engineering", "sales engineering"],
-		pattern: /\b(?:engineer(?:ing)?|technologist)\b/i, role: "Engineer", keyword: "engineering" },
+	{ label: "General Engineering", aliases: ["engineer", "engineering", "technologist", "project engineering", "field engineering", "systems engineering", "sales engineering", "nuclear"],
+		pattern: /\b(?:engineer(?:ing)?|technologist|nuclear)\b/i, role: "Engineer", keyword: "engineering" },
 ];
 
 const normalize = (value: string) => value.trim().toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");

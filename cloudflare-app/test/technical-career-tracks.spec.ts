@@ -105,6 +105,8 @@ describe("published technical career tracks remain distinct from employer Indust
 		}
 		expect(canonicalCareerTrack("SoC")).toBe("Hardware & Embedded Systems");
 		expect(canonicalCareerTrack("SOC")).toBe("Cybersecurity");
+		expect(canonicalCareerTrack("EHS")).toBe("Environmental Engineering");
+		expect(canonicalCareerTrack("nuclear")).toBe("General Engineering");
 	});
 	it.each([
 		["Mechanical Engineering Intern", "Junior Mechanical Engineer", "Junior Electrical Engineer"],
