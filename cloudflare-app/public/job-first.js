@@ -146,8 +146,27 @@
 			<video controls playsinline preload="none" poster="/launch/poster.jpg" aria-label="Fictional concept demonstration">
 				<source src="/launch/internship-coffee-chat-launch-dynamic.mp4" type="video/mp4"/>
 				<track kind="captions" src="/launch/captions.vtt" srclang="en" label="English" default/>
-			</video><p><a href="/launch/captions.vtt">Read the demonstration captions</a>. No new video was generated for this release.</p>`);
-		dialog.addEventListener("close", () => dialog.querySelector("video")?.pause(), { once: true });
+			</video><div class="demo-playback-controls" aria-label="Demo playback controls">
+				<label for="demo-playback-speed">Playback speed<select id="demo-playback-speed">${[0.5, 0.75, 1, 1.25, 1.5, 2].map((rate) => `<option value="${rate}" ${rate === 1 ? "selected" : ""}>${rate}x</option>`).join("")}</select></label>
+			</div><p id="demo-playback-status" role="status"></p>
+			<p><a href="/launch/captions.vtt">Read the demonstration captions</a>. No new video was generated for this release.</p>`);
+		const video = dialog.querySelector("video"), speed = dialog.querySelector("#demo-playback-speed"), status = dialog.querySelector("#demo-playback-status");
+		const refresh = () => {
+			speed.disabled = Boolean(video.error);
+			status.textContent = video.error ? "The demo could not load. Close and reopen Demo to retry." : "";
+		};
+		speed.addEventListener("change", () => { video.playbackRate = Number(speed.value); });
+		video.addEventListener("ratechange", () => {
+			const rate = String(video.playbackRate);
+			speed.querySelector("[data-native-rate]")?.remove();
+			if (!Array.from(speed.options).some((option) => option.value === rate)) {
+				const option = root.document.createElement("option"); option.value = rate; option.textContent = `${rate}x`; option.dataset.nativeRate = ""; speed.append(option);
+			}
+			speed.value = rate;
+		});
+		for (const event of ["emptied", "error"]) video.addEventListener(event, refresh);
+		dialog.addEventListener("close", () => video.pause(), { once: true });
+		refresh();
 	}
 	function openGuide({ navigate, session }) {
 		const dialog = modal("job-first-guide", "Your setup guide", `
