@@ -209,7 +209,7 @@ function render() {
 					<button type="button" class="secondary demo-button" data-open-demo>${icon("play")} Demo</button>
 					${
 						authenticated
-							? `<details class="account-menu"><summary aria-label="Account and setup"><b class="account-initials" aria-hidden="true">${escapeHtml(companyInitials(user.name || "Your account"))}</b><span>Your setup</span></summary><div class="account-menu-panel"><p>${escapeHtml(user.name || "Your account")}<small>${escapeHtml(user.email)}</small></p><button data-nav="settings">Setup & profile</button><button data-open-guide>Setup guide</button><button data-nav="analytics">Analytics</button><button data-nav="home">Home</button>${themeChoices()}<button id="logout">${icon("logout")} Sign out</button></div></details>`
+							? `<details class="account-menu"><summary aria-label="Account and setup"><b class="account-initials" aria-hidden="true">${escapeHtml(companyInitials(user.name || "Your account"))}</b><span>Your setup</span></summary><div class="account-menu-panel"><p>${escapeHtml(user.name || "Your account")}<small>${escapeHtml(user.email)}</small></p><button data-nav="settings">Setup & profile</button><button data-open-guide>Setup guide</button><button data-nav="analytics">Analytics</button>${themeChoices()}<button id="logout">${icon("logout")} Sign out</button></div></details>`
 							: `<a class="button sign-in-button" href="${escapeAttr(signInHref())}">Sign in</a>`
 					}
 				</div>
