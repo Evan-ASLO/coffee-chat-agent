@@ -38,6 +38,8 @@ Additive migration **0011_beta_acceptance_notifications.sql** adds the approval 
 
 ## Local development
 
+The existing **Demo** modal retains native playback, volume/fullscreen, seek bar, English captions and its fictional-concept disclosure. **Playback speed** offers 0.5x, 0.75x, 1x default, 1.25x, 1.5x and 2x without autoplay or eager metadata loading. Rate changes reflect native playback-rate changes and do not start playback; closing/Escape pauses the current video, and reopening creates fresh controls/listeners without persisting speed. Extra five-second jump controls are deferred at the user's direction because the current public media transport does not expose a usable seekable range. No hosting/routing/backend change is included.
+
 Find jobs uses independently scrollable desktop results and selected-role panes. Heights are measured against the actual header/workspace viewport and resize with controls; pagination and the page footer stay outside the panes. Opening another detail changes only the right pane's position and focuses its heading without a document jump. Query- and account-bound in-memory positions survive incidental rerenders and browser Back; they are bounded to ten browsing contexts and are never persisted. Phone layouts retain one-pane detail/Back navigation and restore the results' document position. New queries/pages use their own positions; normal navigation outside Jobs keeps existing scroll behavior.
 
 ```powershell
