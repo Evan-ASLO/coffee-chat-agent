@@ -1,5 +1,7 @@
 import { z } from "zod";
 import type { AppBindings } from "../types";
+import { canonicalCareerTrack, technicalKeywordTrack } from "./job-career-tracks";
+export { canonicalCareerTrack } from "./job-career-tracks";
 import {
 	AuthenticationError,
 	ClientInputError,
@@ -242,6 +244,7 @@ export interface JobFacetOption<T extends string | number> {
 }
 
 export interface JobFacets {
+	categories: JobFacetOption<string>[];
 	industries: JobFacetOption<JobIndustry>[];
 	lengths: JobFacetOption<number | "UNSPECIFIED">[];
 	terms: JobFacetOption<string>[];
@@ -746,10 +749,12 @@ async function getJobFacets(
 	const industryFilter = buildJobFilter(query, now, "industry");
 	const lengthFilter = buildJobFilter(query, now, "length");
 	const termFilter = buildJobFilter(query, now, "term");
+	const categoryFilter = buildJobFilter(query, now, "category");
 	const [
 		industryRows,
 		lengthRows,
 		unspecifiedLength,
+		categoryRows,
 		termRows,
 		unspecifiedTerm,
 	] = await Promise.all([
@@ -780,6 +785,12 @@ async function getJobFacets(
 		)
 			.bind(...lengthFilter.bindings)
 			.first<{ count: number }>(),
+		env.DB.prepare(
+			`SELECT category.value AS value, COUNT(DISTINCT j.id) AS count
+			   FROM jobs j JOIN json_each(j.categories_json) category
+			  WHERE ${categoryFilter.clause} AND category.type='text' AND length(trim(category.value)) > 0
+			  GROUP BY category.value ORDER BY category.value COLLATE NOCASE`,
+		).bind(...categoryFilter.bindings).all<{ value: string; count: number }>(),
 		env.DB.prepare(
 			`SELECT j.term_season, j.term_year, COUNT(*) AS count
 			   FROM jobs j
@@ -833,6 +844,7 @@ async function getJobFacets(
 		});
 	}
 	return {
+		categories: categoryRows.results.map((row) => ({ value: row.value, label: row.value, count: Number(row.count) })),
 		industries: industryRows.results.map((row) => ({
 			value: row.value,
 			label: row.value,
@@ -1685,7 +1697,7 @@ function chunkValues<T>(values: T[], size: number): T[][] {
 function buildJobFilter(
 	query: JobListQuery,
 	now: number,
-	omit?: "industry" | "length" | "term",
+	omit?: "industry" | "length" | "term" | "category",
 ): { clause: string; bindings: unknown[] } {
 	const where = ["j.is_active = 1"];
 	const bindings: unknown[] = [];
@@ -1696,15 +1708,18 @@ function buildJobFilter(
 			j.location LIKE ? ESCAPE '\\' COLLATE NOCASE OR j.region LIKE ? ESCAPE '\\' COLLATE NOCASE OR
 			COALESCE(j.description, '') LIKE ? ESCAPE '\\' COLLATE NOCASE
 		)`);
+		const keywordTrack = technicalKeywordTrack(query.q);
+		if (keywordTrack) comparisons.push("j.categories_json LIKE ? ESCAPE '\\' COLLATE NOCASE");
 		where.push(
 			`(${comparisons.join(" OR ")})`,
 		);
 		for (const term of terms) { const value = containsPattern(term); bindings.push(value, value, value, value, value); }
+		if (keywordTrack) bindings.push(`%\"${escapeLike(keywordTrack)}\"%`);
 	}
 	addExactFilter(where, bindings, "j.company", query.company);
 	addExactFilter(where, bindings, "j.location", query.location);
 	addExactFilter(where, bindings, "j.region", query.region);
-	if (query.category) {
+	if (omit !== "category" && query.category) {
 		where.push("j.categories_json LIKE ? ESCAPE '\\' COLLATE NOCASE");
 		bindings.push(`%\"${escapeLike(canonicalCareerTrack(query.category))}\"%`);
 	}
@@ -1758,15 +1773,6 @@ function buildJobFilter(
 		}
 	}
 	return { clause: where.join(" AND "), bindings };
-}
-
-export function canonicalCareerTrack(value: string): string {
-	const key = value.trim().toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
-	const software = new Set(["software engineering", "software engineer", "software developer", "software development", "developer", "swe", "sde",
-		"backend", "back-end", "frontend", "front-end", "full stack", "full-stack", "fullstack", "mobile", "ios", "android", "web developer",
-		"application developer", "embedded developer", "systems development engineer", "developpeur logiciel", "developpeur logiciels",
-		"developpeuse logiciel", "developpeuse logiciels", "developpement de logiciels"]);
-	return software.has(key) ? "Software Engineering" : value;
 }
 
 function addExactFilter(

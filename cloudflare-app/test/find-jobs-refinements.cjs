@@ -7,7 +7,7 @@ test("seven filters use responsive aligned grid, stable help row and compact des
 	assert.match(css, /minmax\(min\(100%, 200px\), 1fr\)/);
 	assert.match(source, /<\/select><\/label>\s*<p id="job-posted-help"/);
 	assert.match(source, /class="job-filter-actions"><button class="secondary">Apply filters/);
-	assert.match(source, /option value="Software Engineering"/);
+	assert.match(source, /state\.jobs\.facets\?\.categories/);
 	assert.match(source, /applyJobQueryNormalization\(result\)/);
 });
 test("Find jobs has one explicitly fictional save-to-shortlist sequence; Home retains its incumbent flow", () => {

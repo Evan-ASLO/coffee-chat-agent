@@ -1,4 +1,5 @@
 import type { JobIndustry } from "./job-classification";
+import { technicalRoleProfile, technicalRoleNames, sameTechnicalFunction } from "./job-career-tracks";
 
 export interface JobDiscoveryCriteria {
 	roles: string[];
@@ -212,10 +213,12 @@ export function deriveJobDiscoveryCriteria(input: {
 	industry: JobIndustry | null;
 }): JobDiscoveryCriteria {
 	const company = employerDisplayName(input.company);
+	const technical = technicalRoleProfile(input.title);
 	const rule = ROLE_RULES.find((candidate) =>
 		candidate.pattern.test(input.title),
 	);
-	const roles = unique([...(rule?.roles || []), ...SECONDARY_ROLES]).slice(
+	const functionRoles = technical ? technicalRoleNames(input.title, technical) : rule?.roles || [];
+	const roles = unique([...functionRoles, ...SECONDARY_ROLES]).slice(
 		0,
 		12,
 	);
@@ -226,7 +229,7 @@ export function deriveJobDiscoveryCriteria(input: {
 			input.industry && input.industry !== "Other" ? [input.industry] : [],
 		companies: company ? [company] : [],
 		locations,
-		keywords: unique(rule?.keywords || []).slice(0, 4),
+		keywords: unique(technical ? [technical.keyword] : rule?.keywords || []).slice(0, 4),
 		seniority: ["Junior", "Entry-level", "Intern", "New graduate"],
 		objective: `Learn about the ${input.title} opportunity, the team, and the application process at ${company || input.company}.`,
 		count: 5,
@@ -260,12 +263,14 @@ export function rankJobContact(
 	if (!evidence) return base;
 	const title = containsPhrase(evidence, person.title) ? normalizeEmployer(person.title) : "";
 	const rule = ROLE_RULES.find((candidate) => candidate.pattern.test(job.title));
+	const technical = technicalRoleProfile(job.title);
 	const jobRole = normalizeEmployer(job.title)
 		.replace(/\b(internship|intern|co op|summer|winter|fall|spring|student|new grad|graduate|20\d\d)\b/g, " ")
 		.replace(/\s+/g, " ").trim();
 	const recruiter = RECRUITING_ROLE.test(title);
 	const roleRelevant = Boolean(title && !recruiter && (
-		rule ? rule.pattern.test(title) : jobRole.length > 4 && containsPhrase(title, jobRole)
+		technical ? sameTechnicalFunction(title, job.title) :
+			rule ? rule.pattern.test(title) : jobRole.length > 4 && containsPhrase(title, jobRole)
 	));
 	const senior = SENIOR_TITLE.test(person.title) ||
 		/\b(?:is|works as|serves as)\s+(?:an?\s+)?(?:senior|sr|lead|principal|staff|director|head|vp|vice president|chief|manager)\b/i.test(person.sourceSnippet);

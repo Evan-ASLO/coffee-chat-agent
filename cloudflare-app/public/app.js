@@ -576,7 +576,7 @@ function renderJobs() {
 						? `<details id="more-job-filters" class="filter-disclosure" ${state.jobFiltersOpen ? "open" : ""}><summary>More filters <span>${["company", "region", "category", "industry", "length", "term", "posted"].filter((key) => state.jobQuery[key]).length} active</span></summary><div class="filter-panel" aria-label="Job filters">
 								<label>Industry<select id="job-industry">${facetOptions(state.jobs.facets?.industries, state.jobQuery.industry, "All industries")}</select></label>
 								<label>Career track<input id="job-category" list="job-career-tracks" value="${escapeAttr(state.jobQuery.category)}" placeholder="Any role" /></label>
-								<datalist id="job-career-tracks"><option value="Software Engineering"></option></datalist>
+								<datalist id="job-career-tracks">${(state.jobs.facets?.categories || []).map((option) => `<option value="${escapeAttr(option.value)}" label="${escapeAttr(option.label)} (${Number(option.count)})"></option>`).join("")}</datalist>
 								<label>Term<select id="job-term">${facetOptions(state.jobs.facets?.terms, state.jobQuery.term, "Any term")}</select></label>
 								<label>Company<input id="job-company" value="${escapeAttr(state.jobQuery.company)}" placeholder="Search companies…" /></label>
 								<label>Region<input id="job-region" value="${escapeAttr(state.jobQuery.region)}" placeholder="Canada, Ontario…" /></label>

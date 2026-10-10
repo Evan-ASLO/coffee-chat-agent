@@ -40,6 +40,9 @@ describe("Software Engineering career track is independent of employer industry"
 	it("keyword SWE finds software titles, but no broad engineering/development reclassification occurs", async () => {
 		expect((await list("q=SWE")).pagination.total).toBe(2);
 		expect((await list("category=Software%20Engineering")).pagination.total).toBe(2);
-		for (const value of ["Engineering", "Business Development", "DevOps", "QA", "Security"]) expect(canonicalCareerTrack(value)).toBe(value);
+		for (const value of ["Business Development", "Security"]) expect(canonicalCareerTrack(value)).toBe(value);
+		expect(canonicalCareerTrack("Engineering")).toBe("General Engineering");
+		expect(canonicalCareerTrack("DevOps")).toBe("IT & Infrastructure");
+		expect(canonicalCareerTrack("QA")).toBe("Quality & Test Engineering");
 	});
 });
