@@ -87,7 +87,7 @@ export async function getUserAnalytics(
 		await Promise.all([
 			env.DB.prepare(
 				`SELECT status, COUNT(*) AS count
-				   FROM user_job_states
+				   FROM account_job_states
 				  WHERE user_id = ?
 				  GROUP BY status`,
 			)
@@ -102,15 +102,15 @@ export async function getUserAnalytics(
 				.bind(userId)
 				.all<CountRow>(),
 			env.DB.prepare(
-				`SELECT j.company, COUNT(*) AS count
-				   FROM user_job_states ujs
-				   JOIN jobs j ON j.id = ujs.job_id
-				  WHERE ujs.user_id = ? AND ujs.status <> 'ARCHIVED'
-				  GROUP BY j.company
-				  ORDER BY count DESC, j.company COLLATE NOCASE
+				`SELECT company, COUNT(*) AS count FROM (
+				    SELECT j.company FROM user_job_states ujs JOIN jobs j ON j.id=ujs.job_id
+				     WHERE ujs.user_id=? AND ujs.status<>'ARCHIVED'
+				    UNION ALL SELECT company FROM private_jobs WHERE user_id=? AND deleted_at IS NULL AND status<>'ARCHIVED'
+				  ) GROUP BY company
+				  ORDER BY count DESC, company COLLATE NOCASE
 				  LIMIT 8`,
 			)
-				.bind(userId)
+				.bind(userId, userId)
 				.all<{ company: string; count: number }>(),
 			env.DB.prepare(
 				`SELECT substr(created_at, 1, 10) AS date, COUNT(*) AS count
@@ -123,7 +123,7 @@ export async function getUserAnalytics(
 				.all<{ date: string; count: number }>(),
 			env.DB.prepare(
 				`SELECT ae.action, ae.entity_type, ae.created_at,
-				        j.title AS job_title, j.company AS job_company,
+				        COALESCE(j.title,m.title) AS job_title, COALESCE(j.company,m.company) AS job_company,
 				        p.full_name AS prospect_name
 				   FROM audit_events ae
 				   LEFT JOIN jobs j
@@ -132,6 +132,7 @@ export async function getUserAnalytics(
 				     ON ae.entity_type = 'prospect'
 				    AND p.id = ae.entity_id
 				    AND p.user_id = ae.user_id
+				   LEFT JOIN private_jobs m ON ae.entity_type='manual_job' AND m.id=ae.entity_id AND m.user_id=ae.user_id AND m.deleted_at IS NULL
 				  WHERE ae.user_id = ?
 				  ORDER BY ae.created_at DESC
 				  LIMIT 30`,

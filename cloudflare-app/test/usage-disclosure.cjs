@@ -12,5 +12,5 @@ test("disclosure retains account identity, private-data restrictions and truthfu
 		"automatic expiry", "not deletion schedules", "no pageview tracking", "no separate in-app opt-out",
 		"within 30 days unless retention", "search queries, raw provider responses"]) assert.ok(privacy.includes(text), text);
 	assert.match(read("terms.html"), /href="\/privacy#usage-analytics"/);
-	assert.match(privacy, /Effective October 10, 2026/);
+	assert.match(privacy, /Effective October 12, 2026/);
 });

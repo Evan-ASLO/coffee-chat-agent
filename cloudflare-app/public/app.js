@@ -107,6 +107,16 @@ const ownerAdmin = window.OwnerAdmin.create({
 });
 const bugReports = window.BugReports.create({ getSession: () => state.session, getView: () => state.tab, api, notify: showToast });
 const jobBrowsing = window.JobBrowsing.create({ getOwner: () => state.session?.user?.id });
+const privateJobs = window.PrivateJobs.create({ getSession: () => state.session, getJob: privateJobForEditor, api, escapeHtml, statusOptions: jobStatusOptions, notify: showToast,
+	onSaved: async (job, owner) => {
+		if (state.session?.user?.id !== owner) return;
+		state.trackedJobs.jobs = [job, ...state.trackedJobs.jobs.filter((entry) => entry.id !== job.id)];
+		delete state.jobNoteDrafts[job.id]; delete state.applicationEditDrafts[job.id];
+		if (state.selectedJob?.id === job.id) state.selectedJob = job;
+		try { await Promise.all([loadJobData(), loadAnalyticsData()]); if (state.session?.user?.id === owner) navigate("applications"); }
+		catch (failure) { if (state.session?.user?.id === owner) { render(); showToast(`Job saved, but the tracker could not refresh: ${failure.message} Reload before retrying.`, true); } }
+	},
+});
 const onboarding = window.WorkspaceOnboarding?.create({
 	getSession: () => state.session,
 	getView: () => state.tab,
@@ -170,6 +180,7 @@ function render() {
 	captureJobEdits();
 	ownerAdmin.syncSession();
 	bugReports.syncSession();
+	privateJobs.syncSession();
 	setMobileNavOpen(false, false);
 	onboarding?.beforeRender();
 	destroyJourneyScene();
@@ -251,6 +262,8 @@ function render() {
 	wireTab();
 	window.JobFirstUI.wire({ navigate, session: state.session });
 	bugReports.wire();
+	privateJobs.wire();
+	app.querySelectorAll("[data-remove-private-job]").forEach((button) => button.addEventListener("click", () => removeJobStatus(button.dataset.removePrivateJob)));
 	onboarding?.sync();
 	jobBrowsing.mount();
 }
@@ -455,7 +468,7 @@ function homeRecentJobCard(job) {
 		</div>
 		<div class="chips"><span class="chip">${escapeHtml(JobSourceUi.sourceLabel(job.source))}</span>${job.industry && job.industry !== "Other" ? `<span class="chip">${escapeHtml(job.industry)}</span>` : ""}<span class="chip">${escapeHtml(posted)}</span></div>
 		<div class="home-recent-actions">
-			<a class="button primary" href="${escapeAttr(job.url)}" target="_blank" rel="noopener">View posting</a>
+			${job.url ? `<a class="button primary" href="${escapeAttr(job.url)}" target="_blank" rel="noopener">View posting</a>` : `<button class="primary" data-job-detail="${job.id}">View details</button>`}
 			${!status || status === "SAVED" ? `<button data-job-save="${job.id}">${status === "SAVED" ? "Saved" : "Save"}</button>` : ""}
 			<button data-job-apply="${job.id}" ${APPLICATION_STATUSES.includes(status) ? "disabled" : ""}>Mark applied</button>
 			${jobContactAction(job)}
@@ -610,7 +623,7 @@ function renderJobs() {
 						<button data-job-layout="list" class="${state.jobLayout === "list" ? "active" : ""}" aria-label="List view">${icon("list")}<span>List</span></button>
 					</div>
 				</div>
-				${jobs.length ? `<div class="job-first-workspace ${state.selectedJob ? "detail-open" : ""}" data-browse-owner="${escapeAttr(state.session?.user?.id || "")}" data-browse-query="${escapeAttr(JSON.stringify([state.jobMode, state.jobQuery]))}"><div class="job-cards ${state.jobLayout === "list" ? "list-view" : "grid-view"}" role="region" aria-label="Job results" tabindex="0">${jobs.map(jobCard).join("")}</div>${renderJobDetail(state.selectedJob || jobs[0])}</div>` : empty(state.jobMode === "saved" ? "Save a role from the live catalog to build your shortlist." : "No active jobs match these filters.")}
+				${jobs.length || state.selectedJob ? `<div class="job-first-workspace ${state.selectedJob ? "detail-open" : ""}" data-browse-owner="${escapeAttr(state.session?.user?.id || "")}" data-browse-query="${escapeAttr(JSON.stringify([state.jobMode, state.jobQuery]))}"><div class="job-cards ${state.jobLayout === "list" ? "list-view" : "grid-view"}" role="region" aria-label="Job results" tabindex="0">${jobs.length ? jobs.map(jobCard).join("") : empty("No catalog jobs match these filters.")}</div>${renderJobDetail(state.selectedJob || jobs[0])}</div>` : empty(state.jobMode === "saved" ? "Save a role from the live catalog to build your shortlist." : "No active jobs match these filters.")}
 				${state.jobMode === "all" ? renderPagination(pagination) : ""}
 			</section>
 			<aside class="jobs-activity-rail" aria-label="Your job activity">
@@ -690,6 +703,7 @@ function renderApplications() {
 				<p>Stay organized, track your progress, and keep every private next step in one place.</p>
 				<div class="reference-hero-actions">
 					<button class="primary" data-nav="jobs">${icon("plus")} Browse jobs</button>
+					<button class="secondary" data-add-private-job>Add job</button>
 					<button class="secondary" data-open-import>${icon("upload")} Import tracker</button>
 				</div>
 			</div>
@@ -1722,8 +1736,16 @@ async function setJobStatus(id, status) {
 }
 
 async function removeJobStatus(id) {
+	const identity = state.session?.user?.id;
+	if (findJob(id)?.manual && !confirm(`Remove ${findJob(id).title} at ${findJob(id).company} from your private tracker? Its saved notes and role links will no longer appear. Existing contact and email history is kept.`)) return;
 	await run("Removing job from your tracker…", async () => {
 		await api(`/api/jobs/${id}/state`, { method: "DELETE" });
+		if (state.session?.user?.id !== identity) return;
+		if (id.startsWith("manual-")) {
+			state.trackedJobs.jobs = state.trackedJobs.jobs.filter((job) => job.id !== id);
+			if (state.selectedJob?.id === id) state.selectedJob = null;
+			if (state.networkingJob?.id === id) clearNetworkingContext();
+		}
 		await Promise.all([loadJobData(), loadAnalyticsData()]);
 		render();
 	});
@@ -1749,6 +1771,7 @@ async function saveJobNotes(id) {
 function openApplicationEditor(id) {
 	const job = findJob(id);
 	if (!job?.userState) return;
+	if (job.manual) { privateJobs.open(privateJobForEditor(id)); return; }
 	document.getElementById("application-dialog-id").value = job.id;
 	document.getElementById("application-dialog-title").textContent = job.title;
 	document.getElementById("application-dialog-company").textContent =
@@ -2748,6 +2771,7 @@ async function logout() {
 
 function clearPrivateDialogs(clearJobEdits = true) {
 	bugReports.clear();
+	privateJobs.clear();
 	if (clearJobEdits) {
 		state.jobNoteDrafts = {};
 		state.applicationEditDrafts = {};
@@ -2847,7 +2871,20 @@ function applyJobQueryNormalization(result) {
 }
 
 async function fetchTrackedJobs() {
-	return api("/api/job-states?page=1&pageSize=100");
+	const identity = state.session?.user?.id;
+	const first = await api("/api/job-states?page=1&pageSize=100");
+	const total = first.pagination?.total;
+	if (!Number.isSafeInteger(total) || total < 0 || total > 10000 || first.pagination.totalPages !== Math.ceil(total / 100) || !Array.isArray(first.jobs)) throw new Error("Tracked jobs could not be read completely.");
+	const jobs = [...first.jobs];
+	for (let page = 2; page <= first.pagination.totalPages; page++) {
+		if (state.session?.user?.id !== identity) throw new Error("The account changed while loading tracked jobs.");
+		const next = await api(`/api/job-states?page=${page}&pageSize=100`);
+		if (state.session?.user?.id !== identity) throw new Error("The account changed while loading tracked jobs.");
+		if (next.pagination?.total !== total || next.pagination.page !== page || !Array.isArray(next.jobs)) throw new Error("Tracked jobs changed while loading. Reload to retry.");
+		jobs.push(...next.jobs);
+	}
+	if (jobs.length !== total || new Set(jobs.map((job) => job.id)).size !== total) throw new Error("Tracked job pages were incomplete or duplicated. Reload to retry.");
+	return { jobs, pagination: first.pagination, complete: true };
 }
 
 function loadJobQueryFromUrl() {
@@ -2963,7 +3000,7 @@ function myJobsApplicationSnapshot() {
 		if (state.analytics?.applications) return { counts: window.CareerAnalyticsUi.currentApplicationCounts(state.analytics.applications), error: "" };
 		if (state.applicationSnapshot?.owner === state.session?.user?.id) return { counts: state.applicationSnapshot.counts, error: "" };
 		const { jobs, pagination } = state.trackedJobs;
-		if (pagination && pagination.total === jobs.length && pagination.totalPages <= 1) {
+		if (pagination && pagination.total === jobs.length && (pagination.totalPages <= 1 || state.trackedJobs.complete)) {
 			return { counts: window.CareerAnalyticsUi.countTrackedApplications(jobs), error: "" };
 		}
 		return { counts: null, error: "The account-wide status snapshot is unavailable. Reload the workspace to retry; a partial list is not shown as a complete chart." };
@@ -3110,10 +3147,10 @@ function renderJobDetail(job) {
 		<p class="job-detail-company">${escapeHtml(job.company)} · ${escapeHtml(job.location || job.region || "Location not listed")}</p>
 		<h2 id="job-detail-title" tabindex="-1">${escapeHtml(job.title)}</h2>
 		<div class="chips">${status ? `<span class="status status-${status.toLowerCase()}">${formatStatus(status)}</span>` : ""}<span class="chip">${escapeHtml(JobSourceUi.sourceLabel(job.source))}</span>${job.lengthLabel ? `<span class="chip">${escapeHtml(job.lengthLabel)}</span>` : ""}${job.term?.label ? `<span class="chip">${escapeHtml(job.term.label)}</span>` : ""}</div>
-		<div class="actions"><a class="button primary" href="${escapeAttr(job.url)}" target="_blank" rel="noopener">Open original posting</a>${!status || status === "SAVED" ? `<button data-job-save="${job.id}">${status ? "Unsave" : "Save role"}</button>` : ""}<button data-job-apply="${job.id}" ${status && status !== "SAVED" ? "disabled" : ""}>Mark applied</button></div>
+		<div class="actions">${job.url ? `<a class="button primary" href="${escapeAttr(job.url)}" target="_blank" rel="noopener">Open original posting</a>` : ""}${job.manual ? `<button class="secondary" data-edit-private-job="${job.id}">Edit private job</button>` : ""}${!status || status === "SAVED" ? `<button data-job-save="${job.id}">${status ? job.manual ? "Remove" : "Unsave" : "Save role"}</button>` : ""}<button data-job-apply="${job.id}" ${status && status !== "SAVED" ? "disabled" : ""}>Mark applied</button></div>
 		<div class="workflow-tabs role-detail-tabs" role="group" aria-label="Role detail sections">${[["role", "Role"], ["people", "People"], ["progress", "Progress"]].map(([tab, label]) => `<button data-job-detail-tab="${tab}" aria-pressed="${(state.jobDetailTab || "role") === tab}" class="${(state.jobDetailTab || "role") === tab ? "active" : ""}">${label}</button>`).join("")}</div>
 		<section ${state.jobDetailTab && state.jobDetailTab !== "role" ? "hidden" : ""} aria-label="Role information">
-		<h3>About this role</h3><p class="detail-description">${escapeHtml(job.description || "No description was supplied. Review the original posting for requirements and availability.")}</p>${JobSourceUi.attributionHtml(job.source)}
+		<h3>About this role</h3><p class="detail-description">${escapeHtml(job.manual ? "Private user-added role. Not catalog-verified; availability and posting date are unknown." : job.description || "No description was supplied. Review the original posting for requirements and availability.")}</p>${JobSourceUi.attributionHtml(job.source)}
 		</section>
 		<section ${state.jobDetailTab !== "people" ? "hidden" : ""} aria-label="People for this role"><h3>People behind this role</h3><p>${jobOutreachLinkingEnabled() ? "Open saved contacts for this employer and role. Opening People does not start a search or prepare outreach." : "Job-linked networking is not ready yet. Independent People search remains available; no capability is enabled by this tab."}</p>${jobContactAction(job)}${linked.length ? `<ul class="role-linked-people">${linked.map((person) => `<li><strong>${escapeHtml(person.fullName)}</strong> · ${escapeHtml(person.title || "Role not confirmed")} <span class="status">${formatStatus(person.status)}</span></li>`).join("")}</ul>` : '<p>No linked people are saved for this role yet.</p>'}</section>
 		<section ${state.jobDetailTab !== "progress" ? "hidden" : ""} aria-label="Role progress"><h3>Your progress</h3>
@@ -3315,7 +3352,7 @@ function jobCard(job) {
 		? `Posted ${formatDateOnly(job.postedAt)}`
 		: job.postedText || "Posting date unavailable";
 	const outreach = job.outreachSummary;
-	return `<article class="job-card ${state.selectedJob?.id === job.id ? "selected" : ""} ${job.active ? "" : "inactive-job"}">
+	return `<article class="job-card ${state.selectedJob?.id === job.id ? "selected" : ""} ${job.active || job.manual ? "" : "inactive-job"}">
 		<header class="job-card-heading">
 			<div class="company-tile company-tone-${companyTone(job.company)}" aria-hidden="true">${escapeHtml(companyInitials(job.company))}</div>
 			<div class="job-card-title">
@@ -3348,7 +3385,7 @@ function jobCard(job) {
 			${job.lengthLabel ? `<span class="chip">${escapeHtml(job.lengthLabel)}</span>` : ""}
 			${job.term?.label ? `<span class="chip">${escapeHtml(job.term.label)}</span>` : ""}
 			${(job.industry && job.industry !== "Other" ? [job.industry] : job.categories.slice(0, 1)).map((category) => `<span class="chip">${escapeHtml(category)}</span>`).join("")}
-			${job.active ? "" : '<span class="chip chip-warning">No longer active</span>'}
+			${job.manual ? '<span class="chip">Private · user added</span>' : job.active ? "" : '<span class="chip chip-warning">No longer active</span>'}
 		</div>
 		${job.description ? `<p class="job-description">${escapeHtml(truncate(job.description, state.jobLayout === "list" ? 180 : 145))}</p>` : ""}
 		${sourceAttribution}
@@ -3370,9 +3407,9 @@ function applicationTableRow(job) {
 	const status = job.userState?.status || "";
 	return `<article class="tracked-role-row">
 		<span class="company-tile company-tone-${companyTone(job.company)}" aria-hidden="true">${escapeHtml(companyInitials(job.company))}</span>
-		<div class="tracked-role-copy"><h3><button class="text-button" data-job-detail="${job.id}">${escapeHtml(job.title)}</button></h3><p>${escapeHtml(job.company)} · ${escapeHtml(job.location || job.region || "Location not listed")}</p><p class="table-note">${escapeHtml(job.userState.notes?.trim() ? truncate(job.userState.notes, 120) : "No next-step notes yet")}</p></div>
+		<div class="tracked-role-copy"><h3><button class="text-button" data-job-detail="${job.id}">${escapeHtml(job.title)}</button></h3><p>${escapeHtml(job.company)} · ${escapeHtml(job.location || job.region || "Location not listed")}${job.manual ? " · Private, user added" : ""}</p><p class="table-note">${escapeHtml(job.userState.notes?.trim() ? truncate(job.userState.notes, 120) : "No next-step notes yet")}</p></div>
 		<div class="tracked-role-stage"><span class="status status-${status.toLowerCase()}">${formatStatus(status)}</span><small>Updated <time datetime="${escapeAttr(job.userState.updatedAt)}">${formatDateOnly(job.userState.updatedAt)}</time></small></div>
-		<div class="table-actions">${jobContactAction(job)}<button class="secondary" data-application-edit="${job.id}" aria-label="Edit ${escapeAttr(job.title)} at ${escapeAttr(job.company)}">Edit</button></div>
+		<div class="table-actions">${jobContactAction(job)}<button class="secondary" data-application-edit="${job.id}" aria-label="Edit ${escapeAttr(job.title)} at ${escapeAttr(job.company)}">Edit</button>${job.manual ? `<button class="secondary" data-remove-private-job="${job.id}" aria-label="Remove ${escapeAttr(job.title)} from private tracker">Remove</button>` : ""}</div>
 	</article>`;
 }
 
@@ -3611,6 +3648,13 @@ function findJob(id) {
 		(state.selectedJob?.id === id ? state.selectedJob : null) ||
 		null
 	);
+}
+
+function privateJobForEditor(id) {
+	captureJobEdits();
+	const job = findJob(id);
+	if (!job?.manual) return job;
+	return { ...job, userState: { ...job.userState, notes: state.jobNoteDrafts[id] ?? state.applicationEditDrafts[id]?.notes ?? job.userState.notes } };
 }
 
 function contextValue(category) {

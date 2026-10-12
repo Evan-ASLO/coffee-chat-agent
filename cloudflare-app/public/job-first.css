@@ -329,6 +329,9 @@ dialog::backdrop { background: var(--cp-overlay); }
 .demo-playback-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-block: 16px; }
 .demo-playback-controls select { min-height: 44px; }
 .demo-playback-controls label { display: grid; gap: 6px; margin: 0; min-width: 140px; }
+#private-job-dialog { width: min(600px, calc(100% - 28px)); }
+#private-job-dialog input, #private-job-dialog select, #private-job-dialog button { min-height: 44px; }
+#private-job-dialog input, #private-job-dialog textarea, #private-job-dialog select { width: 100%; font-size: 16px; }
 @media (max-width: 520px) { .demo-playback-controls > * { flex: 1 1 140px; } }
 .reference-hero.jobs-reference-hero.page-animated-hero { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 500px); align-items: center; gap: 32px; margin-bottom: 24px; }
 .job-search-strip { grid-template-columns: minmax(240px, 2fr) minmax(160px, 1fr) auto auto; align-items: end; }

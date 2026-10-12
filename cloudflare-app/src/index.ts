@@ -57,6 +57,11 @@ import { ClientInputError, PublicHttpError } from "./lib/errors";
 import { apolloEnrichmentEnabled } from "./lib/preparation";
 import {
 	JOB_STATES,
+	isPrivateJobId,
+	privateJobCreateSchema,
+	privateJobEditSchema,
+	createPrivateJob,
+	editPrivateJob,
 	deleteJobState,
 	getCatalogFreshness,
 	getJob,
@@ -642,6 +647,25 @@ app.get("/api/job-states", requireUser, async (c) => {
 	);
 });
 
+app.post("/api/private-jobs", requireUser, async (c) => {
+	await protectMutation(c);
+	const input = privateJobCreateSchema.parse(await readJson(c, 12 * 1024));
+	const result = await createPrivateJob(c.env, c.get("user")!.id, input);
+	if (!result.idempotent) await audit(c.env, {
+		userId: c.get("user")!.id, action: "JOB_STATE_UPDATED", entityType: "manual_job", entityId: result.job.id,
+		requestId: c.get("requestId"), metadata: { status: input.status },
+	});
+	return c.json(result);
+});
+app.put("/api/private-jobs/:id", requireUser, async (c) => {
+	await protectMutation(c);
+	const input = privateJobEditSchema.parse(await readJson(c, 12 * 1024));
+	const job = await editPrivateJob(c.env, c.get("user")!.id, jobId.parse(c.req.param("id")), input);
+	await audit(c.env, { userId: c.get("user")!.id, action: "JOB_STATE_UPDATED", entityType: "manual_job", entityId: job.id,
+		requestId: c.get("requestId"), metadata: { status: input.status } });
+	return c.json({ job });
+});
+
 app.put("/api/jobs/:id/state", requireUser, async (c) => {
 	await protectMutation(c);
 	const id = jobId.parse(c.req.param("id"));
@@ -650,7 +674,7 @@ app.put("/api/jobs/:id/state", requireUser, async (c) => {
 	await audit(c.env, {
 		userId: c.get("user")!.id,
 		action: "JOB_STATE_UPDATED",
-		entityType: "job",
+		entityType: isPrivateJobId(id) ? "manual_job" : "job",
 		entityId: id,
 		requestId: c.get("requestId"),
 		metadata: { status: input.status },
@@ -665,7 +689,7 @@ app.delete("/api/jobs/:id/state", requireUser, async (c) => {
 	await audit(c.env, {
 		userId: c.get("user")!.id,
 		action: "JOB_STATE_DELETED",
-		entityType: "job",
+		entityType: isPrivateJobId(id) ? "manual_job" : "job",
 		entityId: id,
 		requestId: c.get("requestId"),
 	});

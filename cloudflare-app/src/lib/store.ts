@@ -230,10 +230,10 @@ export async function listProspects(
 	const [result, links] = await Promise.all([
 		env.DB.prepare(
 			`SELECT * FROM prospects WHERE user_id = ?
-			 ${jobId ? "AND id IN (SELECT prospect_id FROM job_prospects WHERE user_id = ? AND job_id = ?)" : ""}
+			 ${jobId ? "AND id IN (SELECT prospect_id FROM job_prospects WHERE user_id = ? AND job_id = ? UNION ALL SELECT jp.prospect_id FROM private_job_prospects jp JOIN private_jobs j ON j.id=jp.job_id AND j.user_id=jp.user_id WHERE jp.user_id=? AND jp.job_id=? AND j.deleted_at IS NULL)" : ""}
 			 ORDER BY updated_at DESC LIMIT 500`,
 		)
-			.bind(...(jobId ? [userId, userId, jobId] : [userId]))
+			.bind(...(jobId ? [userId, userId, jobId, userId, jobId] : [userId]))
 			.all<ProspectRow>(),
 		prospectJobLinks(env, userId),
 	]);

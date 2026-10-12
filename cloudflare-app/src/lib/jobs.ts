@@ -38,6 +38,22 @@ export const JOB_STATES = [
 ] as const;
 
 export type JobState = (typeof JOB_STATES)[number];
+export const isPrivateJobId = (id: string) => /^manual-[a-f0-9]{64}$/.test(id);
+export const privateJobInputSchema = z.object({
+	company: z.string().trim().min(1).max(200),
+	title: z.string().trim().min(1).max(240),
+	location: z.string().trim().max(240).default(""),
+	url: z.string().trim().max(2048).default("").refine((value) => {
+		if (!value) return true;
+		try { const url = new URL(value); return ["https:", "http:"].includes(url.protocol) && !url.username && !url.password && !/[\u0000-\u001f\u007f]/.test(value); }
+		catch { return false; }
+	}, "Use an HTTP or HTTPS posting URL without credentials, or leave it blank."),
+	status: z.enum(JOB_STATES).default("SAVED"),
+	notes: z.string().trim().max(4000).default(""),
+	expectedUserId: z.string().uuid(),
+}).strict();
+export const privateJobCreateSchema = privateJobInputSchema.extend({ submissionKey: z.string().uuid() }).strict();
+export const privateJobEditSchema = privateJobInputSchema.extend({ expectedVersion: z.number().int().min(1) }).strict();
 
 const isoUtc = z
 	.string()
@@ -188,6 +204,8 @@ export interface OutreachSummary {
 }
 
 export interface JobRecord extends NormalizedJob {
+	manual?: boolean;
+	manualVersion?: number;
 	industry: JobIndustry | null;
 	lengthMonths: number[];
 	lengthLabel: string | null;
@@ -902,6 +920,7 @@ export async function getJob(
 	userId?: string,
 	includeInactive = false,
 ): Promise<JobRecord | null> {
+	if (isPrivateJobId(jobId)) return userId ? (await privateJobRecords(env, userId, [jobId]))[0] || null : null;
 	const selection = jobSelection(userId);
 	const row = await env.DB.prepare(
 		`${selection.sql}
@@ -935,27 +954,32 @@ export async function listUserJobStates(
 	const offset = (input.page - 1) * input.pageSize;
 	const [result, count] = await Promise.all([
 		env.DB.prepare(
-			`${selection.sql}
-			  WHERE ${clause}
-			  ORDER BY ujs.updated_at DESC, j.id
-			  LIMIT ? OFFSET ?`,
+			`SELECT ujs.job_id FROM account_job_states ujs
+			  WHERE ${clause} ORDER BY ujs.updated_at DESC,ujs.job_id LIMIT ? OFFSET ?`,
 		)
 			.bind(
-				...selection.bindings,
 				...bindings,
 				input.pageSize,
 				offset,
 			)
-			.all<JobRow>(),
+			.all<{ job_id: string }>(),
 		env.DB.prepare(
-			`SELECT COUNT(*) AS count FROM user_job_states ujs WHERE ${clause}`,
+			`SELECT COUNT(*) AS count FROM account_job_states ujs WHERE ${clause}`,
 		)
 			.bind(...bindings)
 			.first<{ count: number }>(),
 	]);
 	const total = Number(count?.count || 0);
+	const ids = result.results.map((row) => row.job_id);
+	const publicIds = ids.filter((id) => !isPrivateJobId(id));
+	const [publicBatches, privateRows] = await Promise.all([
+		Promise.all(chunkValues(publicIds, 80).map((batch) => env.DB.prepare(`${selection.sql} WHERE j.id IN (${batch.map(() => "?").join(",")})`)
+			.bind(...selection.bindings, ...batch).all<JobRow>())),
+		privateJobRecords(env, userId, ids.filter(isPrivateJobId)),
+	]);
+	const records = new Map([...publicBatches.flatMap((batch) => batch.results).map(mapJob), ...privateRows].map((job) => [job.id, job]));
 	return {
-		jobs: result.results.map(mapJob),
+		jobs: ids.map((id) => { const job = records.get(id); if (!job) throw new ConflictError("Tracked jobs changed while loading. Retry."); return job; }),
 		pagination: {
 			page: input.page,
 			pageSize: input.pageSize,
@@ -971,6 +995,14 @@ export async function putJobState(
 	jobId: string,
 	input: { status: JobState; notes: string },
 ): Promise<JobRecord> {
+	if (isPrivateJobId(jobId)) {
+		const changed = await env.DB.prepare("UPDATE private_jobs SET status=?,notes=?,version=version+1,updated_at=? WHERE id=? AND user_id=? AND deleted_at IS NULL")
+			.bind(input.status, input.notes, new Date().toISOString(), jobId, userId).run();
+		if (!changed.meta.changes) throw new ClientInputError("Job was not found.");
+		const job = await getJob(env, jobId, userId, true);
+		if (!job) throw new ClientInputError("Job was not found.");
+		return job;
+	}
 	const now = new Date().toISOString();
 	const result = await env.DB.prepare(
 		`INSERT INTO user_job_states(
@@ -997,6 +1029,12 @@ export async function deleteJobState(
 	userId: string,
 	jobId: string,
 ): Promise<void> {
+	if (isPrivateJobId(jobId)) {
+		const changed = await env.DB.prepare("UPDATE private_jobs SET deleted_at=?,updated_at=?,version=version+1 WHERE id=? AND user_id=? AND deleted_at IS NULL")
+			.bind(new Date().toISOString(), new Date().toISOString(), jobId, userId).run();
+		if (!changed.meta.changes) throw new ClientInputError("Job was not found.");
+		return;
+	}
 	await env.DB.prepare(
 		"DELETE FROM user_job_states WHERE user_id = ? AND job_id = ?",
 	)
@@ -1111,6 +1149,15 @@ export async function linkProspectToJob(
 	jobId: string,
 	prospectId: string,
 ): Promise<void> {
+	if (isPrivateJobId(jobId)) {
+		const result = await env.DB.prepare(`INSERT INTO private_job_prospects(user_id,job_id,prospect_id,created_at)
+			SELECT ?,j.id,p.id,? FROM private_jobs j JOIN prospects p ON p.id=? AND p.user_id=j.user_id
+			WHERE j.id=? AND j.user_id=? AND j.deleted_at IS NULL
+			ON CONFLICT(user_id,job_id,prospect_id) DO NOTHING`).bind(userId, new Date().toISOString(), prospectId, jobId, userId).run();
+		if (!result.meta.changes && !(await env.DB.prepare(`SELECT 1 AS found FROM private_job_prospects link JOIN private_jobs j ON j.id=link.job_id AND j.user_id=link.user_id
+			WHERE link.user_id=? AND link.job_id=? AND link.prospect_id=? AND j.deleted_at IS NULL`).bind(userId, jobId, prospectId).first())) throw new ClientInputError("Job or prospect was not found.");
+		return;
+	}
 	const result = await env.DB.prepare(
 		`INSERT OR IGNORE INTO job_prospects(user_id, job_id, prospect_id, created_at)
 		 SELECT ?, j.id, p.id, ?
@@ -1149,6 +1196,11 @@ export async function unlinkProspectFromJob(
 	jobId: string,
 	prospectId: string,
 ): Promise<void> {
+	if (isPrivateJobId(jobId)) {
+		if (!(await getJob(env, jobId, userId, true))) throw new ClientInputError("Job was not found.");
+		await env.DB.prepare("DELETE FROM private_job_prospects WHERE user_id=? AND job_id=? AND prospect_id=?").bind(userId, jobId, prospectId).run();
+		return;
+	}
 	await env.DB.prepare(
 		`DELETE FROM job_prospects
 		  WHERE user_id = ? AND job_id = ? AND prospect_id = ?`,
@@ -1162,14 +1214,18 @@ export async function prospectJobLinks(
 	userId: string,
 ): Promise<Map<string, Array<{ id: string; title: string; company: string }>>> {
 	const result = await env.DB.prepare(
-		`SELECT jp.prospect_id, j.id, j.title, j.company
+		`SELECT jp.prospect_id, j.id, j.title, j.company, jp.created_at
 		   FROM job_prospects jp
 		   JOIN jobs j ON j.id = jp.job_id
 		   JOIN prospects p ON p.id = jp.prospect_id AND p.user_id = jp.user_id
 		  WHERE jp.user_id = ?
-		  ORDER BY jp.created_at DESC`,
+		  UNION ALL
+		  SELECT jp.prospect_id,j.id,j.title,j.company,jp.created_at
+		    FROM private_job_prospects jp JOIN private_jobs j ON j.id=jp.job_id AND j.user_id=jp.user_id
+		    JOIN prospects p ON p.id=jp.prospect_id AND p.user_id=jp.user_id
+		   WHERE jp.user_id=? AND j.deleted_at IS NULL ORDER BY 5 DESC`,
 	)
-		.bind(userId)
+		.bind(userId, userId)
 		.all<{
 			prospect_id: string;
 			id: string;
@@ -1192,6 +1248,96 @@ export async function snapshotHash(jobs: NormalizedJob[]): Promise<string> {
 	return sha256Hex(
 		canonicalJson([...jobs].sort((left, right) => left.id.localeCompare(right.id))),
 	);
+}
+
+interface PrivateJobRow {
+	id: string; user_id: string; company: string; title: string; location: string; url: string;
+	status: JobState; notes: string; version: number; creation_hash: string; created_at: string; updated_at: string;
+	outreach_total: number; outreach_draft_ready: number; outreach_sent: number; outreach_replied: number;
+}
+async function privateJobRecords(env: AppBindings, userId: string, ids: string[]): Promise<JobRecord[]> {
+	if (!ids.length) return [];
+	if (ids.length > 80) return (await Promise.all(chunkValues(ids, 80).map((batch) => privateJobRecords(env, userId, batch)))).flat();
+	const rows = await env.DB.prepare(`SELECT j.*,COALESCE(o.total,0) AS outreach_total,
+		COALESCE(o.draft_ready,0) AS outreach_draft_ready,COALESCE(o.sent,0) AS outreach_sent,COALESCE(o.replied,0) AS outreach_replied
+		FROM private_jobs j JOIN users u ON u.id=j.user_id AND u.deleted_at IS NULL
+		LEFT JOIN (SELECT jp.job_id,COUNT(*) AS total,
+			SUM(CASE WHEN p.status='DRAFT_READY' THEN 1 ELSE 0 END) AS draft_ready,
+			SUM(CASE WHEN p.status IN ('SENDING','SENT','REPLIED') THEN 1 ELSE 0 END) AS sent,
+			SUM(CASE WHEN p.status='REPLIED' THEN 1 ELSE 0 END) AS replied
+			FROM private_job_prospects jp JOIN prospects p ON p.id=jp.prospect_id AND p.user_id=jp.user_id
+			WHERE jp.user_id=? GROUP BY jp.job_id) o ON o.job_id=j.id
+		WHERE j.user_id=? AND j.deleted_at IS NULL AND j.id IN (${ids.map(() => "?").join(",")})`)
+		.bind(userId, userId, ...ids).all<PrivateJobRow>();
+	return rows.results.map((row) => ({
+		id: row.id, externalId: null, source: "User added", company: row.company, title: row.title, location: row.location, region: "",
+		categories: [], url: row.url, postedAt: null, postedText: null, description: null, industry: null,
+		lengthMonths: [], lengthLabel: null, term: null, active: false, firstSeenAt: row.created_at, lastSeenAt: row.updated_at, deactivatedAt: null,
+		manual: true, manualVersion: row.version,
+		userState: { status: row.status, notes: row.notes, updatedAt: row.updated_at },
+		discoveryCriteria: deriveJobDiscoveryCriteria({ company: row.company, title: row.title, location: row.location, region: "", industry: null }),
+		outreachSummary: { total: row.outreach_total, draftReady: row.outreach_draft_ready, sent: row.outreach_sent, replied: row.outreach_replied },
+	}));
+}
+async function privateJobIdentity(input: z.infer<typeof privateJobInputSchema>) {
+	const canonicalUrl = input.url ? canonicalizeJobUrl(input.url) : "";
+	return { canonicalUrl, key: await sha256Hex(canonicalUrl ? `url:${canonicalUrl}` : `role:${normalizeIdentity(input.company)}:${normalizeIdentity(input.title)}:${normalizeIdentity(input.location)}`) };
+}
+async function assertPrivateJobDuplicate(env: AppBindings, userId: string, identity: { canonicalUrl: string; key: string }, ignoreId = "") {
+	const existing = await env.DB.prepare("SELECT id FROM private_jobs WHERE user_id=? AND identity_key=? AND deleted_at IS NULL AND id<>?")
+		.bind(userId, identity.key, ignoreId).first();
+	const trackedPublic = identity.canonicalUrl ? await env.DB.prepare(`SELECT j.id FROM jobs j JOIN user_job_states s ON s.job_id=j.id
+		WHERE s.user_id=? AND j.canonical_url=? LIMIT 1`).bind(userId, identity.canonicalUrl).first() : null;
+	if (existing || trackedPublic) throw new ConflictError("This role is already in your tracker. Edit the existing role instead.");
+}
+export async function createPrivateJob(env: AppBindings, userId: string, input: z.infer<typeof privateJobCreateSchema>) {
+	if (input.expectedUserId !== userId) throw new ConflictError("The signed-in account changed. Reopen Add job.");
+	const id = `manual-${await sha256Hex(`${userId}:${input.submissionKey}`)}`;
+	const hash = await sha256Hex(canonicalJson(input));
+	const prior = await env.DB.prepare("SELECT creation_hash,deleted_at FROM private_jobs WHERE id=? AND user_id=?")
+		.bind(id, userId).first<{ creation_hash: string; deleted_at: string | null }>();
+	if (prior) {
+		if (prior.creation_hash !== hash || prior.deleted_at) throw new ConflictError("This submission was already changed or removed. Reopen Add job.");
+		const job = await getJob(env, id, userId, true);
+		if (!job) throw new ClientInputError("Job was not found.");
+		return { job, idempotent: true };
+	}
+	const identity = await privateJobIdentity(input);
+	await assertPrivateJobDuplicate(env, userId, identity);
+	const now = new Date().toISOString();
+	try {
+		const inserted = await env.DB.prepare(`INSERT INTO private_jobs(id,user_id,company,title,location,url,canonical_url,identity_key,status,notes,creation_hash,created_at,updated_at)
+			SELECT ?,id,?,?,?,?,?,?,?,?,?,?,? FROM users WHERE id=? AND deleted_at IS NULL`)
+			.bind(id, input.company, input.title, input.location, input.url, identity.canonicalUrl, identity.key, input.status, input.notes, hash, now, now, userId).run();
+		if (!inserted.meta.changes) throw new ClientInputError("The account is unavailable.");
+	} catch (error) {
+		if (!(error instanceof Error) || !error.message.includes("UNIQUE constraint failed")) throw error;
+		const raced = await getJob(env, id, userId, true);
+		const original = await env.DB.prepare("SELECT creation_hash FROM private_jobs WHERE id=? AND user_id=? AND deleted_at IS NULL").bind(id, userId).first<{ creation_hash: string }>();
+		if (raced && original?.creation_hash === hash) return { job: raced, idempotent: true };
+		throw new ConflictError("This role was just added to your tracker. Reload or edit the existing role.");
+	}
+	const job = await getJob(env, id, userId, true);
+	if (!job) throw new ClientInputError("Job was not found after saving.");
+	return { job, idempotent: false };
+}
+export async function editPrivateJob(env: AppBindings, userId: string, id: string, input: z.infer<typeof privateJobEditSchema>) {
+	if (!isPrivateJobId(id) || !(await getJob(env, id, userId, true))) throw new ClientInputError("Job was not found.");
+	if (input.expectedUserId !== userId) throw new ConflictError("The signed-in account changed. Reopen Edit job.");
+	const identity = await privateJobIdentity(input);
+	await assertPrivateJobDuplicate(env, userId, identity, id);
+	try {
+		const result = await env.DB.prepare(`UPDATE private_jobs SET company=?,title=?,location=?,url=?,canonical_url=?,identity_key=?,status=?,notes=?,version=version+1,updated_at=?
+			WHERE id=? AND user_id=? AND deleted_at IS NULL AND version=?`)
+			.bind(input.company, input.title, input.location, input.url, identity.canonicalUrl, identity.key, input.status, input.notes, new Date().toISOString(), id, userId, input.expectedVersion).run();
+		if (!result.meta.changes) throw new ConflictError("This role changed or was removed. Reload before editing.");
+	} catch (error) {
+		if (error instanceof Error && error.message.includes("UNIQUE constraint failed")) throw new ConflictError("This role is already in your tracker.");
+		throw error;
+	}
+	const job = await getJob(env, id, userId, true);
+	if (!job) throw new ClientInputError("Job was not found after saving.");
+	return job;
 }
 
 export function canonicalJson(value: unknown): string {
