@@ -172,7 +172,28 @@ button:focus-visible, a:focus-visible, summary:focus-visible, input:focus-visibl
 .home-reference-lower { width: 100%; margin: 0; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 20px; }
 .home-recent-card, .home-journey-detail { background: var(--cp-bg-elevated); border-color: var(--cp-border); color: var(--cp-text); box-shadow: none; }
 .home-journey-milestones small { color: var(--cp-text-muted); }
-.home-journey-milestones { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.home-reference-lower { align-items: start; }
+.home-journey-panel { align-self: start; }
+.home-journey-panel > header { flex-wrap: wrap; gap: 8px 16px; }
+.home-journey-panel > header > div:last-child { flex-wrap: wrap; }
+.home-journey-panel > header .text-button { min-height: 44px; font-size: 0.875rem; }
+.home-journey-panel .home-journey-intro { margin: 6px 0 18px; color: var(--cp-text-muted); font-size: 0.9375rem; }
+.home-journey-milestones { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin: 0; border-bottom: 1px solid var(--cp-border); }
+.home-journey-milestones button { display: flex; flex-direction: column; align-items: flex-start; justify-content: flex-start; gap: 6px; min-height: 90px; padding: 12px 8px; color: var(--cp-text); background: transparent; border: 0; border-bottom: 2px solid transparent; border-radius: 0; box-shadow: none; }
+.home-journey-milestones button:hover, .home-journey-milestones button.active { background: var(--cp-accent-soft); border-bottom-color: var(--cp-accent); color: var(--cp-text); }
+.home-journey-milestones strong { max-width: 100%; overflow-wrap: anywhere; font-family: Georgia, serif; font-size: 2rem; line-height: 1; font-weight: 400; font-variant-numeric: tabular-nums; }
+.home-journey-milestones button > span { font-size: 0.875rem; line-height: 1.3; text-align: left; }
+.home-journey-panel .home-journey-detail { margin-top: 0; border: 0; border-radius: 0; background: transparent; box-shadow: none; backdrop-filter: none; }
+.home-journey-note { padding: 22px 0 16px; }
+.home-journey-note h3 { margin: 0 0 10px; font-family: Georgia, serif; font-size: 1.375rem; font-weight: 400; line-height: 1.25; text-wrap: balance; }
+.home-journey-note p:not(.eyebrow) { max-width: 60ch; margin: 0 0 16px; font-size: 0.9375rem; line-height: 1.5; color: var(--cp-text-muted); }
+.home-journey-note .primary { min-height: 44px; padding: 10px 14px; font-size: 0.875rem; }
+.home-journey-statuses { display: flex; flex-wrap: wrap; gap: 10px 20px; margin: 0 0 18px; }
+.home-journey-statuses > div { display: flex; align-items: baseline; gap: 8px; }
+.home-journey-statuses dt { color: var(--cp-text-muted); font-size: 0.875rem; }
+.home-journey-statuses dd { margin: 0; color: var(--cp-text); font-weight: 600; font-variant-numeric: tabular-nums; }
+.home-journey-note .home-journey-unavailable { color: var(--cp-text); }
+.home-journey-panel .home-journey-footnote { margin: 0; padding-top: 12px; border-top: 1px solid var(--cp-border); color: var(--cp-text-muted); font-size: 0.8125rem; line-height: 1.4; }
 .rail-art, .rail-callout, .rail-art-applications, .rail-art-networking, .home-signoff { display: none; }
 .tracker-layout { grid-template-columns: 200px minmax(0, 1fr); }
 .tracker-right-rail { grid-column: 2; display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }

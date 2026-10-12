@@ -398,8 +398,7 @@ function renderRailPage(content, activeView) {
 }
 
 function renderHome() {
-	const metrics = journeyMetrics();
-	const detail = window.CareerJourney.detailFor(state.journeyFocus, metrics);
+	const snapshot = homeJourneySnapshot();
 	const recentJobs = state.jobs.jobs.slice(0, 2);
 	return `
 		<section class="home-reference-hero job-first-home">
@@ -434,26 +433,55 @@ function renderHome() {
 				${recentJobs.length ? `<div class="home-recent-grid">${recentJobs.map(homeRecentJobCard).join("")}</div>` : empty("No current roles are available yet.")}
 			</article>
 			<article class="home-journey-panel" data-tour="home-journey">
-				<header><div>${icon("chart")}<h2>Your journey</h2></div><div><button id="journey-reset" class="text-button">${icon("reset")} Reset</button><button class="text-button" data-nav="analytics">View analytics ${icon("chevron-right")}</button></div></header>
-				<div class="home-journey-milestones" aria-label="Career Journey controls">
-					${homeJourneyControl("saved", "Explore", "Find roles", "bookmark")}
-					${homeJourneyControl("networking", "Connect", "Have coffee chats", "cup")}
-					${homeJourneyControl("applications", "Apply", "Track progress", "document")}
-					${homeJourneyControl("progress", "Grow", "Turn conversations into opportunities", "path")}
+				<header><div>${icon("cup")}<h2>Your journey</h2></div><div><button id="journey-reset" class="text-button" aria-pressed="${state.journeyFocus === "journey"}" title="Restore the overview. Your jobs and people stay unchanged.">Overview</button><button class="text-button" data-nav="analytics" aria-label="View your workspace analytics">Analytics ${icon("chevron-right")}</button></div></header>
+				<p class="home-journey-intro">A moment to see where you stand.</p>
+				<div class="home-journey-milestones" role="group" aria-label="Explore your current workspace counts">
+					${homeJourneyControl("saved", "Saved roles", snapshot.applications?.saved)}
+					${homeJourneyControl("applications", "Applications", snapshot.applications?.total)}
+					${homeJourneyControl("networking", "People tracked", snapshot.networking?.tracked)}
 				</div>
 				<section class="home-journey-detail" id="journey-detail" aria-live="polite" aria-label="Selected Career Journey detail">
-					${renderJourneyDetail(detail)}
+					${renderHomeJourneyDetail(snapshot)}
 				</section>
+				<p class="home-journey-footnote">Current records across your account, not a sequence of milestones.</p>
 			</article>
 		</section>
 		<div class="home-signoff"><span>Toronto&nbsp;&nbsp;|&nbsp;&nbsp;Est. 2026</span><em>A Brighter You.<i aria-hidden="true"></i></em></div>`;
 }
 
-function homeJourneyControl(area, title, subtitle, iconName) {
-	return `<button data-journey-target="${area}" class="${state.journeyFocus === area ? "active" : ""}">
-		<span class="journey-marker">${icon(iconName)}</span>
-		<span><strong>${escapeHtml(title)}</strong><small>${escapeHtml(subtitle)}</small></span>
+function homeJourneySnapshot() {
+	const owner = state.session?.user?.id;
+	const hasApplications = state.analytics?.applications ||
+		state.applicationSnapshot?.owner === owner ||
+		(state.trackedJobs.complete && state.trackedJobs.owner === owner);
+	const applications = hasApplications ? myJobsApplicationSnapshot() : { counts: null, error: "Job counts are unavailable. Reload the workspace to retry." };
+	const networking = state.analytics?.networking;
+	const validNetworking = networking && Number.isSafeInteger(networking.tracked) && networking.tracked >= 0 &&
+		Number.isSafeInteger(networking.replied) && networking.replied >= 0 && networking.replied <= networking.tracked;
+	return { applications: applications.counts, networking: validNetworking ? networking : null, error: applications.error };
+}
+
+function homeJourneyControl(area, title, count) {
+	const available = Number.isSafeInteger(count) && count >= 0;
+	return `<button data-journey-target="${area}" aria-pressed="${state.journeyFocus === area}" class="${state.journeyFocus === area ? "active" : ""}">
+		<strong>${available ? count.toLocaleString() : '<span aria-hidden="true">—</span><span class="sr-only">Unavailable</span>'}</strong>
+		<span>${escapeHtml(title)}</span>
 	</button>`;
+}
+
+function renderHomeJourneyDetail(snapshot = homeJourneySnapshot()) {
+	const detail = window.CareerJourney.workspaceDetail(state.journeyFocus, snapshot);
+	const unavailable = [
+		!snapshot.applications && (snapshot.error || "Job counts are unavailable. Reload the workspace to retry."),
+		!snapshot.networking && "People counts are unavailable. Reload the workspace to retry; saved contacts are still available in People.",
+	].filter(Boolean);
+	return `<div class="home-journey-note">
+		<h3>${escapeHtml(detail.title)}</h3>
+		<p>${escapeHtml(detail.description)}</p>
+		${detail.stats.length ? `<dl class="home-journey-statuses">${detail.stats.map(([count, label]) => `<div><dt>${escapeHtml(label)}</dt><dd>${count.toLocaleString()}</dd></div>`).join("")}</dl>` : ""}
+		${unavailable.length ? `<p class="home-journey-unavailable" role="status">${unavailable.map(escapeHtml).join(" ")}</p>` : ""}
+		<button class="primary" data-journey-action="${detail.actionView}">${escapeHtml(detail.actionLabel)} ${icon("chevron-right")}</button>
+	</div>`;
 }
 
 function homeRecentJobCard(job) {
@@ -2884,7 +2912,7 @@ async function fetchTrackedJobs() {
 		jobs.push(...next.jobs);
 	}
 	if (jobs.length !== total || new Set(jobs.map((job) => job.id)).size !== total) throw new Error("Tracked job pages were incomplete or duplicated. Reload to retry.");
-	return { jobs, pagination: first.pagination, complete: true };
+	return { jobs, pagination: first.pagination, complete: true, owner: identity };
 }
 
 function loadJobQueryFromUrl() {
@@ -3231,15 +3259,16 @@ function refreshJourneyScene() {
 function openJourneyDetail(area, focusScene) {
 	if (!window.CareerJourney.AREAS.includes(area)) return;
 	state.journeyFocus = area;
-	const detail = window.CareerJourney.detailFor(area, journeyMetrics());
 	const container = document.getElementById("journey-detail");
 	if (container) {
-		container.innerHTML = renderJourneyDetail(detail);
+		container.innerHTML = state.tab === "home" ? renderHomeJourneyDetail() : renderJourneyDetail(window.CareerJourney.detailFor(area, journeyMetrics()));
 		wireJourneyAction();
 	}
 	document.querySelectorAll("[data-journey-target]").forEach((button) => {
 		button.classList.toggle("active", button.dataset.journeyTarget === area);
+		button.setAttribute("aria-pressed", String(button.dataset.journeyTarget === area));
 	});
+	document.getElementById("journey-reset")?.setAttribute("aria-pressed", String(area === "journey"));
 	if (focusScene) journeyController?.focus(area);
 }
 

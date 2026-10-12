@@ -675,7 +675,7 @@ test("Settings exposes only real integrations, privacy, and preferences", () => 
 	assert.doesNotMatch(app, /LinkedIn\s*<\/|Outlook\s*<\/|Email notifications|Application reminders/);
 });
 
-test("self-hosts pinned Three.js with full lifecycle and accessible fallback", () => {
+test("retains the self-hosted scene lifecycle while Home uses accessible workspace counts", () => {
 	const packageJson = JSON.parse(read("package.json"));
 	const app = read("public/app.js");
 	const scene = read("public/journey-scene.js");
@@ -703,7 +703,6 @@ test("self-hosts pinned Three.js with full lifecycle and accessible fallback", (
 		"networking",
 		"applications",
 		"saved",
-		"progress",
 	]) {
 		assert.match(app, new RegExp(`homeJourneyControl\\("${area}"`));
 	}
