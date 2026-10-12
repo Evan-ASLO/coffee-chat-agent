@@ -713,7 +713,9 @@ test("matches the approved warm home with real metrics and lightweight animation
 	const app = read("public/app.js");
 	const styles = read("public/styles.css");
 	assert.match(app, /A little closer to<br \/>what's next\./);
-	assert.match(app, /class="home-reference-stats"/);
+	assert.doesNotMatch(app, /class="home-reference-stats"|renderStats\(/);
+	assert.match(app, /class="home-catalog-total"/);
+	assert.match(app, /class="home-search-panel" data-tour="home-summary"/);
 	assert.match(app, /id="home-job-search-form"/);
 	assert.match(app, /window\.JobFirstUI\.scene\(\)/);
 	assert.match(app, /Recent roles/);

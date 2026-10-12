@@ -80,14 +80,14 @@
 		{
 			id: "home-summary", chapter: 1, view: "home", target: "home-summary",
 			title: "Home: your live starting point",
-			body: () => `<p>The summary shows current open internships, saved roles, active applications, and people tracked. Recent roles and the live search panel are shortcuts into Jobs.</p>
+			body: () => `<p>Home search shows the total early-career roles in the catalog. Your journey shows your account's saved roles, current applications, and people tracked. Recent roles and search are shortcuts into Find jobs.</p>
 				<p>Use the primary navigation for <strong>Find jobs, My jobs and People</strong>. On a phone these remain visible in the bottom bar. Open the account menu for <strong>Setup &amp; profile, Setup guide, Analytics and Home</strong>, or select the coffee brand for Home. No API keys are needed for browsing and tracking.</p>`,
 		},
 		{
 			id: "home-journey", chapter: 1, view: "home", target: "home-journey",
 			title: "Your Career Journey",
-			body: () => `<p>This optional live desk reflects the same workspace data. Explore, Connect, Apply, Grow, and Journey overview have real keyboard and touch controls.</p>
-				<p>Tab to a control and press Enter or Space to inspect its detail. The lightweight illustration is not live activity and respects reduced motion; you can pause it. Reset clears only the selected overview, not your records.</p>`,
+			body: () => `<p>Select Saved roles, Applications, or People tracked to see a useful next step from your current account records. These counts are not a history of career milestones; unavailable totals are not shown as zero.</p>
+				<p>Tab to a count and press Enter or Space, or tap it. Overview restores only the selected view, not your jobs or people. The separate Home illustration is fictional, can be paused, and respects reduced motion.</p>`,
 		},
 		{
 			id: "jobs-search", chapter: 1, view: "jobs", target: "jobs-search",

@@ -714,7 +714,7 @@ export async function listJobs(
 ): Promise<{
 	jobs: JobRecord[];
 	pagination: { page: number; pageSize: number; total: number; totalPages: number };
-	catalog: JobCatalogFreshness;
+	catalog: JobCatalogFreshness & { total: number };
 	facets: JobFacets;
 	filters: { category: string };
 }> {
@@ -737,14 +737,19 @@ export async function listJobs(
 			)
 			.all<JobRow>(),
 		env.DB.prepare(
-			`SELECT COUNT(*) AS count FROM jobs j WHERE ${filter.clause}`,
+			`SELECT COUNT(*) AS count,
+			        (SELECT COUNT(*) FROM jobs WHERE is_active = 1) AS catalog_total
+			   FROM jobs j WHERE ${filter.clause}`,
 		)
 			.bind(...filter.bindings)
-			.first<{ count: number }>(),
+			.first<{ count: number; catalog_total: number }>(),
 		getCatalogFreshness(env),
 		getJobFacets(env, query, now),
 	]);
 	const total = Number(count?.count || 0);
+	if (!count || !Number.isSafeInteger(count.catalog_total) || count.catalog_total < 0) {
+		throw new Error("The complete catalog total could not be read.");
+	}
 	return {
 		jobs: result.results.map(mapJob),
 		pagination: {
@@ -753,7 +758,7 @@ export async function listJobs(
 			total,
 			totalPages: Math.ceil(total / query.pageSize),
 		},
-		catalog,
+		catalog: { ...catalog, total: count.catalog_total },
 		facets,
 		filters: { category: query.category },
 	};

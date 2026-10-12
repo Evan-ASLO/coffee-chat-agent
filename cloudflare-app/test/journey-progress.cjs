@@ -157,3 +157,13 @@ test("Home overview and count controls expose availability without changing reco
 	assert.match(home, /not a sequence of milestones/);
 	assert.match(definition("openJourneyDetail"), /setAttribute\("aria-pressed"/);
 });
+
+test("Home keeps the complete catalog total by search, never replacing it with filtered or private-job counts", () => {
+	const c = { state: { jobs: { catalog: { total: 503 }, pagination: { total: 2 } } } };
+	vm.createContext(c); vm.runInContext(definition("homeCatalogTotal"), c);
+	assert.match(c.homeCatalogTotal(), /503.*early-career roles in the catalog/);
+	c.state.jobs.catalog.total = 0; assert.match(c.homeCatalogTotal(), /<strong>0/);
+	c.state.jobs.catalog.total = 1; assert.match(c.homeCatalogTotal(), /early-career role in/);
+	for (const unknown of [undefined, null, -1, 2.5, "503"]) { c.state.jobs.catalog.total = unknown; assert.match(c.homeCatalogTotal(), /unavailable/); }
+	assert.doesNotMatch(definition("renderHome"), /renderStats|home-reference-stats/);
+});

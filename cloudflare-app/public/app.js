@@ -366,16 +366,6 @@ function renderBetaLanding() {
 	bugReports.wire();
 }
 
-function renderStats() {
-	const metrics = journeyMetrics();
-	return `<section class="home-reference-stats" data-tour="home-summary" aria-label="Career workspace summary">
-		${referenceMetric(state.jobs.pagination.total, "Early-career roles", "briefcase")}
-		${referenceMetric(metrics.saved, "Saved roles", "bookmark")}
-		${referenceMetric(metrics.activeApplications, "Active applications", "document")}
-		${referenceMetric(metrics.peopleTracked, "People tracked", "people")}
-	</section>`;
-}
-
 function renderTab() {
 	if (state.tab === "home" && state.session?.authenticated) return renderHome();
 	if (state.tab === "applications" && state.session?.authenticated) {
@@ -413,10 +403,9 @@ function renderHome() {
 			</div>
 			${window.JobFirstUI.scene()}
 		</section>
-		${renderStats()}
 		<section class="home-search-row">
-			<form id="home-job-search-form" class="home-search-panel">
-				<div class="home-search-heading">${icon("search")}<div><h2>Find your next opportunity</h2><p>Search internships, track applications, and connect with the people behind them.</p></div></div>
+			<form id="home-job-search-form" class="home-search-panel" data-tour="home-summary">
+				<div class="home-search-heading">${icon("search")}<div><h2>Find your next opportunity</h2><p class="home-catalog-total">${homeCatalogTotal()}</p></div></div>
 				<div class="home-search-controls">
 					<label class="home-search-input">${icon("search")}<span class="sr-only">Search roles</span><input id="home-job-q" placeholder="Title, company, location, or keyword" /></label>
 					<label><span class="sr-only">Company</span><input id="home-job-company" placeholder="Company" /></label>
@@ -447,6 +436,13 @@ function renderHome() {
 			</article>
 		</section>
 		<div class="home-signoff"><span>Toronto&nbsp;&nbsp;|&nbsp;&nbsp;Est. 2026</span><em>A Brighter You.<i aria-hidden="true"></i></em></div>`;
+}
+
+function homeCatalogTotal() {
+	const total = state.jobs.catalog?.total;
+	return Number.isSafeInteger(total) && total >= 0
+		? `<strong>${total.toLocaleString()}</strong> early-career ${total === 1 ? "role" : "roles"} in the catalog`
+		: "Catalog total unavailable. Reload to retry.";
 }
 
 function homeJourneySnapshot() {

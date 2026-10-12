@@ -45,6 +45,19 @@ async function add(user: Auth, extra = {}) {
 	return (await response.json<{ job: JobRecord }>()).job;
 }
 describe("private user-added job lifecycle and catalog isolation", () => {
+	it("returns the full active public catalog total independently of filters, pages and private records", async () => {
+		const user = await auth();
+		await add(user);
+		const result = await (await call("/api/jobs?pageSize=1", user)).json<{ pagination: { total: number }; catalog: { total: number } }>();
+		expect(result.pagination.total).toBe(2); expect(result.catalog.total).toBe(2);
+		const filtered = await (await call("/api/jobs?company=NoSuchCatalogCompany", user)).json<{ pagination: { total: number }; catalog: { total: number } }>();
+		expect(filtered.pagination.total).toBe(0); expect(filtered.catalog.total).toBe(2);
+		await env.DB.prepare("UPDATE jobs SET is_active=0 WHERE id=?").bind("d".repeat(64)).run();
+		const afterClosure = await (await call("/api/jobs?pageSize=1", user)).json<{ catalog: { total: number } }>();
+		expect(afterClosure.catalog.total).toBe(1);
+		expect(globalThis.fetch).not.toHaveBeenCalled();
+	});
+
 	it("persists a URL-free owned role, idempotently retries creation and edits information/current stage/notes", async () => {
 		const user = await auth(), body = input(user);
 		const first = await (await call("/api/private-jobs", user, "POST", body)).json<{ job: JobRecord; idempotent: boolean }>();
