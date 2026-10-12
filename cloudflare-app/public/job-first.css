@@ -307,6 +307,25 @@ dialog::backdrop { background: var(--cp-overlay); }
 .appearance-card h2 { margin: 0; font-size: 1rem; line-height: 1.3; }
 .appearance-card .theme-choices { display: inline-flex; gap: 4px; }
 .appearance-card .theme-choices button { min-width: 72px; }
+.application-sankey { margin: 0; min-width: 0; }
+.sankey-explanation { font-size: 14px; line-height: 1.5; color: var(--cp-text-muted); }
+.application-sankey-svg { display: block; width: 100%; height: auto; overflow: visible; }
+.sankey-root { fill: var(--cp-text-muted); }
+.sankey-flow { fill: none; stroke: var(--sankey-color); opacity: .38; }
+.sankey-node { fill: var(--sankey-color); }
+.sankey-saved { --sankey-color: var(--cp-text-muted); }
+.sankey-applied { --sankey-color: var(--cp-clay-strong); }
+.sankey-interviewing { --sankey-color: var(--cp-link); }
+.sankey-offers { --sankey-color: var(--cp-success); }
+.sankey-rejected { --sankey-color: var(--cp-danger); }
+.sankey-archived { --sankey-color: var(--cp-border-strong); }
+.sankey-label { fill: var(--cp-text); font-size: 16px; font-family: "Segoe UI", sans-serif; }
+.sankey-counts { margin: 12px 0 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; font-size: 14px; }
+.sankey-counts > div { display: flex; justify-content: space-between; gap: 8px; }
+.sankey-counts dt { display: flex; align-items: center; gap: 6px; }
+.sankey-counts dd { margin: 0; font-weight: 600; }
+.sankey-key { width: 8px; height: 8px; background: var(--sankey-color); flex-shrink: 0; }
+@media (max-width: 520px) { .sankey-label { display: none; } .application-sankey-svg { max-height: 240px; } }
 .demo-playback-controls { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin-block: 16px; }
 .demo-playback-controls select { min-height: 44px; }
 .demo-playback-controls label { display: grid; gap: 6px; margin: 0; min-width: 140px; }

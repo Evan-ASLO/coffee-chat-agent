@@ -17,6 +17,7 @@ const state = {
 	session: null,
 	analytics: null,
 	analyticsError: "",
+	applicationSnapshot: null,
 	jobs: {
 		jobs: [],
 		pagination: { page: 1, pageSize: 24, total: 0, totalPages: 0 },
@@ -670,15 +671,9 @@ function renderApplications() {
 			String(left.userState?.updatedAt),
 		);
 	});
-	const applications = state.analytics?.applications || {
-		total: allJobs.filter((job) => APPLICATION_STATUSES.includes(job.userState?.status)).length,
-		inProgress: allJobs.filter((job) =>
-			["APPLIED", "INTERVIEWING"].includes(job.userState?.status),
-		).length,
-		interviewing: allJobs.filter(
-			(job) => job.userState?.status === "INTERVIEWING",
-		).length,
-		offers: allJobs.filter((job) => job.userState?.status === "OFFER").length,
+	const snapshot = myJobsApplicationSnapshot();
+	const applications = snapshot.counts || {
+		total: null, inProgress: null, interviewing: null, offers: null,
 	};
 	const notes = allJobs
 		.filter((job) => job.userState?.notes?.trim())
@@ -744,8 +739,8 @@ function renderApplications() {
 				${referenceMetric(applications.offers, "Offers", "spark")}
 			</section><aside class="tracker-right-rail" aria-label="Application progress">
 				<section class="rail-panel">
-					<div class="rail-panel-heading"><h2>Application progress</h2><button data-nav="analytics" class="text-button">View analytics →</button></div>
-					${renderApplicationDonut(applications)}
+					<div class="rail-panel-heading"><h2>Current application statuses</h2><button data-nav="analytics" class="text-button">View analytics →</button></div>
+					${window.CareerAnalyticsUi.renderApplicationSankey(snapshot.counts, snapshot.error)}
 				</section>
 				<section class="rail-panel notes-rail">
 					<div class="rail-panel-heading"><h2>Next-step notes</h2><span>${notes.length}</span></div>
@@ -2913,20 +2908,67 @@ function syncJobQueryToUrl() {
 }
 
 async function loadAnalyticsData() {
+	const request = ++analyticsRequest;
+	const identity = state.session?.user?.id;
+	const current = () => request === analyticsRequest && state.session?.authenticated && state.session.user.id === identity;
+	state.applicationSnapshot = null;
 	if (!state.session?.authenticated) {
 		state.analytics = null;
 		state.analyticsError = "";
 		return;
 	}
 	try {
-		state.analytics = await api("/api/analytics");
+		const result = await api("/api/analytics");
+		if (!current()) return;
+		window.CareerAnalyticsUi.currentApplicationCounts(result.applications);
+		state.analytics = result;
 		state.analyticsError = "";
 	} catch (error) {
+		if (!current()) return;
 		state.analytics = null;
 		state.analyticsError =
 			error instanceof Error
 				? error.message
 				: "Analytics could not be loaded.";
+		try {
+			const counts = await loadCompleteApplicationSnapshot(current);
+			if (current()) state.applicationSnapshot = { owner: identity, counts };
+		} catch (failure) {
+			if (current()) state.analyticsError += ` Current status snapshot could not be loaded: ${failure.message}`;
+		}
+	}
+}
+
+let analyticsRequest = 0;
+async function loadCompleteApplicationSnapshot(current) {
+	const jobs = [];
+	let total;
+	for (let page = 1; page <= 100; page++) {
+		if (!current()) throw new Error("The account changed.");
+		const response = await api(`/api/job-states?page=${page}&pageSize=100`);
+		if (!current()) throw new Error("The account changed.");
+		const p = response.pagination;
+		if (!Array.isArray(response.jobs) || !p || p.page !== page || p.pageSize !== 100 ||
+			!Number.isSafeInteger(p.total) || p.total < 0 || p.total > 10000 ||
+			p.totalPages !== Math.ceil(p.total / 100) || response.jobs.length !== Math.min(100, Math.max(0, p.total - (page - 1) * 100)) ||
+			(total !== undefined && total !== p.total)) throw new Error("Tracked status pages were incomplete or changed. Reload to retry.");
+		total = p.total; jobs.push(...response.jobs);
+		if (page >= p.totalPages) return window.CareerAnalyticsUi.countTrackedApplications(jobs);
+	}
+	throw new Error("The complete tracked status snapshot exceeds the supported page limit.");
+}
+
+function myJobsApplicationSnapshot() {
+	try {
+		if (state.analytics?.applications) return { counts: window.CareerAnalyticsUi.currentApplicationCounts(state.analytics.applications), error: "" };
+		if (state.applicationSnapshot?.owner === state.session?.user?.id) return { counts: state.applicationSnapshot.counts, error: "" };
+		const { jobs, pagination } = state.trackedJobs;
+		if (pagination && pagination.total === jobs.length && pagination.totalPages <= 1) {
+			return { counts: window.CareerAnalyticsUi.countTrackedApplications(jobs), error: "" };
+		}
+		return { counts: null, error: "The account-wide status snapshot is unavailable. Reload the workspace to retry; a partial list is not shown as a complete chart." };
+	} catch (failure) {
+		return { counts: null, error: `${failure.message} Reload the workspace to retry.` };
 	}
 }
 
@@ -3640,7 +3682,7 @@ function pageHeader(eyebrow, title, description, actions) {
 function referenceMetric(entry, label, iconName) {
 	return `<article class="reference-metric">
 		<span class="reference-metric-icon">${icon(iconName)}</span>
-		<div><strong>${Number(entry || 0)}</strong><span>${escapeHtml(label)}</span></div>
+		<div><strong ${entry === null ? 'aria-label="Unavailable"' : ""}>${entry === null ? "--" : Number(entry || 0)}</strong><span>${escapeHtml(label)}</span></div>
 	</article>`;
 }
 
