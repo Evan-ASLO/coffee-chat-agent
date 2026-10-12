@@ -736,7 +736,7 @@ function renderApplications() {
 						: empty(allJobs.length ? "No tracked jobs match this stage and search." : "Save a role in Find jobs to start your shortlist, then mark it Applied when you have actually applied.")
 				}
 			</section>
-			<details class="workspace-insights"><summary>Summary, progress & next-step notes</summary>
+			<details class="workspace-insights" open><summary>Summary, progress & next-step notes</summary>
 			<section class="reference-metrics application-stats" aria-label="Application summary">
 				${referenceMetric(applications.total, "Total applications", "document")}
 				${referenceMetric(applications.inProgress, "In progress", "progress")}
