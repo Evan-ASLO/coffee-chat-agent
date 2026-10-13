@@ -113,6 +113,7 @@ describe("producer-agreed legal/public-policy placement contract", () => {
 		["Legal & Contract Management Co-op", "Junior Contract Management Analyst"],
 		["Corporate Compliance Intern", "Junior Compliance Analyst"],
 		["Law Clerk Co-op", "Junior Law Clerk"],
+		["Supervision and Governance, Winter 2027 Co-op", "Junior Governance Analyst"],
 	])("keeps %s People context in the evidenced actual function with existing junior/recruiter/senior guards", (title, match) => {
 		const criteria = deriveJobDiscoveryCriteria({ company: "Example Firm", title, location: "Ottawa", region: "Ontario", industry: null });
 		expect(criteria.jobContext?.title).toBe(title);
@@ -127,9 +128,13 @@ describe("producer-agreed legal/public-policy placement contract", () => {
 	it("does not promote AI/software policy, driver compliance or data governance into legal/public-policy peer fit", () => {
 		const person = (title: string) => ({ fullName: "Fictional Person", title, company: "Example Firm", sourceUrl: "https://www.linkedin.com/in/fictional-person", sourceSnippet: `Fictional Person is a ${title} at Example Firm.` });
 		expect(rankJobContact(person("Junior AI Policy Analyst"), { company: "Example Firm", title: "Policy Research Student" }).tier).toBe(3);
-		for (const title of ["Junior Driver Compliance Analyst", "Junior Sales Data Governance Analyst"]) {
+		for (const title of ["Junior Driver Compliance Analyst", "Junior Sales Data Governance Analyst", "Junior Credit Risk Governance Analyst"]) {
 			expect(rankJobContact(person(title), { company: "Example Firm", title: "Corporate Compliance Intern" }).tier).toBe(3);
+			expect(rankJobContact(person(title), { company: "Example Firm", title: "Supervision and Governance, Winter 2027 Co-op" }).tier).toBe(3);
 		}
+		const communications = deriveJobDiscoveryCriteria({ company: "Example Firm", title: "Corporate Communications Student", location: "", region: "", industry: null });
+		expect(communications.roles).toContain("Junior Marketing Specialist");
+		expect(communications.roles.some((role) => /Software|Civil/.test(role))).toBe(false);
 		expect(deriveJobDiscoveryCriteria({ company: "Example Firm", title: "AI Policy Engineer Intern", location: "", region: "", industry: null }).roles.some((role) => /Data|Engineer/.test(role))).toBe(true);
 	});
 });

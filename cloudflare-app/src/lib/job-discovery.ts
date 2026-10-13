@@ -136,6 +136,12 @@ const ROLE_RULES: Array<{
 		preferFunction: true,
 	},
 	{
+		pattern: /^(?!.*\b(?:data|sales|driver|product|environmental|credit|market|risk|software|engineer|engineering|science)\b).*\bgovernance\b/i,
+		roles: ["Junior Governance Analyst", "Governance Intern", "Junior Compliance Analyst"],
+		keywords: ["governance", "compliance"],
+		preferFunction: true,
+	},
+	{
 		pattern: /^(?!.*\b(?:driver|product|environmental|sales|data governance|software|engineer|engineering|scientific|science)\b).*\b(compliance|corporate governance|corporate ethics|privacy|data protection)\b/i,
 		roles: ["Junior Compliance Analyst", "Compliance Analyst I", "Compliance Intern"],
 		keywords: ["compliance", "governance"],
