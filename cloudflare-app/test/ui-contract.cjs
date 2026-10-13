@@ -11,6 +11,8 @@ const read = (file) => fs.readFileSync(path.join(root, file), "utf8");
 test("renders compliant Adzuna attribution", () => {
 	const html = jobSource.attributionHtml("adzuna");
 	assert.equal(jobSource.sourceLabel("ADZUNA"), "Adzuna");
+	assert.equal(jobSource.sourceLabel("gcjobs"), "GC Jobs");
+	assert.equal(jobSource.sourceLabel("oracle"), "Oracle recruiting");
 	assert.match(html, /href="https:\/\/www\.adzuna\.ca\/"/);
 	assert.match(html, /src="\/adzuna_logo\.png"/);
 	assert.match(html, /aria-label="Jobs by Adzuna"/);

@@ -115,7 +115,32 @@ const ROLE_RULES: Array<{
 	pattern: RegExp;
 	roles: string[];
 	keywords: string[];
+	preferFunction?: boolean;
 }> = [
+	{
+		pattern: /\b(public policy|government relations|intergovernmental relations|public affairs|government affairs|legislative|parliamentary|justice research|human rights policy|policy research|policy analyst|advocacy)\b/i,
+		roles: ["Junior Policy Analyst", "Government Relations Intern", "Junior Government Relations Analyst"],
+		keywords: ["public policy", "government relations"],
+		preferFunction: true,
+	},
+	{
+		pattern: /\b(law clerk|paralegal)\b/i,
+		roles: ["Junior Law Clerk", "Law Clerk Intern", "Junior Paralegal"],
+		keywords: ["law clerk", "paralegal"],
+		preferFunction: true,
+	},
+	{
+		pattern: /\b(legal|contracts? management|corporate secretarial)\b/i,
+		roles: ["Junior Legal Operations Analyst", "Legal Assistant Intern", "Junior Contract Analyst"],
+		keywords: ["legal operations", "contract management"],
+		preferFunction: true,
+	},
+	{
+		pattern: /^(?!.*\b(?:driver|product|environmental|sales|data governance|software|engineer|engineering|scientific|science)\b).*\b(compliance|corporate governance|corporate ethics|privacy|data protection)\b/i,
+		roles: ["Junior Compliance Analyst", "Compliance Analyst I", "Compliance Intern"],
+		keywords: ["compliance", "governance"],
+		preferFunction: true,
+	},
 	{
 		pattern: /\b(investment|portfolio|asset management)\b/i,
 		roles: [
@@ -191,6 +216,11 @@ const SECONDARY_ROLES = [
 	"Graduate Trainee",
 ];
 
+function roleRuleFor(title: string) {
+	const technicalTitle = /\b(?:software|ai|engineer(?:ing)?|developer|data (?:analyst|engineer|science)|machine learning)\b/i.test(title);
+	return ROLE_RULES.find((candidate) => candidate.pattern.test(title) && (!candidate.preferFunction || !technicalTitle));
+}
+
 export function employerDisplayName(company: string): string {
 	const clean = company.trim().replace(/\s+/g, " ");
 	const normalized = normalizeEmployer(clean);
@@ -213,10 +243,8 @@ export function deriveJobDiscoveryCriteria(input: {
 	industry: JobIndustry | null;
 }): JobDiscoveryCriteria {
 	const company = employerDisplayName(input.company);
-	const technical = technicalRoleProfile(input.title);
-	const rule = ROLE_RULES.find((candidate) =>
-		candidate.pattern.test(input.title),
-	);
+	const rule = roleRuleFor(input.title);
+	const technical = rule?.preferFunction ? undefined : technicalRoleProfile(input.title);
 	const functionRoles = technical ? technicalRoleNames(input.title, technical) : rule?.roles || [];
 	const roles = unique([...functionRoles, ...SECONDARY_ROLES]).slice(
 		0,
@@ -262,15 +290,15 @@ export function rankJobContact(
 	const evidence = currentEmployerEvidence(person, company);
 	if (!evidence) return base;
 	const title = containsPhrase(evidence, person.title) ? normalizeEmployer(person.title) : "";
-	const rule = ROLE_RULES.find((candidate) => candidate.pattern.test(job.title));
-	const technical = technicalRoleProfile(job.title);
+	const rule = roleRuleFor(job.title);
+	const technical = rule?.preferFunction ? undefined : technicalRoleProfile(job.title);
 	const jobRole = normalizeEmployer(job.title)
 		.replace(/\b(internship|intern|co op|summer|winter|fall|spring|student|new grad|graduate|20\d\d)\b/g, " ")
 		.replace(/\s+/g, " ").trim();
 	const recruiter = RECRUITING_ROLE.test(title);
 	const roleRelevant = Boolean(title && !recruiter && (
 		technical ? sameTechnicalFunction(title, job.title) :
-			rule ? rule.pattern.test(title) : jobRole.length > 4 && containsPhrase(title, jobRole)
+			rule ? rule.pattern.test(title) && (!rule.preferFunction || roleRuleFor(title) === rule) : jobRole.length > 4 && containsPhrase(title, jobRole)
 	));
 	const senior = SENIOR_TITLE.test(person.title) ||
 		/\b(?:is|works as|serves as)\s+(?:an?\s+)?(?:senior|sr|lead|principal|staff|director|head|vp|vice president|chief|manager)\b/i.test(person.sourceSnippet);

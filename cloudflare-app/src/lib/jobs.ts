@@ -1,6 +1,6 @@
 import { z } from "zod";
 import type { AppBindings } from "../types";
-import { canonicalCareerTrack, technicalKeywordTrack } from "./job-career-tracks";
+import { canonicalCareerTrack, technicalKeywordTrack, professionalKeywordTrack } from "./job-career-tracks";
 export { canonicalCareerTrack } from "./job-career-tracks";
 import {
 	AuthenticationError,
@@ -1859,7 +1859,7 @@ function buildJobFilter(
 			j.location LIKE ? ESCAPE '\\' COLLATE NOCASE OR j.region LIKE ? ESCAPE '\\' COLLATE NOCASE OR
 			COALESCE(j.description, '') LIKE ? ESCAPE '\\' COLLATE NOCASE
 		)`);
-		const keywordTrack = technicalKeywordTrack(query.q);
+		const keywordTrack = technicalKeywordTrack(query.q) || professionalKeywordTrack(query.q);
 		if (keywordTrack) comparisons.push("j.categories_json LIKE ? ESCAPE '\\' COLLATE NOCASE");
 		where.push(
 			`(${comparisons.join(" OR ")})`,

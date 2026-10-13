@@ -40,6 +40,16 @@ The private D1 outbox is processed in batches of five immediately after opted-in
 
 Additive migration **0011_beta_acceptance_notifications.sql** adds the approval revision and private notification outbox, with legacy-writer revision invalidation and deleted-sender protection. Apply it before deploying this feature. Code rollback preserves this schema and all report data/cleanup protections; older code neither creates nor dispatches the acceptance outbox. Do not reverse migrations, backfill approvals or restore D1 as a UI rollback.
 
+## Legal and public-policy placement consumer contract
+
+The existing schema-v1 signed catalog accepts the producer's `gcjobs` and `oracle` source strings and the career families **Legal, Compliance & Governance** and **Public Policy & Government Relations**. These are overlapping professions, not employer industries or a promise that every undergraduate qualifies for every role. Exact family names and conservative aliases normalize in career-track fields/URLs; keywords can match verified tags. Generic risk, software policy, data governance and scientific regulatory affairs are not reclassified as these families. The public source labels are GC Jobs and Oracle recruiting; employer identity remains the posting's actual employer.
+
+The producer must select actual Canada-eligible intern/co-op/student vacancies, exclude newly selected roles requiring a law degree, law-school enrolment, articling or legal licensing, and preserve visible mandatory Law Clerk/paralegal-program qualifications. Preferred/asset law study is not a mandatory-law exclusion. These source/eligibility checks are producer responsibilities, not invented consumer checks based on titles alone. Existing jobs serving other audiences remain intact. Concise factual eligibility/source notes use the existing description; no normalized deadline or eligibility field is added. GC Jobs dates stay null when only a closing date is known; Oracle uses its genuine source posting timestamp. Neither refresh time nor an inferred date substitutes for posting time.
+
+Job-linked People retains the actual selected title and evidence-backed junior/campus-recruiter/other-junior ordering. Explicit legal and public-policy functions do not fall through to generic Operations or municipal Engineering; actual engineering/data/software titles and unrelated compliance functions keep their existing technical/business behavior. Nothing about source ingestion, opening details or People authorizes research, preparation, enrichment or outreach.
+
+Daily collection, source reuse permissions, last-good grace and publication completeness remain controlled by the producer's guarded pipeline. Consumer acceptance alone does not mean these sources or new jobs have been published. Job Bank/GOJobs source access is not enabled here, and no CAPTCHA, source restriction, catalog cap or signed-ingest guard is bypassed. Code-only rollback preserves all D1 data and migrations, including private user-added jobs.
+
 ## Local development
 
 ### Private jobs found elsewhere

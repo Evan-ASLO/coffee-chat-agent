@@ -14,6 +14,8 @@
 	function sourceLabel(value) {
 		const source = normalizeSource(value);
 		if (source === "adzuna") return "Adzuna";
+		if (source === "gcjobs") return "GC Jobs";
+		if (source === "oracle") return "Oracle recruiting";
 		if (!source) return "Unknown source";
 		return source
 			.split(/[_\s-]+/)

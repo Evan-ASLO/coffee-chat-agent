@@ -43,10 +43,18 @@ const tracks: TechnicalTrack[] = [
 
 const normalize = (value: string) => value.trim().toLowerCase().normalize("NFD").replace(/\p{Diacritic}/gu, "");
 const aliases = new Map(tracks.flatMap((track) => [track.label, ...track.aliases].map((alias) => [normalize(alias), track.label] as const)));
+const professionalAliases = new Map([
+	{ label: "Legal, Compliance & Governance", aliases: ["legal", "legal operations", "legal administration", "legal admin", "contract management", "compliance", "corporate compliance", "corporate ethics", "governance", "corporate governance", "privacy", "data protection", "corporate secretarial", "law clerk", "paralegal", "legal regulatory affairs"] },
+	{ label: "Public Policy & Government Relations", aliases: ["public policy", "government relations", "intergovernmental relations", "public affairs", "government affairs", "legislative research", "parliamentary research", "justice research", "advocacy", "human rights policy"] },
+].flatMap((track) => [track.label, ...track.aliases].map((alias) => [normalize(alias), track.label] as const)));
 
 export function canonicalCareerTrack(value: string): string {
 	if (normalize(value) === "soc") return value.trim() === "SoC" ? "Hardware & Embedded Systems" : "Cybersecurity";
-	return aliases.get(normalize(value)) || value;
+	return aliases.get(normalize(value)) || professionalAliases.get(normalize(value)) || value;
+}
+
+export function professionalKeywordTrack(value: string): string | undefined {
+	return professionalAliases.get(normalize(value));
 }
 
 export function technicalKeywordTrack(value: string): string | undefined {
